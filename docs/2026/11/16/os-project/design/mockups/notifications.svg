@@ -1,0 +1,50 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="900" viewBox="0 0 1440 900" role="img" aria-labelledby="title description">
+  <title id="title">AetherOS notification center concept</title>
+  <desc id="description">A quiet notification center with a Focus schedule and grouped, dismissible cards.</desc>
+  <defs>
+    <linearGradient id="bg" x2="1" y2="1"><stop stop-color="#233b5b"/><stop offset=".55" stop-color="#66899e"/><stop offset="1" stop-color="#d99a7c"/></linearGradient>
+    <linearGradient id="glass" x2="0" y2="1"><stop stop-color="#202d3b" stop-opacity=".96"/><stop offset="1" stop-color="#121b27" stop-opacity=".97"/></linearGradient>
+    <filter id="shadow" x="-.2" y="-.2" width="1.4" height="1.5"><feGaussianBlur in="SourceAlpha" stdDeviation="22"/><feOffset dy="14"/><feComponentTransfer><feFuncA type="linear" slope=".34"/></feComponentTransfer><feMerge><feMergeNode/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+  </defs>
+  <rect width="1440" height="900" fill="url(#bg)"/>
+  <path d="M0 560 222 365l194 172 215-215 206 223 214-167 214 204 175-136v454H0Z" fill="#345560"/>
+  <path d="M0 713q257-144 477-9t432-27q260-117 531-7v230H0Z" fill="#172f3b"/>
+  <rect width="1440" height="900" fill="#08111d" opacity=".24"/>
+  <g filter="url(#shadow)">
+    <rect x="1018" y="52" width="360" height="772" rx="20" fill="url(#glass)" stroke="#fff" stroke-opacity=".44"/>
+    <text x="1046" y="91" fill="#f5f7fa" font-family="Inter, sans-serif" font-size="18" font-weight="600">Notifications</text>
+    <circle cx="1344" cy="82" r="14" fill="#fff" fill-opacity=".1"/><text x="1344" y="87" text-anchor="middle" fill="#c6d1dc" font-family="Inter, sans-serif" font-size="13">×</text>
+    <rect x="1042" y="111" width="312" height="82" rx="13" fill="#4c8dff" fill-opacity=".18" stroke="#77aaff" stroke-opacity=".35"/>
+    <circle cx="1067" cy="139" r="12" fill="#4c8dff"/><text x="1067" y="144" text-anchor="middle" fill="#fff" font-family="Inter, sans-serif" font-size="12">◐</text>
+    <text x="1088" y="139" fill="#f3f6fa" font-family="Inter, sans-serif" font-size="13" font-weight="600">Focus · Work</text>
+    <text x="1088" y="163" fill="#c5d2df" font-family="Inter, sans-serif" font-size="11">Quiet time until 5:00 PM</text>
+    <text x="1328" y="140" text-anchor="end" fill="#b7c5d3" font-family="Inter, sans-serif" font-size="11">Change</text>
+    <text x="1044" y="229" fill="#f0f3f7" font-family="Inter, sans-serif" font-size="12" font-weight="600" letter-spacing=".7">TODAY</text>
+    <text x="1352" y="229" text-anchor="end" fill="#9fb0c0" font-family="Inter, sans-serif" font-size="11">Clear all</text>
+    <g font-family="Inter, sans-serif">
+      <rect x="1042" y="246" width="312" height="130" rx="13" fill="#fff" fill-opacity=".09" stroke="#fff" stroke-opacity=".19"/>
+      <rect x="1058" y="263" width="28" height="28" rx="8" fill="#72c99b"/><text x="1072" y="282" text-anchor="middle" fill="#fff" font-size="15">▤</text>
+      <text x="1096" y="273" fill="#f1f4f7" font-size="13" font-weight="600">Notes</text><text x="1338" y="273" text-anchor="end" fill="#aebbc8" font-size="10">2 min ago</text>
+      <text x="1058" y="317" fill="#f2f5f8" font-size="13" font-weight="500">Weekly review is ready</text>
+      <text x="1058" y="339" fill="#bdc9d5" font-size="11">Your saved checklist has 4 items to revisit.</text>
+      <rect x="1058" y="350" width="72" height="1" fill="#fff" opacity=".18"/>
+      <text x="1058" y="368" fill="#83b6ff" font-size="11" font-weight="600">Open note</text>
+      <rect x="1042" y="392" width="312" height="147" rx="13" fill="#fff" fill-opacity=".09" stroke="#fff" stroke-opacity=".19"/>
+      <rect x="1058" y="409" width="28" height="28" rx="8" fill="#d7826c"/><text x="1072" y="428" text-anchor="middle" fill="#fff" font-size="15">◉</text>
+      <text x="1096" y="419" fill="#f1f4f7" font-size="13" font-weight="600">Web</text><text x="1338" y="419" text-anchor="end" fill="#aebbc8" font-size="10">18 min ago</text>
+      <text x="1058" y="463" fill="#f2f5f8" font-size="13" font-weight="500">Download complete</text>
+      <text x="1058" y="485" fill="#bdc9d5" font-size="11">AetherOS design references · 18.4 MB</text>
+      <rect x="1058" y="501" width="280" height="4" rx="2" fill="#fff" fill-opacity=".16"/><rect x="1058" y="501" width="280" height="4" rx="2" fill="#69d49a"/>
+      <text x="1058" y="527" fill="#83b6ff" font-size="11" font-weight="600">Show in Files</text>
+      <text x="1044" y="575" fill="#f0f3f7" font-size="12" font-weight="600" letter-spacing=".7">EARLIER</text>
+      <rect x="1042" y="592" width="312" height="104" rx="13" fill="#fff" fill-opacity=".09" stroke="#fff" stroke-opacity=".19"/>
+      <rect x="1058" y="609" width="28" height="28" rx="8" fill="#78aaf0"/><text x="1072" y="628" text-anchor="middle" fill="#fff" font-size="15">⚙</text>
+      <text x="1096" y="619" fill="#f1f4f7" font-size="13" font-weight="600">System</text><text x="1338" y="619" text-anchor="end" fill="#aebbc8" font-size="10">9:14 AM</text>
+      <text x="1058" y="662" fill="#f2f5f8" font-size="12">Power mode changed to Balanced</text>
+      <text x="1058" y="682" fill="#bdc9d5" font-size="11">Battery profile · automatic</text>
+    </g>
+    <text x="1044" y="742" fill="#9eafbf" font-family="Inter, sans-serif" font-size="11">Grouped by app · Focus filters are active</text>
+    <rect x="1042" y="761" width="312" height="1" fill="#fff" opacity=".16"/>
+    <text x="1044" y="795" fill="#83b6ff" font-family="Inter, sans-serif" font-size="12" font-weight="600">Notification settings</text>
+  </g>
+</svg>

@@ -1,0 +1,86 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="900" viewBox="0 0 1440 900" role="img" aria-labelledby="title description">
+  <title id="title">AetherOS desktop concept</title>
+  <desc id="description">A calm desktop with a translucent menu bar, file browser window, status card, and centered application dock.</desc>
+  <defs>
+    <linearGradient id="sky" x2="0.9" y2="1">
+      <stop stop-color="#172b49"/>
+      <stop offset=".48" stop-color="#477c9d"/>
+      <stop offset="1" stop-color="#d89c80"/>
+    </linearGradient>
+    <linearGradient id="hill" x2="0" y2="1">
+      <stop stop-color="#315d68"/>
+      <stop offset="1" stop-color="#172d3a"/>
+    </linearGradient>
+    <linearGradient id="glass" x2="0" y2="1">
+      <stop stop-color="#263746" stop-opacity=".88"/>
+      <stop offset="1" stop-color="#121b27" stop-opacity=".84"/>
+    </linearGradient>
+    <filter id="shadow" x="-.2" y="-.2" width="1.4" height="1.5">
+      <feGaussianBlur in="SourceAlpha" stdDeviation="18"/>
+      <feOffset dy="12"/>
+      <feComponentTransfer><feFuncA type="linear" slope=".28"/></feComponentTransfer>
+      <feMerge><feMergeNode/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+  <rect width="1440" height="900" fill="url(#sky)"/>
+  <circle cx="1110" cy="205" r="104" fill="#ffd7a6" opacity=".8"/>
+  <path d="M0 525 210 345l174 142 184-224 214 236 191-153 232 181 235-179v552H0Z" fill="#3c5965" opacity=".74"/>
+  <path d="M0 627 198 477l177 132 236-203 175 194 228-152 168 126 258-196v522H0Z" fill="url(#hill)"/>
+  <path d="M0 722q260-119 478-11t437-19q252-115 525-11v219H0Z" fill="#152d38" opacity=".88"/>
+  <rect width="1440" height="32" fill="#101923" opacity=".48"/>
+  <g fill="#f3f6fa" font-family="Inter, sans-serif" font-size="13">
+    <circle cx="25" cy="16" r="7" fill="#73b9ff"/>
+    <text x="43" y="21" font-weight="600">Nexa</text>
+    <text x="105" y="21">Files</text><text x="150" y="21">File</text><text x="188" y="21">Edit</text><text x="229" y="21">View</text><text x="275" y="21">Go</text>
+    <text x="1195" y="21">◉</text><text x="1220" y="21">Wi-Fi</text><text x="1283" y="21">72%</text>
+    <text x="1342" y="21">Tue, Nov 17</text><text x="1391" y="21" text-anchor="end">1:28</text>
+  </g>
+  <g filter="url(#shadow)">
+    <rect x="176" y="132" width="808" height="524" rx="18" fill="url(#glass)" stroke="#ffffff" stroke-opacity=".42"/>
+    <path d="M176 150a18 18 0 0 1 18-18h772a18 18 0 0 1 18 18v38H176Z" fill="#ffffff" opacity=".06"/>
+  </g>
+  <g>
+    <circle cx="202" cy="159" r="6" fill="#ff6f68"/><circle cx="222" cy="159" r="6" fill="#f4c25e"/><circle cx="242" cy="159" r="6" fill="#61cf8b"/>
+    <text x="580" y="164" fill="#f3f6fa" font-family="Inter, sans-serif" font-size="14" font-weight="600" text-anchor="middle">Home</text>
+    <rect x="193" y="203" width="178" height="430" rx="10" fill="#0b131e" opacity=".26"/>
+    <g fill="#c6d0dc" font-family="Inter, sans-serif" font-size="13">
+      <text x="216" y="239" fill="#fff">Favorites</text>
+      <text x="216" y="276">⌂  Home</text><text x="216" y="311">◷  Recent</text><text x="216" y="346">★  Starred</text>
+      <text x="216" y="394" fill="#fff">Locations</text>
+      <text x="216" y="431">▣  Nexa Drive</text><text x="216" y="466">▤  Documents</text><text x="216" y="501">▧  Downloads</text>
+    </g>
+    <rect x="402" y="211" width="544" height="38" rx="9" fill="#ffffff" opacity=".1" stroke="#fff" stroke-opacity=".13"/>
+    <text x="420" y="235" fill="#bac6d3" font-family="Inter, sans-serif" font-size="13">⌕  Search this folder</text>
+    <g font-family="Inter, sans-serif" text-anchor="middle">
+      <g transform="translate(446 313)"><rect x="-24" y="-25" width="48" height="44" rx="11" fill="#f1c96e"/><path d="M-16-13h32v24h-32z" fill="#e9b64e"/><text y="47" fill="#edf1f6" font-size="12">Projects</text></g>
+      <g transform="translate(570 313)"><rect x="-24" y="-25" width="48" height="44" rx="11" fill="#8cc8ef"/><path d="M-16-13h32v24h-32z" fill="#6fb1df"/><text y="47" fill="#edf1f6" font-size="12">Documents</text></g>
+      <g transform="translate(694 313)"><rect x="-24" y="-25" width="48" height="44" rx="11" fill="#b9a2f6"/><path d="M-16-13h32v24h-32z" fill="#9981dd"/><text y="47" fill="#edf1f6" font-size="12">Pictures</text></g>
+      <g transform="translate(818 313)"><rect x="-24" y="-25" width="48" height="44" rx="11" fill="#79d3ae"/><path d="M-16-13h32v24h-32z" fill="#53b98e"/><text y="47" fill="#edf1f6" font-size="12">Downloads</text></g>
+    </g>
+    <path d="M401 393h545" stroke="#fff" stroke-opacity=".14"/>
+    <g fill="#eef2f6" font-family="Inter, sans-serif" font-size="13">
+      <text x="419" y="425" fill="#9eacba" font-size="11">NAME</text><text x="806" y="425" fill="#9eacba" font-size="11">MODIFIED</text>
+      <text x="419" y="461">▧  Welcome to AetherOS</text><text x="806" y="461" fill="#bdc7d2">Today, 9:42</text>
+      <text x="419" y="499">▧  UI concepts</text><text x="806" y="499" fill="#bdc7d2">Yesterday</text>
+      <text x="419" y="537">▧  System notes</text><text x="806" y="537" fill="#bdc7d2">Nov 14</text>
+    </g>
+  </g>
+  <g filter="url(#shadow)">
+    <rect x="1050" y="103" width="284" height="112" rx="16" fill="url(#glass)" stroke="#fff" stroke-opacity=".4"/>
+    <circle cx="1078" cy="132" r="11" fill="#76b8ff"/>
+    <text x="1098" y="136" fill="#f5f7fa" font-family="Inter, sans-serif" font-size="13" font-weight="600">Power</text>
+    <text x="1074" y="166" fill="#f5f7fa" font-family="Inter, sans-serif" font-size="14">Balanced mode</text>
+    <text x="1074" y="191" fill="#b8c5d2" font-family="Inter, sans-serif" font-size="12">Battery 72% · about 5 hr remaining</text>
+  </g>
+  <g filter="url(#shadow)">
+    <rect x="462" y="803" width="516" height="70" rx="22" fill="#111a24" fill-opacity=".72" stroke="#fff" stroke-opacity=".42"/>
+    <g font-family="Inter, sans-serif" font-size="10" text-anchor="middle" fill="#f1f5f8">
+      <g transform="translate(510 838)"><rect x="-19" y="-20" width="38" height="38" rx="11" fill="#76a9fa"/><text y="5" font-size="18">⌂</text><text y="31">Files</text></g>
+      <g transform="translate(575 838)"><rect x="-19" y="-20" width="38" height="38" rx="11" fill="#d87966"/><text y="5" font-size="18">◉</text><text y="31">Web</text></g>
+      <g transform="translate(640 838)"><rect x="-19" y="-20" width="38" height="38" rx="11" fill="#7dcb9a"/><text y="5" font-size="18">▤</text><text y="31">Notes</text></g>
+      <g transform="translate(705 838)"><rect x="-19" y="-20" width="38" height="38" rx="11" fill="#bd9af1"/><text y="5" font-size="18">▦</text><text y="31">Apps</text></g>
+      <g transform="translate(770 838)"><rect x="-19" y="-20" width="38" height="38" rx="11" fill="#e2b960"/><text y="5" font-size="18">⚙</text><text y="31">Settings</text></g>
+      <circle cx="836" cy="865" r="3" fill="#75b9ff"/>
+    </g>
+  </g>
+</svg>

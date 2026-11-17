@@ -1,0 +1,146 @@
+# D10 — Monitoring Design (Activity Manager, Battery History, Screen Time)
+
+Contracts first (section 5), then sources, sampling, storage, and overhead rules. Feature requirements: F13, F14. Battery policy: D5. Gates: section 8 of this document and the addendum 2 README.
+
+## 1. Principles
+
+1. **Read, do not poll more than needed.** Sampling rate depends on whether Activity Manager is open.
+2. **Read cheap sources first.** Expensive reads (per-process memory maps) only for visible rows.
+3. **Keep history small.** Roll up old data. Store only what is shown.
+4. **Never show zero for missing data.** Missing sources are shown as "not reported".
+5. **Local only.** No data leaves the machine.
+
+## 2. Sources
+
+| Metric | Source | Cost | Notes |
+| --- | --- | --- | --- |
+| Overall CPU | `/proc/stat` | Very low | Delta between samples |
+| Per-core CPU and clock | `/proc/stat`; `/sys/devices/system/cpu/cpu*/cpufreq/` | Very low | Clock from cpufreq |
+| CPU energy preference | `/sys/devices/system/cpu/cpu*/cpufreq/energy_performance_preference` | Very low | Shown in CPU detail |
+| Process CPU | `/proc/<pid>/stat` | Low (per process) | Delta between samples |
+| Process memory (cheap) | cgroup `memory.current` for each app scope | Very low | Used for background apps |
+| Process memory (private, detail) | `/proc/<pid>/smaps_rollup` | Medium | Only for visible rows |
+| System memory | `/proc/meminfo` | Very low | Used, available, cached |
+| zram and compressed memory | `/sys/block/zram*/mm_stat` | Very low | Compressed and original sizes |
+| Memory pressure | `/proc/pressure/memory` (PSI) | Very low | Also used for event waits |
+| Disk (system) | `/proc/diskstats` | Very low | Read and write rates; active time |
+| Disk (process) | `/proc/<pid>/io` | Low | Bytes read and written |
+| Disk health and SMART temperature | Kernel NVMe and SATA interfaces (hwmon) | Low | Read every 60 s |
+| Network (interfaces) | `/proc/net/dev` | Very low | Core |
+| Network (per app) | Kernel socket accounting through an eBPF program attached to app cgroups | Low to medium | Pack D only |
+| GPU engine use (system) | Driver statistics: `gpu_busy_percent` (AMD); performance counters (Intel) | Low | Where available |
+| GPU per process | DRM usage fields in `/proc/<pid>/fdinfo/<fd>` (engine time and memory keys) | Low to medium | Pack D for detail; basic per-app value in core when cheap |
+| Temperatures | hwmon `temp*_input`; thermal zones in `/sys/class/thermal/` | Very low | Labels from hwmon `temp*_label` |
+| Fan speeds | hwmon `fan*_input` | Very low | Where present |
+| Battery | `/sys/class/power_supply/BAT*/` (energy, power, capacity, status, cycle_count, energy_full, energy_full_design, temp); UPower | Very low | Through D5 telemetry |
+| Screen state | Compositor output power state; backlight in sysfs | Very low | Event-driven |
+| Focus | Compositor focus events (D3) | Event-driven | Screen Time and App history |
+| Services and sessions | systemd D-Bus (units); logind (sessions) | Low | On tab open only |
+| Startup items | Desktop autostart folders and user service list | Very low | On tab open only |
+
+Notes:
+- Battery cycle count is read from `cycle_count` when present. Many laptops do not report it; the battery view then says so.
+- Some GPU and sensor values depend on the driver. Missing values are shown as "not reported".
+
+## 3. Sampling Rates
+
+| Mode | Metrics | Rate | Target overhead |
+| --- | --- | --- | --- |
+| Activity Manager visible | CPU, memory, disk, network, GPU (basic), sensors, process list | 1 s | ≤ 1% of one core; ≤ 40 MB memory |
+| Activity Manager visible, Details tab | Adds per-process memory detail for visible rows | 2 s | ≤ 1% of one core |
+| Activity Manager closed | Battery, sensors, app energy and focus (for history) | 30 s | ≤ 0.2% of one core average; ≤ 10 MB |
+| Battery health | Full capacity and cycles | Once per day, plus at each session end | Negligible |
+| Screen state and focus | Event-driven | On event | Negligible |
+| Pack D (advanced) | Per-app network, per-process GPU detail | 2 s when visible; 30 s otherwise | ≤ 0.5% of one core |
+
+Sampling jitter: each sampler waits its interval plus a random offset (within 10%) so that all samplers do not wake the CPU at the same moment. This reduces wakeups (battery).
+
+## 4. Process Data Path
+
+1. The sampler reads the process list once per interval (cheap: names and IDs, cached).
+2. CPU and disk values are deltas from the previous sample.
+3. Memory for each row comes from the app's cgroup when the row is an app (cheap). For other rows, detail is read only when the row is visible.
+4. GPU per process comes from `fdinfo` for open DRM file descriptors of that process. Reads are limited to processes that hold a DRM file descriptor (the list is cached per interval).
+5. Results are sent to the Activity Manager view and to the history store (only the values in section 5 are stored).
+
+## 5. Contracts (Rust)
+
+```rust
+pub enum MetricId {
+    CpuTotal, CpuCore(u16), CpuClockMhz(u16), MemUsed, MemAvailable, MemCompressed,
+    MemPressure, DiskRead, DiskWrite, NetRx(String), NetTx(String),
+    GpuEngine(String), GpuMemory, TempSensor(String), FanRpm(String),
+    BatteryPercent, BatteryPowerW, BatteryTempC, BatteryHealth, BatteryCycles,
+    AppCpu(String), AppMemory(String), AppEnergy(String), AppGpu(String),
+    AppNetRx(String), AppNetTx(String), ScreenOn, FocusedApp,
+}
+
+pub struct MetricPoint { pub id: MetricId, pub at_unix_s: u64, pub value: f64 }
+
+pub enum Availability { Reported(f64), NotReported, Unsupported }
+
+pub trait Sampler {
+    fn id(&self) -> &'static str;
+    fn sample(&mut self) -> Vec<(MetricId, Availability)>;
+    fn interval(&self, visible: bool) -> std::time::Duration;
+}
+
+pub trait MetricStore {
+    fn append(&mut self, points: &[MetricPoint]) -> std::io::Result<()>;
+    fn query(&self, id: &MetricId, from_unix_s: u64, to_unix_s: u64) -> std::io::Result<Vec<MetricPoint>>;
+    fn rollup(&mut self, older_than_unix_s: u64, resolution: std::time::Duration) -> std::io::Result<()>;
+}
+
+pub trait ProcessSource {
+    fn list(&self) -> std::io::Result<Vec<ProcessRow>>;
+    fn detail(&self, pid: u32) -> std::io::Result<ProcessDetail>;
+}
+```
+
+Notes:
+- `Availability::NotReported` is the value shown when a sensor is missing. It is never stored as zero.
+- `ProcessRow` and `ProcessDetail` hold the Details tab fields (F13 TM-16).
+
+## 6. Storage
+
+| Store | Format | Resolution and retention | Size estimate |
+| --- | --- | --- | --- |
+| Live buffer | Memory ring | 60 seconds at 1 s | 1 MB |
+| Minute history | Binary append-only file | 1 minute for 30 days | About 40 MB per year before rollup |
+| Rollup 15 minutes | Binary file | 2 years | About 5 MB per year |
+| Battery daily | Small table | 5 years | Under 100 KB per year |
+| Sessions | Table | 2 years | Under 1 MB per year |
+| Screen time and focus | Per app per day table | 2 years | Under 5 MB per year |
+
+Location: `~/.local/state/nexa/metrics/` (user) and `/var/log/nexa/metrics/` (system values only). Files are written in batches (every 60 s) to reduce disk writes. Writes are asynchronous; a crash loses at most one minute of data.
+
+Rollup: a background job runs once per hour, at low priority, and converts old minute data to 15-minute averages (and maxima and minima where useful).
+
+## 7. Overhead Rules
+
+- No sampler runs more often than its interval, even when the view requests it.
+- A sampler that takes longer than its interval is lengthened, and the view shows "slow sampling" in the status line.
+- Disk writes are batched. No write for a metric that did not change.
+- Pack D samplers are not installed, not loaded, and not running when the pack is not installed.
+
+## 8. Gates
+
+| Gate | Pass value | Method |
+| --- | --- | --- |
+| G-TM1 Activity Manager overhead | Open and visible: ≤ 1% of one core and ≤ 40 MB; closed: ≤ 0.2% of one core average and ≤ 10 MB | Measure with `top` or `pidstat` for 10 minutes each |
+| G-TM2 Accuracy | Each value within 5% of the reference tool (`top`, `sensors`, `iostat`, `ip`) | Side-by-side sampling for 5 minutes |
+| G-BAT4 Cycle count | Matches the system battery report when reported | Compare with the reported value |
+| G-BAT5 History continuity | At least 99% of minutes recorded over 7 days while the machine is on | Count of stored minutes against uptime |
+| G-ST1 Screen time | Matches the compositor focus log within 1 minute per day | Compare totals for 3 test days |
+| G-OPT1 Core idle | Covered by F6 RES-03 and RES-04 with all core samplers running | 5-minute idle measurement |
+
+## 9. Tests
+
+| Test | Type | Pass criterion |
+| --- | --- | --- |
+| Sampler intervals | Unit | Each sampler runs at its stated rate, with jitter within 10% |
+| Missing sensor | Unit | Shows "not reported"; never stores zero |
+| Rollup | Unit | Totals match before and after rollup |
+| Store crash | Integration | At most one minute lost after a forced stop |
+| Overhead | System | G-TM1 passes |
+| Export | Integration | CSV and text reports match the store |

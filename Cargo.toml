@@ -1,0 +1,19 @@
+[workspace]
+resolver = "2"
+# P0-T05 skeleton: one crate per planned system component.
+# `apps/` joins the workspace when the first default app starts (P4).
+members = [
+    "compositor",
+    "shell",
+    "lifecycled",
+    "installer",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+[profile.release]
+lto = true
+strip = true

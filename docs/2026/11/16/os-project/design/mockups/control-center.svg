@@ -1,0 +1,50 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="900" viewBox="0 0 1440 900" role="img" aria-labelledby="title description">
+  <title id="title">AetherOS control center concept</title>
+  <desc id="description">A quick settings panel with network, Bluetooth, Focus, display, sound, brightness, and battery controls.</desc>
+  <defs>
+    <linearGradient id="bg" x2="1" y2="1"><stop stop-color="#223958"/><stop offset=".55" stop-color="#56849d"/><stop offset="1" stop-color="#d59377"/></linearGradient>
+    <linearGradient id="glass" x2="0" y2="1"><stop stop-color="#202d3b" stop-opacity=".95"/><stop offset="1" stop-color="#121b27" stop-opacity=".96"/></linearGradient>
+    <filter id="shadow" x="-.2" y="-.2" width="1.4" height="1.5"><feGaussianBlur in="SourceAlpha" stdDeviation="22"/><feOffset dy="14"/><feComponentTransfer><feFuncA type="linear" slope=".33"/></feComponentTransfer><feMerge><feMergeNode/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+  </defs>
+  <rect width="1440" height="900" fill="url(#bg)"/>
+  <path d="M0 544 233 347l172 159 222-224 214 228 179-144 238 201 182-156v489H0Z" fill="#315562"/>
+  <path d="M0 688q266-140 478-14t431-23q278-116 531-13v262H0Z" fill="#17303b"/>
+  <rect width="1440" height="900" fill="#07111b" opacity=".25"/>
+  <rect width="1440" height="32" fill="#101923" opacity=".48"/>
+  <g fill="#f3f6fa" font-family="Inter, sans-serif" font-size="13"><text x="28" y="21" font-weight="600">Nexa</text><text x="86" y="21">Desktop</text><text x="1180" y="21">◉  Wi-Fi</text><text x="1280" y="21">72%</text><text x="1350" y="21">1:28</text></g>
+  <g filter="url(#shadow)">
+    <rect x="936" y="52" width="360" height="702" rx="20" fill="url(#glass)" stroke="#fff" stroke-opacity=".44"/>
+    <text x="964" y="90" fill="#f5f7fa" font-family="Inter, sans-serif" font-size="18" font-weight="600">Control Center</text>
+    <circle cx="1262" cy="82" r="14" fill="#fff" fill-opacity=".1"/><text x="1262" y="87" text-anchor="middle" fill="#c6d1dc" font-family="Inter, sans-serif" font-size="13">···</text>
+    <g font-family="Inter, sans-serif">
+      <rect x="960" y="112" width="148" height="90" rx="13" fill="#4c8dff" fill-opacity=".8" stroke="#9fc5ff" stroke-opacity=".65"/>
+      <circle cx="985" cy="140" r="13" fill="#fff" fill-opacity=".2"/><text x="985" y="145" text-anchor="middle" fill="#fff" font-size="13">⌁</text>
+      <text x="980" y="174" fill="#fff" font-size="13" font-weight="600">Wi-Fi</text><text x="980" y="191" fill="#e4efff" font-size="11">Connected</text>
+      <rect x="1120" y="112" width="148" height="90" rx="13" fill="#fff" fill-opacity=".08" stroke="#fff" stroke-opacity=".18"/>
+      <circle cx="1145" cy="140" r="13" fill="#fff" fill-opacity=".12"/><text x="1145" y="145" text-anchor="middle" fill="#eaf0f6" font-size="13">ᛒ</text>
+      <text x="1140" y="174" fill="#f1f4f7" font-size="13" font-weight="600">Bluetooth</text><text x="1140" y="191" fill="#b8c5d2" font-size="11">On · Headphones</text>
+      <rect x="960" y="214" width="148" height="80" rx="13" fill="#fff" fill-opacity=".08" stroke="#fff" stroke-opacity=".18"/>
+      <circle cx="985" cy="241" r="13" fill="#fff" fill-opacity=".12"/><text x="985" y="246" text-anchor="middle" fill="#eaf0f6" font-size="13">◐</text>
+      <text x="980" y="276" fill="#f1f4f7" font-size="13" font-weight="600">Focus</text>
+      <rect x="1120" y="214" width="148" height="80" rx="13" fill="#fff" fill-opacity=".08" stroke="#fff" stroke-opacity=".18"/>
+      <circle cx="1145" cy="241" r="13" fill="#fff" fill-opacity=".12"/><text x="1145" y="246" text-anchor="middle" fill="#eaf0f6" font-size="13">▧</text>
+      <text x="1140" y="276" fill="#f1f4f7" font-size="13" font-weight="600">Display</text>
+    </g>
+    <text x="964" y="330" fill="#f1f4f7" font-family="Inter, sans-serif" font-size="13" font-weight="600">Sound</text>
+    <text x="1268" y="330" text-anchor="end" fill="#b8c5d2" font-family="Inter, sans-serif" font-size="12">68%</text>
+    <rect x="964" y="347" width="304" height="7" rx="4" fill="#fff" fill-opacity=".2"/><rect x="964" y="347" width="207" height="7" rx="4" fill="#76adff"/><circle cx="1171" cy="350.5" r="10" fill="#f7f9fc"/>
+    <text x="964" y="390" fill="#f1f4f7" font-family="Inter, sans-serif" font-size="13" font-weight="600">Brightness</text>
+    <text x="1268" y="390" text-anchor="end" fill="#b8c5d2" font-family="Inter, sans-serif" font-size="12">82%</text>
+    <rect x="964" y="407" width="304" height="7" rx="4" fill="#fff" fill-opacity=".2"/><rect x="964" y="407" width="249" height="7" rx="4" fill="#76adff"/><circle cx="1213" cy="410.5" r="10" fill="#f7f9fc"/>
+    <path d="M960 444h308" stroke="#fff" stroke-opacity=".16"/>
+    <text x="964" y="478" fill="#f1f4f7" font-family="Inter, sans-serif" font-size="14" font-weight="600">Battery</text>
+    <rect x="964" y="494" width="42" height="22" rx="5" fill="none" stroke="#a9bacb" stroke-width="1.5"/><rect x="1007" y="501" width="4" height="8" rx="2" fill="#a9bacb"/><rect x="967" y="497" width="29" height="16" rx="3" fill="#69d49a"/>
+    <text x="1020" y="510" fill="#edf2f7" font-family="Inter, sans-serif" font-size="13">72% · about 5 hr remaining</text>
+    <rect x="964" y="535" width="304" height="54" rx="11" fill="#fff" fill-opacity=".07"/>
+    <text x="980" y="558" fill="#f1f4f7" font-family="Inter, sans-serif" font-size="12">Power mode</text><text x="980" y="577" fill="#b8c5d2" font-family="Inter, sans-serif" font-size="11">Balanced</text><text x="1248" y="570" text-anchor="end" fill="#b8c5d2" font-family="Inter, sans-serif" font-size="15">⌄</text>
+    <rect x="964" y="609" width="304" height="54" rx="11" fill="#fff" fill-opacity=".07"/>
+    <text x="980" y="632" fill="#f1f4f7" font-family="Inter, sans-serif" font-size="12">Reduce transparency</text><text x="980" y="651" fill="#b8c5d2" font-family="Inter, sans-serif" font-size="11">Use solid surfaces</text>
+    <rect x="1218" y="625" width="34" height="20" rx="10" fill="#4c8dff"/><circle cx="1242" cy="635" r="7" fill="#fff"/>
+    <text x="964" y="710" fill="#86b5ff" font-family="Inter, sans-serif" font-size="12" font-weight="600">Open Settings</text>
+  </g>
+</svg>
