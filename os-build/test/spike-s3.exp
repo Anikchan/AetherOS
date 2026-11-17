@@ -1,0 +1,41 @@
+#!/usr/bin/expect -f
+# spike-s3.exp — P0-T09 Spike S3 guest driver (implementation-2, 2026-11-18).
+# Environment: ISO, KERNEL, INITRD, TRANSCRIPT. Drives the QEMU serial console.
+# Retry 2 fixes: psi=1 on the command line; reclaim runs in a fresh (unfrozen)
+# cgroup; freeze check compares appended byte counts, not possibly-empty cats.
+
+set timeout 900
+set iso $env(ISO)
+set kernel $env(KERNEL)
+set initrd $env(INITRD)
+log_file -noappend $env(TRANSCRIPT)
+
+spawn qemu-system-x86_64 -m 1024 -nographic -no-reboot \
+  -kernel $kernel -initrd $initrd \
+  -append {console=ttyS0 psi=1 modules=loop,squashfs,sd-mod,usb-storage} \
+  -cdrom $iso
+
+expect {
+    -re "login:" { }
+    timeout { puts "TIMEOUT waiting for login prompt"; exit 2 }
+}
+send "root\r"
+expect "# "
+
+# --- 1. PSI and cgroup v2 presence ---
+send {echo S3_BEGIN; uname -r; cat /proc/pressure/cpu /proc/pressure/memory /proc/pressure/io 2>&1; mount -t cgroup2 none /sys/fs/cgroup 2>/dev/null; mount | grep cgroup2; test -s /proc/pressure/cpu && test -s /proc/pressure/memory && test -s /proc/pressure/io && echo S3_PSI_"OK"; echo S3_PSI_DONE}
+send "\r"
+expect "S3_PSI_DONE"
+
+# --- 2. cgroup.freeze: frozen process must stop (append mode, byte counts) ---
+send {echo S3_FREEZE_BEGIN; cd /sys/fs/cgroup; echo "+memory" > cgroup.subtree_control; mkdir -p s3; rm -f /tmp/c; sh -c 'i=0; while :; do i=$((i+1)); echo $i >> /tmp/c; done' & PID=$!; echo $PID > s3/cgroup.procs; echo 1 > s3/cgroup.freeze; sleep 3; S1=$(wc -c < /tmp/c); sleep 3; S2=$(wc -c < /tmp/c); echo "frozen-bytes: $S1 $S2"; cat s3/cgroup.events; [ "$S1" = "$S2" ] && [ -n "$S1" ] && grep -q "frozen 1" s3/cgroup.events && echo S3_FREEZE_"OK"; echo 0 > s3/cgroup.freeze; kill $PID 2>/dev/null; echo S3_FREEZE_DONE}
+send "\r"
+expect "S3_FREEZE_DONE"
+
+# --- 3. memory.reclaim (fresh cgroup s3r; hog = clean bdev page cache, cheap under TCG) ---
+send {echo S3_RECLAIM_BEGIN; mkdir -p /sys/fs/cgroup/s3r; sh -c 'sleep 2; dd if=/dev/sr0 of=/dev/null bs=1M count=64 2>/dev/null; sleep 90' & HPID=$!; echo $HPID > /sys/fs/cgroup/s3r/cgroup.procs; sleep 30; BEFORE=$(cat /sys/fs/cgroup/s3r/memory.current); echo "current-before: $BEFORE"; echo "40M" > /sys/fs/cgroup/s3r/memory.reclaim; echo "reclaim-rc: $?"; AFTER=$(cat /sys/fs/cgroup/s3r/memory.current); echo "current-after: $AFTER"; [ "$BEFORE" -gt 30000000 ] && [ $((BEFORE - AFTER)) -gt 20000000 ] && echo S3_RECLAIM_"OK"; kill $HPID 2>/dev/null; rmdir /sys/fs/cgroup/s3r 2>/dev/null; echo S3_RECLAIM_DONE}
+send "\r"
+expect "S3_RECLAIM_DONE"
+
+send "poweroff\r"
+expect eof

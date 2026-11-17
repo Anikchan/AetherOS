@@ -22,7 +22,7 @@ resume without duplication.
 | P0-T04 Hardware list | Pending | Owner must supply their own PC list and spare machine details (04 section 6). |
 | P0-T07 Spike S1 (Slint layer-shell + blur) | Pending | Needs a Linux/Wayland session — run inside the QEMU VM or a Linux environment; VM has no Wayland compositor session yet. Slint evaluation can start on macOS headless partially, but layer-shell requires Linux. |
 | P0-T08 Spike S2 (Smithay compositor) | Pending | Needs Linux (DRM/KMS); run in VM or on the spare PC. |
-| P0-T09 Spike S3 (cgroup.freeze, memory.reclaim, PSI) | Pending | Needs a Linux VM/PC; guest kernel 6.18 supports all three. |
+| P0-T09 Spike S3 (cgroup.freeze, memory.reclaim, PSI) | **Done, partial (2026-11-18)** | Freeze Pass, reclaim Pass (~40 MB reclaimed). PSI absent from the Alpine virt kernel (CONFIG_PSI not built; `psi=1` has no effect) — re-test folded into P1-T01. Report: `docs/2026/11/18/results/p0-t09-spike-s3.md`. 2 harness retries used (frozen-cgroup reuse; TCG-too-slow hog); marker hygiene fixed. |
 | P0-T10 Spike S4 (UPower/sysfs battery) | Pending | Needs a machine with a battery (spare PC or a laptop VM passthrough). |
 | P0-T11 Verification setup (budgets.toml) | **Done (2026-11-17)** | `os-build/budgets.toml`, `os-build/metrics/FORMAT.md`, `os-build/check-budgets.py`, CI step added. Verified: pass case exit 0, over-limit case exit 1, full build+test+budget green. |
 | P0-T12 Spike S5 (Wine in VM) | Pending | Needs the Linux VM with X/Wayland; heavy. |
@@ -64,3 +64,8 @@ resume without duplication.
 - 2026-11-17: P0-T02 Done: owner accepted all ADRs (ADR-001 to ADR-023) in
   D2 section 9; spike safeguards annotated on ADR-003/004/009/021; D7 note
   updated. Commit created on `main`.
+- 2026-11-18: P0-T09 Done (partial): spike S3 harness (`spike-s3.sh` +
+  `spike-s3.exp`) run three times; freeze and memory.reclaim pass with real
+  numbers; PSI absent from the Alpine virt kernel (finding recorded,
+  re-test in P1-T01). Report at `docs/2026/11/18/results/p0-t09-spike-s3.md`.
+  Session name for the tracker is "implementation-2" (new day).
