@@ -15,4 +15,6 @@ jobs:
         run: cargo build --workspace
       - name: Test
         run: cargo test --workspace
+      - name: Check budgets (P0-T11)
+        run: python3 os-build/check-budgets.py os-build/metrics/sample.txt
       # P0-T11 (budgets file) and later gates plug in here.

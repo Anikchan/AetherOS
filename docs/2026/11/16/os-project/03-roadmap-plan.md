@@ -79,16 +79,16 @@ Each task has an ID. Use the ID in progress logs and commit messages.
 | --- | --- | --- | --- |
 | P0-T01 | Confirm requirements (owner answers Q1 to Q7) | README owner decisions table | Done (2026-11-16) |
 | P0-T02 | Review each decision in 01 section 6 and addendum 1 D2 section 9 (ADR-001 to ADR-020); owner accepts or changes each one | ADR statuses | All ADRs Accepted or Changed |
-| P0-T03 | Legal notes for Personal Edition: licenses of each component (02 section 3.1), including the Android container engine and Wine | Notes in 02 | Notes recorded |
+| P0-T03 | Legal notes for Personal Edition: licenses of each component (02 section 3.1), including the Android container engine and Wine | Notes in 02 | Done (2026-11-17, implementation-1): verified against project sources, recorded in 02 section 3.1; public-release re-check stays in P0-T03b |
 | P0-T03b | Deferred to public release: trademark search; Slint license terms; Secure Boot key policy; Android container license review | Notes in 02 | Deferred |
 | P0-T04 | Hardware list: owner's own PCs and one spare test machine (Q9) | Hardware list in 04 section 6 | List recorded |
 | P0-T05 | Repository layout and CI skeleton: `os-build/`, `compositor/`, `shell/`, `lifecycled/`, `powerd/`, `installer/`, `apps/`, `docs/` | Repository with empty build | Done (2026-11-17, implementation-1): workspace builds and tests pass; CI runs on first push |
-| P0-T06 | Linux test environment on the Mac (Q9): Linux x86-64 virtual machine with UEFI and BIOS, plus the spare PC | Boot test script | Boots a placeholder Linux image |
+| P0-T06 | Linux test environment on the Mac (Q9): Linux x86-64 virtual machine with UEFI and BIOS, plus the spare PC | Boot test script | Done (2026-11-17, implementation-1): Alpine x86-64 placeholder boots in QEMU in both BIOS and UEFI modes (results log `docs/2026/11/17/results/p0-t06-boot-test.md`); spare-PC validation moves to P2 |
 | P0-T07 | Spike S1: Slint draws a layer-shell surface and requests a background blur region | Spike report | Pass confirms ADR-004; fail triggers iced fallback |
 | P0-T08 | Spike S2: minimal Smithay compositor shows one client window | Spike report | Window shown |
 | P0-T09 | Spike S3: `cgroup.freeze`, `memory.reclaim`, and PSI all work on the test kernel | Spike report with numbers | All three work |
 | P0-T10 | Spike S4: battery state through UPower and sysfs; charge-limit controls | Spike report | Readings match system tools |
-| P0-T11 | Verification setup: budgets file (`os-build/budgets.toml`), results log folder, metrics format (addendum 1 D6; addendum 2 D10) | Budgets file; results folder | CI reads the budgets file |
+| P0-T11 | Verification setup: budgets file (`os-build/budgets.toml`), results log folder, metrics format (addendum 1 D6; addendum 2 D10) | Budgets file; results folder | Done (2026-11-17, implementation-1): budgets file, metrics format (`os-build/metrics/FORMAT.md`), and `os-build/check-budgets.py` wired into CI; verified pass and over-limit fail cases locally |
 | P0-T12 | Spike S5: one Windows test program through the Wine engine in a Linux virtual machine | Spike report with startup time | Program runs; startup time recorded |
 
 Exit criteria: all ADRs decided; spikes S1 to S5 reported; test environment and budgets working.
@@ -314,7 +314,7 @@ Update this table whenever a task changes state. Allowed statuses: Not started, 
 
 | Phase | Status | Owner | Last updated |
 | --- | --- | --- | --- |
-| P0 Foundation, spikes, verification setup | In progress (planning documents and addenda 1 and 2 drafted; P0-T05 Done 2026-11-17; P0-T02 review prep ready for owner; spikes not started) | Owner | 2026-11-17 |
+| P0 Foundation, spikes, verification setup | In progress (P0-T01, T03, T05, T06, T11 Done 2026-11-17; P0-T02 prep ready for owner; remaining: T04 owner hardware list, T07–T10 and T12 spikes) | Owner | 2026-11-17 |
 | P1 Base system boots and boot speed | Not started | Owner | 2026-11-17 |
 | P2 Hardware bring-up | Not started | Owner | 2026-11-17 |
 | P3 Compositor, window system, no-hang design | Not started | Owner | 2026-11-17 |
@@ -340,6 +340,8 @@ Update this table whenever a task changes state. Allowed statuses: Not started, 
 | 2026-11-17 | Planning session 5 | Owner answers Q8 to Q17 recorded in the main README (AetherOS name; AetherPad text app; AI pack up to 4 to 8 GB; Windows engine stays in Personal Edition; lightweight default browser). Browser added as P4-T18 family (+120 hours). Totals and dates updated. Open questions Q18 to Q24 listed in the README. |
 | 2026-11-17 | Planning session 6 | Owner answers Q18 to Q24 recorded: wants Android limits removed (investigate options), lazy Android start, monitoring app named "Activity Manager", no optional packs on by default, Android after M5, lighter AI default with user choice of larger models, lighter browser engine with HD-or-reduced playback. All open questions resolved. |
 | 2026-11-17 | implementation-1 | P0-T05 Done: Cargo workspace created (`aether-compositor`, `aether-shell`, `aether-lifecycled`, `aether-installer` placeholder crates; `apps/`, `os-build/` placeholders; `.github/workflows/ci.yml`). Git repo initialized on `main`. Verified on host: `cargo build --workspace` and `cargo test --workspace` pass (4/4 tests). Rust 1.100.0 installed via Homebrew. CI workflow will run on first push once a remote is added. Package prefix is `aether-` per ADR-012. P0-T02 review prep written to `docs/2026/11/17/os-implementation/p0-t02-adr-review-prep.md` (owner acceptance still required). |
+| 2026-11-17 | implementation-1 | P0-T03 Done: licenses verified via cited web research and recorded in 02 section 3.1 (kernel GPL-2.0-only, systemd LGPL-2.1+, Slint GPL-3.0/royalty-free-with-attribution, Wine DLL rule, Waydroid GPL-3.0, and others). P0-T06 Done: QEMU 11.1.3 + sevenzip installed; `os-build/test/boot-test.sh` boots the Alpine 3.24.4 x86-64 placeholder ISO to the login prompt in both BIOS (SeaBIOS) and UEFI (EDK2 via pflash) modes; results in D6 format at `docs/2026/11/17/results/p0-t06-boot-test.md`. Remaining P0: T04 (owner hardware list), T02 (owner ADR acceptance), T07–T12 (spikes, need the VM and component setup). |
+| 2026-11-17 | implementation-1 | P0-T11 Done: `os-build/budgets.toml` (limits and targets for G-RES1–4, G-SPD0–2, G-BAT2, G-TM1), `os-build/metrics/FORMAT.md` (fixed text format, aether/ paths per ADR-012), `os-build/check-budgets.py` (reads budgets.toml, compares a metrics file, fails the build over limit), and a CI step running it. Verified locally: pass case exit 0 with expected warnings; over-limit case exits 1; full build + test + budget check green. Remaining P0: T02 (owner), T04 (owner), T07–T10 and T12 (spikes needing a graphical/Linux session). |
 
 ## 5. Risk Register
 

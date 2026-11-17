@@ -33,24 +33,33 @@ This document separates what can be built from what cannot. It sets the expectat
 
 ### 3.1 Licenses of the main components
 
-These are the expected licenses. Verify each one during the legal review (P0-T03) before the first public release.
+These licenses were verified against the projects' own repositories and license
+files on 2026-11-17 (P0-T03, session implementation-1, with cited web research).
+Re-verify each at the pinned version before the first public release (P0-T03b).
 
-| Component | Expected license | Compatibility note |
+| Component | Verified license (SPDX, 2026-11-17) | Compatibility note |
 | --- | --- | --- |
-| Linux kernel | GPL-2.0 | Kernel modules must follow GPL rules. |
-| Buildroot | GPL-2.0 | Build tool only. Output images inherit the license of their packages. |
-| systemd | LGPL-2.1+ | Dynamic linking is fine. |
-| Smithay | MIT | Permissive. |
-| Slint (planned shell UI toolkit) | GPL-3.0 or royalty-free desktop license | Verify the terms before public release (P0-T03b). The royalty-free desktop license may require attribution. |
-| UPower | GPL-2.0+ | Used as an installed service, not forked. |
-| power-profiles-daemon | GPL-3.0 | Used as an installed service, not forked. |
-| Rust crates (planned) | Usually MIT or Apache-2.0 | Check each crate's license during P0-T03. |
-| Wine | LGPL-2.1+ | Wine is a reimplementation. Do not bundle any Microsoft DLL that is not licensed for redistribution. |
-| Mesa | MIT and others | Check per driver. |
-| Flatpak | LGPL-2.1+ | Used as an installed tool, not forked. |
+| Linux kernel | GPL-2.0-only | Shipping binaries is fine; offer complete corresponding source (kernel plus any out-of-tree patches). |
+| Buildroot | GPL-2.0-or-later | Build tool only. Output images inherit the license of their packages, not of Buildroot. |
+| systemd | LGPL-2.1-or-later (minor parts GPL-2.0) | Dynamic linking and unmodified binaries are fine; keep license texts, offer source for patches. |
+| Smithay | MIT | Permissive. Keep copyright and license notice. |
+| Slint (planned shell UI toolkit) | GPL-3.0-or-later OR Slint Royalty-Free Desktop License | The royalty-free option requires attribution: a "Made with Slint" entry in an About/Settings screen or splash, or a badge on the public download page. The GPL option avoids that but makes the shell GPL-3.0. Decide in P4 (and re-check in P0-T03b). |
+| UPower | GPL-2.0-or-later | Used as an installed service, not forked. |
+| power-profiles-daemon | GPL-3.0-or-later | Used as an installed service, not forked. |
+| NetworkManager | GPL-2.0-or-later (libnm: LGPL-2.1-or-later) | Used as an installed service; keep license texts. |
+| iwd | LGPL-2.1-or-later | Alternative network stack (P1-T04). Re-check at pinned version. |
+| greetd | GPL-3.0-or-later | Used as installed service (P4-T06). GPL-3 "installation information" applies if preinstalled on a device. |
+| RAUC | LGPL-2.1-or-later | A/B update framework (P9-T01). |
+| Rust crates (planned) | Usually MIT or Apache-2.0 | Check each crate's license when it is added; `cargo deny`-style check recommended in CI. |
+| Wine | LGPL-2.1-or-later | Wine's own built-in DLLs may be redistributed in the image with license text and source offer. Never ship genuine Microsoft DLLs copied from a Windows installation. |
+| Mesa | MIT (plus a few permissive exceptions) | Check per driver; include notices. |
+| Flatpak | LGPL-2.1-or-later | Used as an installed tool, not forked. |
 | PipeWire | MIT | Permissive. |
+| QEMU, SeaBIOS, EDK2/OVMF (test environment only) | QEMU GPL-2.0-or-later; SeaBIOS GPL-3.0-or-later (with LGPL-3.0 linking exception); EDK2 BSD-2-Clause-Patent | Host-side test tools, not shipped in AetherOS images; notes kept for completeness. |
+| Alpine Linux (test ISO) | Aggregate; per-package licenses (mostly GPL, LGPL, MIT, BSD) | Freely redistributable; pass through license texts if shared beyond this machine. |
+| Waydroid (Android container reference, addendum D9) | GPL-3.0-or-later (host tooling); container image AOSP/LineageOS-derived (Apache-2.0 and others) | Runs on the host kernel via binder (mainline since 5.18). Kernel needs binder enabled (P1-T01). Ship package and image with their own notices. |
 | Lucide icons (planned) | ISC | Permissive. |
-| llama.cpp (planned optional AI runtime, addendum F10) | MIT | Permissive. The model files have their own licenses; each is checked before use. |
+| llama.cpp (planned optional AI runtime, addendum F10) | MIT | Permissive. Model files have their own licenses; each is checked before use. |
 | Inter font (planned) | SIL OFL 1.1 | Redistribution allowed; keep the license file. |
 
 ### 3.2 Trademarks and branding

@@ -1,0 +1,36 @@
+# budgets.toml — P0-T11 verification budgets (addendum 1 D6, addendum 2 D10).
+#
+# Read by os-build/check-budgets.py in every CI build (G-RES* and related).
+# A metric that is not measured yet is skipped with a warning; a metric that
+# exceeds its limit fails the build.
+
+[budgets.image]
+# Gate: G-RES1 — full system image (D4 total budget)
+image_size_mb = { limit = 512, target = 400 }
+# Gate: P1-T06 — base image, compressed (P1 exit criterion)
+base_image_compressed_mb = { limit = 150 }
+# Gate: G-RES4 — installed size on disk, without optional engines or AI
+installed_size_gb = { limit = 3, target = 2 }
+
+[budgets.idle]
+# Gate: G-RES2 — idle RAM on a 4 GB machine after 5 minutes
+idle_ram_mb = { limit = 300, target = 250 }
+# Gate: G-RES3 — idle CPU average over 5 minutes
+idle_cpu_percent = { limit = 2.0, target = 1.0 }
+
+[budgets.speed]
+# Gate: G-SPD0 — bootloader to desktop, median of 10 boots
+boot_median_s = { limit = 15, target = 10 }
+# Gate: G-SPD1 — default apps, cold launch median of 20
+app_launch_cold_median_ms = { limit = 500 }
+# Gate: G-SPD2 — hibernated app restore median of 20
+app_restore_median_ms = { limit = 500 }
+
+[budgets.battery]
+# Gate: G-BAT2 — idle drain, W1 one-hour idle test
+idle_drain_percent_per_h = { limit = 6, target = 4 }
+
+[budgets.monitoring]
+# Gate: G-TM1 (addendum 2 D10) — Activity Manager overhead cap
+monitoring_cpu_percent = { limit = 2.0 }
+monitoring_ram_mb = { limit = 100 }

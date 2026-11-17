@@ -16,10 +16,27 @@ resume without duplication.
 | Task | State | Notes |
 | --- | --- | --- |
 | P0-T05 Repository layout and CI skeleton | **Done (2026-11-17)** | Cargo workspace: `aether-compositor`, `aether-shell`, `aether-lifecycled`, `aether-installer`; `apps/`, `os-build/` placeholders; GitHub Actions CI. Verified: `cargo build --workspace` and `cargo test --workspace` pass (4/4). Rust 1.100.0 installed via Homebrew. Git repo initialized on `main`; CI runs on first push (no remote yet). |
-| P0-T05 verification | Done | Commands: `cargo build --workspace`, `cargo test --workspace` on macOS host (Apple Silicon). |
+| P0-T03 Legal notes | **Done (2026-11-17)** | Licenses verified via researcher (cited web research) and recorded in 02 section 3.1. Key rules: never ship genuine Windows DLLs with Wine; Slint royalty-free path needs attribution (About screen or download-page badge); keep H.264/AAC out of any publicly distributed image. Public-release re-check stays in P0-T03b. |
+| P0-T06 Linux test environment | **Done (2026-11-17)** | QEMU 11.1.3 + sevenzip installed via Homebrew. `os-build/test/boot-test.sh` boots the Alpine 3.24.4 x86-64 placeholder ISO to the login prompt in BIOS (SeaBIOS) and UEFI (EDK2 pflash; QEMU 11 rejects edk2 via `-bios`) modes. Results (D6 format): `docs/2026/11/17/results/p0-t06-boot-test.md`. Spare-PC validation moves to P2. |
 | P0-T02 ADR review | Prep done; owner acceptance pending | Summary in `p0-t02-adr-review-prep.md`. Do not mark Done until the owner accepts/changes each ADR. |
-| P0-T06 Linux test environment | Pending | Needs a Linux x86-64 VM (UTM/QEMU) on this Apple Silicon Mac; heavy, propose as next session. |
-| P0-T07..T12 Spikes S1–S5, budgets file | Pending | Require the Linux test environment (P0-T06) or Linux VM; not startable on the macOS host. |
+| P0-T04 Hardware list | Pending | Owner must supply their own PC list and spare machine details (04 section 6). |
+| P0-T07 Spike S1 (Slint layer-shell + blur) | Pending | Needs a Linux/Wayland session — run inside the QEMU VM or a Linux environment; VM has no Wayland compositor session yet. Slint evaluation can start on macOS headless partially, but layer-shell requires Linux. |
+| P0-T08 Spike S2 (Smithay compositor) | Pending | Needs Linux (DRM/KMS); run in VM or on the spare PC. |
+| P0-T09 Spike S3 (cgroup.freeze, memory.reclaim, PSI) | Pending | Needs a Linux VM/PC; guest kernel 6.18 supports all three. |
+| P0-T10 Spike S4 (UPower/sysfs battery) | Pending | Needs a machine with a battery (spare PC or a laptop VM passthrough). |
+| P0-T11 Verification setup (budgets.toml) | **Done (2026-11-17)** | `os-build/budgets.toml`, `os-build/metrics/FORMAT.md`, `os-build/check-budgets.py`, CI step added. Verified: pass case exit 0, over-limit case exit 1, full build+test+budget green. |
+| P0-T12 Spike S5 (Wine in VM) | Pending | Needs the Linux VM with X/Wayland; heavy. |
+
+## Next steps for this session
+
+1. P0-T09 spike S3 inside the QEMU VM (needs a writable Alpine rootfs —
+   install Alpine to a disk image, then test cgroup.freeze, memory.reclaim,
+   PSI).
+2. P0-T07/T08 spikes need a graphical Linux environment — set up in the VM
+   (software rendering + Wayland) or defer to the spare PC; propose to the
+   owner.
+3. Owner items waiting: P0-T02 ADR acceptance, P0-T04 hardware list, git
+   remote for CI.
 
 ## Working rules applied
 
@@ -35,3 +52,12 @@ resume without duplication.
   `cargo test --workspace` pass (4/4 tests). P0-T05 marked Done in the roadmap
   tracker with a progress-log line. README status updated. P0-T02 prep doc
   written. Commit created on `main`.
+- 2026-11-17: P0-T03 and P0-T06 marked In progress in the tracker; license
+  research launched; QEMU install started.
+- 2026-11-17: P0-T03 Done (02 section 3.1 updated with verified SPDX licenses
+  and rules). P0-T06 Done: BIOS and UEFI boot tests pass (two retries on the
+  UEFI path: hdiutil mount failed → switched to sevenzip extraction; QEMU 11
+  rejects edk2 via `-bios` → switched to pflash). Results recorded in D6
+  format. Tracker and progress log updated.
+- 2026-11-17: P0-T11 Done: budgets.toml + check-budgets.py + metrics format +
+  CI step; pass and fail cases verified locally. Commit created on `main`.

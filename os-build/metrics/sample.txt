@@ -1,0 +1,6 @@
+# Sample metrics for the skeleton build (P0-T11).
+# Real values arrive with the image build (P1-T06) and idle measurements.
+# Only keys present are checked; missing keys are skipped with a warning.
+
+image_size_mb = 401          # under limit 512, over target 400 -> warning expected
+idle_ram_mb = 231            # within target
