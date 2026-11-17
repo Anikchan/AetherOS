@@ -4,7 +4,7 @@ This document answers: "I don't want to rule out a separate kernel completely, b
 
 ## 1. Decision (Now)
 
-- **Use the Linux kernel** (ADR-001 remains Proposed until the owner accepts it in P0-T02).
+- **Use the Linux kernel** (ADR-001 Accepted by the owner, 2026-11-17, in P0-T02).
 - **Keep a separate kernel possible** by isolating kernel-specific code (section 3).
 - **Do not build a kernel now.** A new kernel would have to rebuild driver support from scratch. That is the requirement that most often stops new operating systems, and it conflicts with Q2 ("any system").
 

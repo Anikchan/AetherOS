@@ -78,7 +78,7 @@ Each task has an ID. Use the ID in progress logs and commit messages.
 | ID | Task | Output | Done when |
 | --- | --- | --- | --- |
 | P0-T01 | Confirm requirements (owner answers Q1 to Q7) | README owner decisions table | Done (2026-11-16) |
-| P0-T02 | Review each decision in 01 section 6 and addendum 1 D2 section 9 (ADR-001 to ADR-020); owner accepts or changes each one | ADR statuses | All ADRs Accepted or Changed |
+| P0-T02 | Review each decision in 01 section 6 and addendum 1 D2 section 9 (ADR-001 to ADR-020); owner accepts or changes each one | ADR statuses | Done (2026-11-17, implementation-1): owner accepted ADR-001 to ADR-023 (spike safeguards noted on ADR-003, 004, 009, 021); statuses in D2 section 9 |
 | P0-T03 | Legal notes for Personal Edition: licenses of each component (02 section 3.1), including the Android container engine and Wine | Notes in 02 | Done (2026-11-17, implementation-1): verified against project sources, recorded in 02 section 3.1; public-release re-check stays in P0-T03b |
 | P0-T03b | Deferred to public release: trademark search; Slint license terms; Secure Boot key policy; Android container license review | Notes in 02 | Deferred |
 | P0-T04 | Hardware list: owner's own PCs and one spare test machine (Q9) | Hardware list in 04 section 6 | List recorded |
@@ -314,7 +314,7 @@ Update this table whenever a task changes state. Allowed statuses: Not started, 
 
 | Phase | Status | Owner | Last updated |
 | --- | --- | --- | --- |
-| P0 Foundation, spikes, verification setup | In progress (P0-T01, T03, T05, T06, T11 Done 2026-11-17; P0-T02 prep ready for owner; remaining: T04 owner hardware list, T07–T10 and T12 spikes) | Owner | 2026-11-17 |
+| P0 Foundation, spikes, verification setup | In progress (P0-T01, T02, T03, T05, T06, T11 Done 2026-11-17; all ADRs Accepted; remaining: T04 owner hardware list, T07–T10 and T12 spikes) | Owner | 2026-11-17 |
 | P1 Base system boots and boot speed | Not started | Owner | 2026-11-17 |
 | P2 Hardware bring-up | Not started | Owner | 2026-11-17 |
 | P3 Compositor, window system, no-hang design | Not started | Owner | 2026-11-17 |
@@ -342,6 +342,7 @@ Update this table whenever a task changes state. Allowed statuses: Not started, 
 | 2026-11-17 | implementation-1 | P0-T05 Done: Cargo workspace created (`aether-compositor`, `aether-shell`, `aether-lifecycled`, `aether-installer` placeholder crates; `apps/`, `os-build/` placeholders; `.github/workflows/ci.yml`). Git repo initialized on `main`. Verified on host: `cargo build --workspace` and `cargo test --workspace` pass (4/4 tests). Rust 1.100.0 installed via Homebrew. CI workflow will run on first push once a remote is added. Package prefix is `aether-` per ADR-012. P0-T02 review prep written to `docs/2026/11/17/os-implementation/p0-t02-adr-review-prep.md` (owner acceptance still required). |
 | 2026-11-17 | implementation-1 | P0-T03 Done: licenses verified via cited web research and recorded in 02 section 3.1 (kernel GPL-2.0-only, systemd LGPL-2.1+, Slint GPL-3.0/royalty-free-with-attribution, Wine DLL rule, Waydroid GPL-3.0, and others). P0-T06 Done: QEMU 11.1.3 + sevenzip installed; `os-build/test/boot-test.sh` boots the Alpine 3.24.4 x86-64 placeholder ISO to the login prompt in both BIOS (SeaBIOS) and UEFI (EDK2 via pflash) modes; results in D6 format at `docs/2026/11/17/results/p0-t06-boot-test.md`. Remaining P0: T04 (owner hardware list), T02 (owner ADR acceptance), T07–T12 (spikes, need the VM and component setup). |
 | 2026-11-17 | implementation-1 | P0-T11 Done: `os-build/budgets.toml` (limits and targets for G-RES1–4, G-SPD0–2, G-BAT2, G-TM1), `os-build/metrics/FORMAT.md` (fixed text format, aether/ paths per ADR-012), `os-build/check-budgets.py` (reads budgets.toml, compares a metrics file, fails the build over limit), and a CI step running it. Verified locally: pass case exit 0 with expected warnings; over-limit case exits 1; full build + test + budget check green. Remaining P0: T02 (owner), T04 (owner), T07–T10 and T12 (spikes needing a graphical/Linux session). |
+| 2026-11-17 | implementation-1 | P0-T02 Done: owner accepted ADR-001 through ADR-023 in D2 section 9 (Groups 1 and 2 accepted as proposed; ADR-004, 009, 021 accepted with spike safeguards — S1/S5/S6 still validate, fallbacks unchanged). D7 kernel note updated. ADR decision log statuses are now all Accepted. Remaining P0: T04 (owner hardware list), T07–T10 and T12 (spikes). |
 
 ## 5. Risk Register
 

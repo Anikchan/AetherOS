@@ -18,7 +18,7 @@ resume without duplication.
 | P0-T05 Repository layout and CI skeleton | **Done (2026-11-17)** | Cargo workspace: `aether-compositor`, `aether-shell`, `aether-lifecycled`, `aether-installer`; `apps/`, `os-build/` placeholders; GitHub Actions CI. Verified: `cargo build --workspace` and `cargo test --workspace` pass (4/4). Rust 1.100.0 installed via Homebrew. Git repo initialized on `main`; CI runs on first push (no remote yet). |
 | P0-T03 Legal notes | **Done (2026-11-17)** | Licenses verified via researcher (cited web research) and recorded in 02 section 3.1. Key rules: never ship genuine Windows DLLs with Wine; Slint royalty-free path needs attribution (About screen or download-page badge); keep H.264/AAC out of any publicly distributed image. Public-release re-check stays in P0-T03b. |
 | P0-T06 Linux test environment | **Done (2026-11-17)** | QEMU 11.1.3 + sevenzip installed via Homebrew. `os-build/test/boot-test.sh` boots the Alpine 3.24.4 x86-64 placeholder ISO to the login prompt in BIOS (SeaBIOS) and UEFI (EDK2 pflash; QEMU 11 rejects edk2 via `-bios`) modes. Results (D6 format): `docs/2026/11/17/results/p0-t06-boot-test.md`. Spare-PC validation moves to P2. |
-| P0-T02 ADR review | Prep done; owner acceptance pending | Summary in `p0-t02-adr-review-prep.md`. Do not mark Done until the owner accepts/changes each ADR. |
+| P0-T02 ADR review | **Done (2026-11-17)** | Owner accepted ADR-001 to ADR-023: Groups 1 and 2 as proposed; ADR-004/009/021 accepted with spike safeguards (S1/S5/S6 still validate; fallbacks unchanged). Statuses updated in D2 section 9; D7 kernel note updated. |
 | P0-T04 Hardware list | Pending | Owner must supply their own PC list and spare machine details (04 section 6). |
 | P0-T07 Spike S1 (Slint layer-shell + blur) | Pending | Needs a Linux/Wayland session — run inside the QEMU VM or a Linux environment; VM has no Wayland compositor session yet. Slint evaluation can start on macOS headless partially, but layer-shell requires Linux. |
 | P0-T08 Spike S2 (Smithay compositor) | Pending | Needs Linux (DRM/KMS); run in VM or on the spare PC. |
@@ -61,3 +61,6 @@ resume without duplication.
   format. Tracker and progress log updated.
 - 2026-11-17: P0-T11 Done: budgets.toml + check-budgets.py + metrics format +
   CI step; pass and fail cases verified locally. Commit created on `main`.
+- 2026-11-17: P0-T02 Done: owner accepted all ADRs (ADR-001 to ADR-023) in
+  D2 section 9; spike safeguards annotated on ADR-003/004/009/021; D7 note
+  updated. Commit created on `main`.

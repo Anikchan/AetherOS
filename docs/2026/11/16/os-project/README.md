@@ -2,7 +2,7 @@
 
 - Created: 2026-11-16
 - Last updated: 2026-11-17 (addendum 1: five questions and three requirements; addendum 2: Android apps, Activity Manager, battery analytics, screen time, optional packs; see `docs/2026/11/17/os-addendum-1/README.md` and `docs/2026/11/17/os-addendum-2/README.md`)
-- Status: Implementation started. Phase P0 in progress. Done 2026-11-17: P0-T05 (repo and CI skeleton), P0-T03 (verified legal notes in 02 section 3.1), P0-T06 (QEMU x86-64 test environment, BIOS and UEFI boot tests pass), P0-T11 (budgets file, metrics format, CI budget check). Next: P0-T02 owner ADR acceptance; P0-T07–T10 and T12 spikes; P0-T04 owner hardware list.
+- Status: Implementation started. Phase P0 in progress. Done 2026-11-17: P0-T02 (all ADRs Accepted by owner), P0-T03 (verified legal notes in 02 section 3.1), P0-T05 (repo and CI skeleton), P0-T06 (QEMU x86-64 test environment, BIOS and UEFI boot tests pass), P0-T11 (budgets file, metrics format, CI budget check). Remaining: P0-T04 owner hardware list; P0-T07–T10 and T12 spikes.
 - Scope: Personal Edition first. Public release is a distant future goal.
 - Team: One engineer (the owner) at 26 hours per week.
 - OS name: AetherOS (chosen by the owner on 2026-11-17). Component names still use the "nexa-" prefix as a placeholder; rename to "aether-" when code starts. Trademark check is deferred until public release (task P0-T03b).
