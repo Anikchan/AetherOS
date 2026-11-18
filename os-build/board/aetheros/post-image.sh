@@ -26,7 +26,7 @@ cp "${BINARIES_DIR}/bzImage" "${BINARIES_DIR}/efi-part/bzImage"
 cat > "${BINARIES_DIR}/efi-part/loader/entries/aetheros.conf" <<'EOF'
 title AetherOS
 linux /bzImage
-options root=/dev/vda2 rootfstype=squashfs console=ttyS0
+options root=/dev/vda2 rootfstype=squashfs console=ttyS0 net.ifnames=0 biosdevname=0
 EOF
 
 # --- Assemble the bootable UEFI disk image ---

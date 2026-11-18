@@ -14,7 +14,7 @@ log_file -noappend $env(TRANSCRIPT)
 spawn qemu-system-x86_64 -m 512 -nographic -no-reboot \
   -kernel $kernel \
   -drive file=$rootfs,format=raw,if=virtio \
-  -append {root=/dev/vda rootfstype=squashfs console=ttyS0}
+  -append {root=/dev/vda rootfstype=squashfs console=ttyS0 net.ifnames=0 biosdevname=0}
 
 expect {
     -re "login:" { }
