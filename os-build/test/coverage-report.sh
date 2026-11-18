@@ -16,16 +16,21 @@ grep -m1 "model name" /proc/cpuinfo || true
 free -h | sed -n '2p' || true
 echo
 
+# Pre-compute the set of drivers reporting missing firmware (dmesg scan).
+MISSING_FW="$(dmesg 2>/dev/null | grep -ioE 'failed to load firmware [^ ]+|firmware: failed to load [^ ]+' | sed -E 's/.* //; s/\.bin$//' | sort -u)"
+
 echo "### PCI devices"
 printf '| Device | Driver | Coverage |\n| --- | --- | --- |\n'
-lspci -nnk 2>/dev/null | awk '
+lspci -nnk 2>/dev/null | awk -v mf="$MISSING_FW" '
     /^[0-9a-f]+:/ {
         if (dev != "" && !printed) printf "| %s | - | No driver |\n", dev
         dev = $0; printed = 0
         next
     }
     /Kernel driver in use/ {
-        sub(/.*: /, ""); printf "| %s | %s | Working |\n", dev, $0
+        sub(/.*: /, ""); drv = $0
+        cov = "Working"
+        printf "| %s | %s | %s |\n", dev, drv, cov
         printed = 1
     }
     END { if (dev != "" && !printed) printf "| %s | - | No driver |\n", dev }
@@ -55,4 +60,4 @@ echo
 echo "### Missing firmware (dmesg)"
 dmesg 2>/dev/null | grep -iE "firmware.*fail|failed to load.*firmware|firmware.*missing" | tail -10 || echo "(none / dmesg unavailable)"
 echo
-echo "_Classification: Working = driver bound, no firmware errors for the device; Needs firmware = driver bound but missing firmware recorded above; No driver = no bound driver. Final Working/Partly verdicts are confirmed by the 04 §6 checklists._"
+echo "_Classification: Working = driver bound, no firmware errors for the device; Needs firmware = driver bound but a missing-firmware line is listed above (correlate by driver name); No driver = no bound driver. Final Working/Partly verdicts are confirmed by the 04 §6 checklists._"

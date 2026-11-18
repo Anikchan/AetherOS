@@ -128,6 +128,11 @@ resume without duplication.
   Wayland API errors (edits only; coordinating session commits after the
   in-flight S2 run 44235635068 completes). P0-T07 moves Blocked → In progress
   on the next push.
+- 2026-11-18: Owner heading out ~5-6h; autonomous run continues. coverage-report.sh
+  refined (Needs firmware classification note; clean local smoke). P1-T06/T08 D6
+  skeleton written at docs/2026/11/18/results/p1-boot-speed.md awaiting the
+  definitive buildroot-build verdict. Root cause of header failure traced and
+  fixed; run 44240785348 is the one to watch.
 - 2026-11-18: LOCAL LINUX TYPE-CHECK ESTABLISHED (unblocks all spike work):
   brew rustup + `rustup toolchain install stable -t aarch64-apple-darwin,
   x86_64-unknown-linux-gnu`; run checks as
