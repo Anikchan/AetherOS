@@ -9,7 +9,8 @@ on:
 
 jobs:
   busybox-init:
-    runs-on: ubuntu-latest
+    # Same runner pin as buildroot-build (host-m4/gcc compatibility).
+    runs-on: ubuntu-22.04
     timeout-minutes: 150
     steps:
       - uses: actions/checkout@v4

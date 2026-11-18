@@ -17,7 +17,9 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    # host-m4 (gnulib) fails to compile on the runner's newest gcc (C23
+    # _Generic conflict); 22.04 has a compatible toolchain.
+    runs-on: ubuntu-22.04
     timeout-minutes: 150
     steps:
       - uses: actions/checkout@v4
