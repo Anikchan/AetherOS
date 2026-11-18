@@ -12,7 +12,12 @@ license = "MIT"
 
 [workspace.dependencies]
 libc = "0.2.170"
+# Client-side bindings for the hand-inlined KDE blur protocol in S1
+# (`wayland_scanner::generate_interfaces!` expands to `wayland_backend::...`).
+wayland-backend = "0.3.15"
 wayland-client = "0.31.10"
 wayland-scanner = "0.31.11"
-wayland-protocols = "0.32.8"
-wayland-protocols-wlr = "0.3.8"
+# The `client`/`server` module trees of the protocol crates are optional
+# (they have NO default features); `client` must be requested explicitly.
+wayland-protocols = { version = "0.32.8", features = ["client"] }
+wayland-protocols-wlr = { version = "0.3.8", features = ["client"] }

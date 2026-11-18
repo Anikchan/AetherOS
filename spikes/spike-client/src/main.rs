@@ -7,7 +7,7 @@
 
 use std::cell::Cell;
 use std::io;
-use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
+use std::os::fd::{AsFd, AsRawFd, FromRawFd, OwnedFd};
 use std::time::{Duration, Instant};
 
 use wayland_client::protocol::{
@@ -300,7 +300,7 @@ fn run() -> Result<(), String> {
         .fd
         .try_clone()
         .map_err(|e| format!("dup shm fd: {e:?}"))?;
-    let pool = shm.create_pool(pool_fd, WIDTH * HEIGHT * 4, &qh, ());
+    let pool = shm.create_pool(pool_fd.as_fd(), WIDTH * HEIGHT * 4, &qh, ());
     let buffer = pool.create_buffer(0, WIDTH, HEIGHT, STRIDE, wl_shm::Format::Xrgb8888, &qh, ());
 
     surface.attach(Some(&buffer), 0, 0);

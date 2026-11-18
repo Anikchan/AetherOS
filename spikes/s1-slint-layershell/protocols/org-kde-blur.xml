@@ -10,8 +10,9 @@
   </copyright>
 
   <interface name="org_kde_kwin_blur_manager" version="1">
-    <request name="create" new_id="org_kde_kwin_blur">
+    <request name="create">
       <arg name="surface" type="object" interface="wl_surface"/>
+      <arg name="id" type="new_id" interface="org_kde_kwin_blur"/>
     </request>
     <request name="unset">
       <arg name="surface" type="object" interface="wl_surface"/>

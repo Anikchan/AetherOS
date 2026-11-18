@@ -19,7 +19,7 @@
 
 use std::cell::{Cell, RefCell};
 use std::io;
-use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
+use std::os::fd::{AsFd, AsRawFd, FromRawFd, OwnedFd};
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
@@ -409,7 +409,12 @@ fn run() -> Result<(), String> {
         .fd
         .try_clone()
         .map_err(|e| format!("dup shm fd: {e:?}"))?;
-    let pool = shm.create_pool(pool_fd, (DEFAULT_WIDTH * DEFAULT_HEIGHT * 4) as i32, &qh, ());
+    let pool = shm.create_pool(
+        pool_fd.as_fd(),
+        (DEFAULT_WIDTH * DEFAULT_HEIGHT * 4) as i32,
+        &qh,
+        (),
+    );
     let buffer = pool.create_buffer(
         0,
         DEFAULT_WIDTH as i32,
