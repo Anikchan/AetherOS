@@ -30,8 +30,8 @@ send {echo S_BOOT_LOGIN_"OK"; sleep 8; echo S_MOUNTS_BEGIN; mount | grep " /var 
 send "\r"
 expect "S_MOUNTS_DONE"
 
-# --- P1-T04: DHCP on eth0 (qemu user networking; wait for NM's lease) ---
-send {echo S_DHCP_BEGIN; nmcli networking connectivity 2>/dev/null; for i in $(seq 1 20); do ip -4 addr show dev eth0 | grep -q inet && break; sleep 1; done; ip -4 addr show dev eth0 | grep inet && echo S_DHCP_"OK"; echo S_DHCP_DONE}
+# --- P1-T04: DHCP on eth0 (qemu user networking; wait for lease) ---
+send {echo S_DHCP_BEGIN; for i in $(seq 1 20); do ip -4 addr show dev eth0 | grep -q inet && break; sleep 1; done; ip -4 addr show dev eth0 | grep inet && echo S_DHCP_"OK"; echo S_DHCP_DONE}
 send "\r"
 expect "S_DHCP_DONE"
 

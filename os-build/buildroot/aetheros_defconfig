@@ -56,8 +56,11 @@ BR2_TARGET_GRUB2_I386_PC=y
 BR2_PACKAGE_E2FSPROGS=y
 BR2_PACKAGE_BTRFS_PROGS=y
 
-# --- Networking (P1-T04; NetworkManager chosen at build time) ---
-BR2_PACKAGE_NETWORKMANAGER=y
+# --- Networking (P1-T04; systemd-networkd with DHCP) ---
+# NetworkManager requires D-Bus which is not enabled; use systemd-networkd
+# (already built by BR2_PACKAGE_SYSTEMD) with a DHCP .network unit in the
+# rootfs overlay.
+BR2_PACKAGE_SYSTEMD_NETWORKD=y
 
 # --- Battery and power data sources (D5, ADR-014) ---
 BR2_PACKAGE_UPOWER=y
