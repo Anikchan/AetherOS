@@ -123,3 +123,8 @@ resume without duplication.
 - 2026-11-18: buildroot-build (run 44234669522, ubuntu-22.04 pin) in progress
   (~1 h); boot-chain flips (P1-T02..T05, T07) and P1-T06/T08 D6 numbers wait
   on its verdict.
+- 2026-11-18: Owner approved a fresh round on the P0-T07 blocker: developer
+  agent (session ses_e13244ee0ffeeZ8CGFtGadg8B5) fixing the six recorded
+  Wayland API errors (edits only; coordinating session commits after the
+  in-flight S2 run 44235635068 completes). P0-T07 moves Blocked → In progress
+  on the next push.
