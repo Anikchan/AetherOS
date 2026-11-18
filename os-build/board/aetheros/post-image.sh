@@ -21,9 +21,9 @@ OBJCOPY=objcopy
 printf 'root=/dev/vda2 rootfstype=squashfs console=ttyS0\n' > "${BINARIES_DIR}/aetheros.cmdline"
 printf 'ID=aetheros\nNAME=AetherOS\nVERSION=0.1\n' > "${BINARIES_DIR}/aetheros.osrel"
 ${OBJCOPY} \
-    --add-section .osrel="${BINARIES_DIR}/aetheros.osrel" --change-section-vma .osrel=0 \
-    --add-section .cmdline="${BINARIES_DIR}/aetheros.cmdline" --change-section-vma .cmdline=0 \
-    --add-section .linux="${BINARIES_DIR}/bzImage" --change-section-vma .linux=0 \
+    --add-section .osrel="${BINARIES_DIR}/aetheros.osrel" --change-section-vma .osrel=0x20000 \
+    --add-section .cmdline="${BINARIES_DIR}/aetheros.cmdline" --change-section-vma .cmdline=0x30000 \
+    --add-section .linux="${BINARIES_DIR}/bzImage" --change-section-vma .linux=0x40000 \
     --set-section-flags .osrel=data,contents --set-section-flags .cmdline=data,contents \
     --set-section-flags .linux=data,contents \
     "${STUB}" "${BINARIES_DIR}/aetheros.efi"
