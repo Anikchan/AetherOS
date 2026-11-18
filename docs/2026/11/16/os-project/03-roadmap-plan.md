@@ -81,7 +81,7 @@ Each task has an ID. Use the ID in progress logs and commit messages.
 | P0-T02 | Review each decision in 01 section 6 and addendum 1 D2 section 9 (ADR-001 to ADR-020); owner accepts or changes each one | ADR statuses | Done (2026-11-17, implementation-1): owner accepted ADR-001 to ADR-023 (spike safeguards noted on ADR-003, 004, 009, 021); statuses in D2 section 9 |
 | P0-T03 | Legal notes for Personal Edition: licenses of each component (02 section 3.1), including the Android container engine and Wine | Notes in 02 | Done (2026-11-17, implementation-1): verified against project sources, recorded in 02 section 3.1; public-release re-check stays in P0-T03b |
 | P0-T03b | Deferred to public release: trademark search; Slint license terms; Secure Boot key policy; Android container license review | Notes in 02 | Deferred |
-| P0-T04 | Hardware list: owner's own PCs and one spare test machine (Q9) | Hardware list in 04 section 6 | List recorded |
+| P0-T04 | Hardware list: owner's own PCs and one spare test machine (Q9) | Hardware list in 04 section 6 | Done (2026-11-18, implementation-2): Reference 1 = spare Dell laptop (i5, integrated graphics, 24 GB RAM, Windows installed; primary OS test machine); dev host recorded; remaining machine details filled by P2-T08 coverage report |
 | P0-T05 | Repository layout and CI skeleton: `os-build/`, `compositor/`, `shell/`, `lifecycled/`, `powerd/`, `installer/`, `apps/`, `docs/` | Repository with empty build | Done (2026-11-17, implementation-1): workspace builds and tests pass; CI runs on first push |
 | P0-T06 | Linux test environment on the Mac (Q9): Linux x86-64 virtual machine with UEFI and BIOS, plus the spare PC | Boot test script | Done (2026-11-17, implementation-1): Alpine x86-64 placeholder boots in QEMU in both BIOS and UEFI modes (results log `docs/2026/11/17/results/p0-t06-boot-test.md`); spare-PC validation moves to P2 |
 | P0-T07 | Spike S1: Slint draws a layer-shell surface and requests a background blur region | Spike report | Pass confirms ADR-004; fail triggers iced fallback |
@@ -97,7 +97,7 @@ Exit criteria: all ADRs decided; spikes S1 to S5 reported; test environment and 
 
 | ID | Task | Output | Done when |
 | --- | --- | --- | --- |
-| P1-T01 | Buildroot configuration and kernel fragment: UEFI EFI stub, legacy BIOS, cgroup v2, PSI, zram, squashfs, ext4, Btrfs, DRM for Intel and AMD, tickless idle, runtime power management, virtio, **binder IPC support (for Android, P6-AND)**; built-in drivers for owner's hardware | `os-build/` config | Kernel builds |
+| P1-T01 | Buildroot configuration and kernel fragment: UEFI EFI stub, legacy BIOS, cgroup v2, PSI, zram, squashfs, ext4, Btrfs, DRM for Intel and AMD, tickless idle, runtime power management, virtio, **binder IPC support (for Android, P6-AND)**; built-in drivers for owner's hardware | `os-build/` config | In progress (2026-11-18, session "implementation-2": defconfig + kernel fragment drafted with CI config check; first build pending in the Linux VM) |
 | P1-T02 | Init: systemd minimal profile. Compare with runit or s6 | ADR-003 decision | Boots to login |
 | P1-T03 | Read-only squashfs root with overlay for `/var` and `/home` | Mount plan (D4) | Root read-only after boot |
 | P1-T04 | Networking with NetworkManager (or systemd-networkd with iwd) | Working DHCP in the virtual machine | Network reachable |

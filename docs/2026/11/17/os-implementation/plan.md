@@ -18,8 +18,10 @@ resume without duplication.
 | P0-T05 Repository layout and CI skeleton | **Done (2026-11-17)** | Cargo workspace: `aether-compositor`, `aether-shell`, `aether-lifecycled`, `aether-installer`; `apps/`, `os-build/` placeholders; GitHub Actions CI. Verified: `cargo build --workspace` and `cargo test --workspace` pass (4/4). Rust 1.100.0 installed via Homebrew. Git repo initialized on `main`; CI runs on first push (no remote yet). |
 | P0-T03 Legal notes | **Done (2026-11-17)** | Licenses verified via researcher (cited web research) and recorded in 02 section 3.1. Key rules: never ship genuine Windows DLLs with Wine; Slint royalty-free path needs attribution (About screen or download-page badge); keep H.264/AAC out of any publicly distributed image. Public-release re-check stays in P0-T03b. |
 | P0-T06 Linux test environment | **Done (2026-11-17)** | QEMU 11.1.3 + sevenzip installed via Homebrew. `os-build/test/boot-test.sh` boots the Alpine 3.24.4 x86-64 placeholder ISO to the login prompt in BIOS (SeaBIOS) and UEFI (EDK2 pflash; QEMU 11 rejects edk2 via `-bios`) modes. Results (D6 format): `docs/2026/11/17/results/p0-t06-boot-test.md`. Spare-PC validation moves to P2. |
+| P0-T04 Hardware list | **Done (2026-11-18)** | 04 section 6.2: Reference 1 = spare Dell laptop (i5, integrated graphics, 24 GB RAM, Windows installed; primary OS test machine); dev host recorded. Device details pending P2-T08. |
+| Remote / CI | **Done (2026-11-18)** | `origin` = `https://github.com/Anikchan/AetherOS.git`; `main` pushed and tracking. Owner should confirm the Actions run (private repo — anonymous API check returns 404). |
+| P1-T01 Buildroot config + kernel fragment | **In progress** | `os-build/kernel/aether.fragment`, `os-build/buildroot/aetheros_defconfig` + README, `kernel-config` CI workflow. First Buildroot build pending in the Linux VM. |
 | P0-T02 ADR review | **Done (2026-11-17)** | Owner accepted ADR-001 to ADR-023: Groups 1 and 2 as proposed; ADR-004/009/021 accepted with spike safeguards (S1/S5/S6 still validate; fallbacks unchanged). Statuses updated in D2 section 9; D7 kernel note updated. |
-| P0-T04 Hardware list | Pending | Owner must supply their own PC list and spare machine details (04 section 6). |
 | P0-T07 Spike S1 (Slint layer-shell + blur) | Pending | Needs a Linux/Wayland session — run inside the QEMU VM or a Linux environment; VM has no Wayland compositor session yet. Slint evaluation can start on macOS headless partially, but layer-shell requires Linux. |
 | P0-T08 Spike S2 (Smithay compositor) | Pending | Needs Linux (DRM/KMS); run in VM or on the spare PC. |
 | P0-T09 Spike S3 (cgroup.freeze, memory.reclaim, PSI) | **Done, partial (2026-11-18)** | Freeze Pass, reclaim Pass (~40 MB reclaimed). PSI absent from the Alpine virt kernel (CONFIG_PSI not built; `psi=1` has no effect) — re-test folded into P1-T01. Report: `docs/2026/11/18/results/p0-t09-spike-s3.md`. 2 harness retries used (frozen-cgroup reuse; TCG-too-slow hog); marker hygiene fixed. |
@@ -29,14 +31,14 @@ resume without duplication.
 
 ## Next steps for this session
 
-1. P0-T09 spike S3 inside the QEMU VM (needs a writable Alpine rootfs —
-   install Alpine to a disk image, then test cgroup.freeze, memory.reclaim,
-   PSI).
+1. P1-T01: first real Buildroot build in the Linux VM (clone Buildroot into
+   `os-build/buildroot/`, run `make`), then G-RES1/base-size check — needs a
+   persistent VM disk or a GitHub Actions build job.
 2. P0-T07/T08 spikes need a graphical Linux environment — set up in the VM
-   (software rendering + Wayland) or defer to the spare PC; propose to the
-   owner.
-3. Owner items waiting: P0-T02 ADR acceptance, P0-T04 hardware list, git
-   remote for CI.
+   (software rendering + Wayland) or defer to the spare PC; owner decision.
+3. P0-T10 (battery) and P0-T12 (Wine) spikes need real hardware / graphical VM.
+4. Owner: confirm the GitHub Actions run is green (private repo — not
+   verifiable from the host).
 
 ## Working rules applied
 
@@ -47,25 +49,36 @@ resume without duplication.
 ## Progress log (this session)
 
 - 2026-11-17: P0-T05 marked In progress; repository skeleton created; Rust
-  toolchain installation started.
-- 2026-11-17: Rust 1.100.0 installed (Homebrew). `cargo build --workspace` and
-  `cargo test --workspace` pass (4/4 tests). P0-T05 marked Done in the roadmap
-  tracker with a progress-log line. README status updated. P0-T02 prep doc
-  written. Commit created on `main`.
-- 2026-11-17: P0-T03 and P0-T06 marked In progress in the tracker; license
-  research launched; QEMU install started.
+  toolchain installation started (Rust 1.100.0 via Homebrew; build and tests
+  pass). P0-T05 Done; commit on `main`.
+- 2026-11-17: P0-T03 and P0-T06 marked In progress; license research launched;
+  QEMU install started.
 - 2026-11-17: P0-T03 Done (02 section 3.1 updated with verified SPDX licenses
   and rules). P0-T06 Done: BIOS and UEFI boot tests pass (two retries on the
   UEFI path: hdiutil mount failed → switched to sevenzip extraction; QEMU 11
   rejects edk2 via `-bios` → switched to pflash). Results recorded in D6
-  format. Tracker and progress log updated.
+  format.
 - 2026-11-17: P0-T11 Done: budgets.toml + check-budgets.py + metrics format +
-  CI step; pass and fail cases verified locally. Commit created on `main`.
+  CI step; pass and fail cases verified locally. Commit on `main`.
 - 2026-11-17: P0-T02 Done: owner accepted all ADRs (ADR-001 to ADR-023) in
   D2 section 9; spike safeguards annotated on ADR-003/004/009/021; D7 note
-  updated. Commit created on `main`.
+  updated. Commit on `main`.
 - 2026-11-18: P0-T09 Done (partial): spike S3 harness (`spike-s3.sh` +
   `spike-s3.exp`) run three times; freeze and memory.reclaim pass with real
   numbers; PSI absent from the Alpine virt kernel (finding recorded,
   re-test in P1-T01). Report at `docs/2026/11/18/results/p0-t09-spike-s3.md`.
   Session name for the tracker is "implementation-2" (new day).
+- 2026-11-18: P0-T04 Done: hardware matrix recorded in 04 section 6.2 —
+  Reference 1 is the spare Dell laptop (Intel i5, integrated graphics,
+  24 GB RAM, Windows installed; primary OS test machine); dev host (Apple
+  M3 Pro) recorded as VM-only. Device-level details pending P2-T08.
+- 2026-11-18: Remote added (`https://github.com/Anikchan/AetherOS.git`),
+  `main` pushed and tracking. CI runs remotely; anonymous API check returns
+  404 (private repo), so the owner should confirm the Actions run — the
+  workflow commands are the same ones verified locally.
+- 2026-11-18: P1-T01 In progress: `os-build/kernel/aether.fragment` (PSI per
+  spike S3 finding, cgroup v2/freezer, zram, squashfs/ext4/Btrfs, EFI stub,
+  DRM Intel/AMD, tickless, virtio, binder) and
+  `os-build/buildroot/aetheros_defconfig` + README drafted;
+  `kernel-config` CI workflow added to validate the fragment on every push.
+  First full Buildroot build pending in the Linux VM.

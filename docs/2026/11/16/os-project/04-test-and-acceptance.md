@@ -113,13 +113,18 @@ Run once per day for 7 consecutive days. All items must pass on the owner's lapt
 
 ### 6.2 Matrix
 
+Recorded 2026-11-18 (P0-T04, session implementation-2). Reference 1 is the
+spare test machine (Q9) and the first target for real-hardware runs (M2).
+Exact model and device-level details (Wi-Fi chipset, audio codec, webcam) are
+filled in by the coverage report (P2-T08) on first boot.
+
 | Machine | CPU and GPU | Wi-Fi | Status | Notes |
 | --- | --- | --- | --- | --- |
-| Reference 1 (to be chosen, P0-T04) | — | — | Not tested | — |
-| Reference 2 | — | — | Not tested | — |
-| Reference 3 | — | — | Not tested | — |
-| Reference 4 | — | — | Not tested | — |
-| Reference 5 | — | — | Not tested | — |
+| Reference 1: spare Dell laptop (owner) | Intel Core i5, integrated graphics only (no discrete GPU), 24 GB RAM | Model pending (P2-T08) | Not tested; Windows currently installed | Dual boot with Windows planned (P8); primary OS test machine |
+| Reference 2 (owner's Windows machine, to be named, P8) | — | — | Not tested | Needed for the P8 install/uninstall cycles |
+| Reference 3 (owner's Windows machine, to be named, P8) | — | — | Not tested | Same |
+| Reference 4 (owner's Windows machine, to be named, P8) | — | — | Not tested | Same |
+| Development host: Apple Silicon Mac (Q9) | Apple M3 Pro, 18 GB RAM | — | VM testing only | Not an AetherOS target (Q5); Linux x86-64 VMs via QEMU (ADR-017) |
 
 ## 7. Compatibility Test List
 

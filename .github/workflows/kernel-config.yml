@@ -1,0 +1,40 @@
+name: kernel-config
+
+# P1-T01 support: validate the AetherOS kernel fragment against a real
+# upstream kernel. Cheap config-only check (no compilation).
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "os-build/kernel/**"
+      - ".github/workflows/kernel-config.yml"
+  workflow_dispatch:
+
+jobs:
+  config-check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install kconfig tools
+        run: sudo apt-get update && sudo apt-get install -y flex bison bc libelf-dev
+      - name: Download upstream kernel
+        run: |
+          curl -sLO https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-6.18.tar.xz
+          tar xf linux-6.18.tar.xz
+      - name: Merge defconfig + fragment
+        run: |
+          cd linux-6.18
+          make olddefconfig
+          ./scripts/kconfig/merge_config.sh -m .config ../os-build/kernel/aether.fragment
+          make olddefconfig
+      - name: Verify required options
+        run: |
+          cd linux-6.18
+          fail=0
+          for opt in PSI CGROUPS CGROUP_FREEZER MEMCG ZRAM SQUASHFS EXT4_FS BTRFS_FS EFI EFI_STUB DRM DRM_I915 DRM_AMDGPU NO_HZ_IDLE SUSPEND VIRTIO ANDROID_BINDER_IPC; do
+            grep -q "^CONFIG_${opt}=y" .config || { echo "MISSING: CONFIG_${opt}"; fail=1; }
+          done
+          grep -q '^CONFIG_ANDROID_BINDER_DEVICES="binder,hwbinder,vndbinder"' .config || { echo "MISSING: binder devices"; fail=1; }
+          exit $fail

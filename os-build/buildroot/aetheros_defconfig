@@ -1,0 +1,42 @@
+# Buildroot configuration for AetherOS (P1-T01).
+#
+# Use: from os-build/buildroot/, run
+#   make BR2_DEFCONFIG=aetheros_defconfig defconfig
+#   make
+# (Buildroot must run on Linux — see README.md; the kernel-config CI job
+# validates the kernel fragment on every push.)
+
+# --- Architecture: x86-64 only (ADR-016) ---
+BR2_x86_64=y
+
+# --- Kernel: mainline LTS with our fragment (ADR-001) ---
+BR2_LINUX_KERNEL=y
+BR2_LINUX_KERNEL_CUSTOM_VERSION=y
+BR2_LINUX_KERNEL_CUSTOM_VERSION_VALUE="6.18"
+BR2_LINUX_KERNEL_USE_ARCH_DEFAULT_CONFIG=y
+# Layout: this defconfig lives inside the Buildroot tree
+# (os-build/buildroot/ is the Buildroot checkout), so ../kernel/ is os-build/kernel/.
+BR2_LINUX_KERNEL_CONFIG_FRAGMENT_FILES="../kernel/aether.fragment"
+BR2_LINUX_KERNEL_NEEDS_HOST_OPENSSL=y
+
+# --- Init: systemd minimal profile (ADR-003; P1-T02 compares runit/s6) ---
+BR2_PACKAGE_SYSTEMD=y
+# Minimal profile: trim services we do not use.
+# BR2_PACKAGE_SYSTEMD_JOURNALGATEWAYD is not set
+# BR2_PACKAGE_SYSTEMD_HWDB is not set
+
+# --- Filesystem image: read-only squashfs root (P1-T03, D4) ---
+BR2_TARGET_ROOTFS_SQUASHFS=y
+BR2_TARGET_ROOTFS_SQUASHFS4_XZ=y
+# BR2_TARGET_ROOTFS_TAR is not set
+
+# --- Userspace bases: filesystem tools ---
+BR2_PACKAGE_E2FSPROGS=y
+BR2_PACKAGE_BTRFS_PROGS=y
+
+# --- Networking (P1-T04; NetworkManager chosen at build time) ---
+BR2_PACKAGE_NETWORKMANAGER=y
+
+# --- Battery and power data sources (D5, ADR-014) ---
+BR2_PACKAGE_UPOWER=y
+BR2_PACKAGE_POWER_PROFILES_DAEMON=y
