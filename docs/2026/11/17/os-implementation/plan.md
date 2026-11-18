@@ -90,3 +90,15 @@ resume without duplication.
   `.github/workflows/buildroot-build.yml` (pinned Buildroot 2025.11, full
   build, image-size gate ≤ 150 MB, artifact upload); defconfig layout aligned
   to it. P1-T01 stays In progress until the first CI/VM build is green.
+- 2026-11-18: Owner confirmed both CI jobs green → P1-T01 Done (kernel
+  builds; base image inside the 150 MB gate). Project AGENTS.md created
+  (autonomous development is now this project's default instruction).
+- 2026-11-18: P1-T02/T03/T04 In progress: `ci-boot.exp` boots the built
+  image in CI and verifies login prompt, tmpfs /var and /home over the
+  read-only squashfs root, and DHCP on eth0; `init-compare` workflow
+  (dispatch-only) added for the ADR-003 init comparison; boot-seconds
+  measurement added for P1-T08/G-SPD0. Committed and pushed (`5e52bc5`);
+  evidence pending owner confirmation of the CI run.
+- 2026-11-18: Next in sequence after T02–T04 confirm green: P1-T05 (UKI +
+  systemd-boot ESP boot chain — needs a genimage/ESP disk-image session),
+  P1-T07 (legacy BIOS GRUB), P1-T06/T08 (numbers from CI logs).

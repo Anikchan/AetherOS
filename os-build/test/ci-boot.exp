@@ -8,6 +8,7 @@
 set timeout 600
 set kernel $env(KERNEL)
 set rootfs $env(ROOTFS)
+set t0 [clock seconds]
 log_file -noappend $env(TRANSCRIPT)
 
 spawn qemu-system-x86_64 -m 512 -nographic -no-reboot \
@@ -19,6 +20,8 @@ expect {
     -re "login:" { }
     timeout { puts "TIMEOUT waiting for login prompt"; exit 2 }
 }
+# P1-T08/G-SPD0 first datum: seconds from QEMU start to the login prompt
+puts "S_BOOT_SECONDS: [expr [clock seconds] - $t0]"
 send "root\r"
 expect "# "
 
