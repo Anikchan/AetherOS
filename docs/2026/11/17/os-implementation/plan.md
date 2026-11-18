@@ -85,3 +85,8 @@ resume without duplication.
 - 2026-11-18: Session resumed after server restart; all work verified intact
   (`main` pushed to `dccc5d8`, clean tree). P0 phase row updated for P0-T04
   Done and the pushed remote. Commit and push.
+- 2026-11-18: Owner decisions: graphical spikes (P0-T07/T08) will run in the
+  VM; a GitHub Buildroot build job was approved. Added
+  `.github/workflows/buildroot-build.yml` (pinned Buildroot 2025.11, full
+  build, image-size gate ≤ 150 MB, artifact upload); defconfig layout aligned
+  to it. P1-T01 stays In progress until the first CI/VM build is green.

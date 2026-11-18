@@ -14,9 +14,9 @@ BR2_LINUX_KERNEL=y
 BR2_LINUX_KERNEL_CUSTOM_VERSION=y
 BR2_LINUX_KERNEL_CUSTOM_VERSION_VALUE="6.18"
 BR2_LINUX_KERNEL_USE_ARCH_DEFAULT_CONFIG=y
-# Layout: this defconfig lives inside the Buildroot tree
-# (os-build/buildroot/ is the Buildroot checkout), so ../kernel/ is os-build/kernel/.
-BR2_LINUX_KERNEL_CONFIG_FRAGMENT_FILES="../kernel/aether.fragment"
+# Layout: the Buildroot tree is cloned at os-build/buildroot/buildroot/,
+# so ../../kernel/ is os-build/kernel/. The CI job passes the same paths.
+BR2_LINUX_KERNEL_CONFIG_FRAGMENT_FILES="../../kernel/aether.fragment"
 BR2_LINUX_KERNEL_NEEDS_HOST_OPENSSL=y
 
 # --- Init: systemd minimal profile (ADR-003; P1-T02 compares runit/s6) ---

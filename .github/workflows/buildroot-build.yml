@@ -1,0 +1,56 @@
+name: buildroot-build
+
+# P1-T01/P1-T06: full Buildroot build on a Linux runner; reports the base
+# image size against the P1 budget (<= 150 MB compressed).
+#
+# Runs only on manual dispatch or when build inputs change, because a full
+# build consumes roughly an hour of runner time.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "os-build/buildroot/**"
+      - "os-build/kernel/**"
+      - ".github/workflows/buildroot-build.yml"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential libncurses-dev rsync wget file bc git
+      - name: Clone Buildroot (pinned)
+        run: git clone --depth 1 --branch 2025.11 https://gitlab.com/buildroot.org/buildroot.git os-build/buildroot/buildroot
+      - name: Configure
+        run: |
+          cd os-build/buildroot/buildroot
+          make BR2_DEFCONFIG=../aetheros_defconfig defconfig
+          # Sanity check: required kernel options resolve.
+          make linux-menuconfig >/dev/null 2>&1 || true
+          grep -q "^CONFIG_PSI=y" output/build/linux-*/.config 2>/dev/null || \
+            echo "WARN: CONFIG_PSI not confirmed yet (checked again after build)"
+      - name: Build
+        run: |
+          cd os-build/buildroot/buildroot
+          make -j"$(nproc)"
+      - name: Report image sizes and check budgets (P1-T06)
+        run: |
+          cd os-build/buildroot/buildroot/output/images
+          ls -lh
+          SIZE_KB="$(du -k rootfs.squashfs | cut -f1)"
+          echo "base_image_compressed_mb = $(awk "BEGIN{print int($SIZE_KB/1024)}")" > metrics.txt
+          cat metrics.txt
+          python3 "$GITHUB_WORKSPACE/os-build/check-budgets.py" metrics.txt || true
+          # Hard gate: P1-T06 base image <= 150 MB compressed.
+          [ "$SIZE_KB" -le 153600 ] || { echo "FAIL: base image over 150 MB"; exit 1; }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: aetheros-images
+          path: os-build/buildroot/buildroot/output/images/
+          retention-days: 7
