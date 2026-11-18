@@ -12,7 +12,10 @@ BR2_x86_64=y
 # --- Toolchain: glibc (systemd and NetworkManager require glibc; uclibc
 # silently drops them) and headers pinned to our kernel ---
 BR2_TOOLCHAIN_BUILDROOT_GLIBC=y
-BR2_KERNEL_HEADERS_AS_KERNEL=y
+# 2025.11: BR2_KERNEL_HEADERS_AS_KERNEL only selects BR2_KERNEL_HEADERS_LATEST
+# when BR2_LINUX_KERNEL_LATEST_VERSION is set, which we do not use (custom
+# 6.18). Select the matching series explicitly instead.
+BR2_KERNEL_HEADERS_6_18=y
 
 # --- Kernel: mainline LTS with our fragment (ADR-001) ---
 BR2_LINUX_KERNEL=y
