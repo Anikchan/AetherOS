@@ -10,6 +10,7 @@ log_file -noappend $env(TRANSCRIPT)
 
 spawn qemu-system-x86_64 -m 512 -nographic -no-reboot \
   -drive if=pflash,format=raw,readonly=on,file=$env(OVMF) \
+  -drive if=pflash,format=raw,file=$env(OVMF_VARS) \
   -drive file=$env(DISK),format=raw,if=virtio
 
 expect {
