@@ -314,7 +314,7 @@ Update this table whenever a task changes state. Allowed statuses: Not started, 
 
 | Phase | Status | Owner | Last updated |
 | --- | --- | --- | --- |
-| P0 Foundation, spikes, verification setup | In progress (P0-T01, T02, T03, T05, T06, T09, T11 Done (T09 partial: PSI re-test in P1); remaining: T04 owner hardware list, T07, T08, T10, T12 spikes needing graphics/battery/Wine environments) | Owner | 2026-11-18 |
+| P0 Foundation, spikes, verification setup | In progress (Done: T01, T02, T03, T04, T05, T06, T09 (partial: PSI re-test in P1), T11; remote pushed 2026-11-18. Remaining: T07, T08 (need a graphical Linux session — owner decision VM vs spare PC), T10 (needs real battery), T12 (Wine in graphical VM)) | Owner | 2026-11-18 |
 | P1 Base system boots and boot speed | Not started | Owner | 2026-11-17 |
 | P2 Hardware bring-up | Not started | Owner | 2026-11-17 |
 | P3 Compositor, window system, no-hang design | Not started | Owner | 2026-11-17 |

@@ -82,3 +82,6 @@ resume without duplication.
   `os-build/buildroot/aetheros_defconfig` + README drafted;
   `kernel-config` CI workflow added to validate the fragment on every push.
   First full Buildroot build pending in the Linux VM.
+- 2026-11-18: Session resumed after server restart; all work verified intact
+  (`main` pushed to `dccc5d8`, clean tree). P0 phase row updated for P0-T04
+  Done and the pushed remote. Commit and push.
