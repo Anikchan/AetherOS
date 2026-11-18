@@ -1,0 +1,23 @@
+#!/usr/bin/expect -f
+# P1-T07: BIOS boot test — boots aetheros-bios.img with SeaBIOS (no pflash,
+# no -kernel) and expects GRUB to load the kernel and reach the login prompt.
+# Env: DISK (aetheros-bios.img), TRANSCRIPT.
+# Marker (quoted so terminal echo cannot fake a pass): S_BIOS_BOOT_"OK"
+
+set timeout 600
+set t0 [clock seconds]
+log_file -noappend $env(TRANSCRIPT)
+
+spawn qemu-system-x86_64 -m 512 -nographic -no-reboot \
+  -drive file=$env(DISK),format=raw,if=virtio
+
+expect {
+    -re "login:" { }
+    timeout { puts "TIMEOUT waiting for login prompt (BIOS chain)"; exit 2 }
+}
+puts "S_BIOS_SECONDS: [expr [clock seconds] - $t0]"
+send "root\r"
+expect "# "
+send {echo S_BIOS_BOOT_"OK"; poweroff}
+send "\r"
+expect eof

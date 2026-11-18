@@ -32,6 +32,17 @@ BR2_TARGET_ROOTFS_SQUASHFS4_XZ=y
 # Rootfs overlay: tmpfs /var and /home over the read-only root (P1-T03)
 BR2_ROOTFS_OVERLAY="../../board/aetheros/overlay"
 
+# --- UEFI boot chain: systemd-boot + UKI (P1-T05, D4 §3) ---
+BR2_PACKAGE_SYSTEMD_BOOT=y
+BR2_PACKAGE_HOST_GENIMAGE=y
+BR2_ROOTFS_POST_IMAGE_SCRIPT="../../board/aetheros/post-image.sh"
+
+# --- Legacy BIOS boot chain: GRUB2 for MBR disks (P1-T07, D4 §3) ---
+# grub-install runs as a CI step (needs a loop device); see
+# board/aetheros/make-bios-image.sh.
+BR2_TARGET_GRUB2=y
+BR2_TARGET_GRUB2_I386_PC=y
+
 # --- Userspace bases: filesystem tools ---
 BR2_PACKAGE_E2FSPROGS=y
 BR2_PACKAGE_BTRFS_PROGS=y

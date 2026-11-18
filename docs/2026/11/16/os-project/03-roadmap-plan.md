@@ -101,9 +101,9 @@ Exit criteria: all ADRs decided; spikes S1 to S5 reported; test environment and 
 | P1-T02 | Init: systemd minimal profile. Compare with runit or s6 | ADR-003 decision | In progress (2026-11-18, implementation-3): CI boot test added (boots the built image to login on serial); busybox-init comparison job added (dispatch-only). Done when the owner confirms the CI boot test green |
 | P1-T03 | Read-only squashfs root with overlay for `/var` and `/home` | Mount plan (D4) | In progress (2026-11-18, implementation-3): rootfs overlay with tmpfs `/var` and `/home` added; CI boot test checks mounts. Done when CI confirms mounts on the read-only root |
 | P1-T04 | Networking with NetworkManager (or systemd-networkd with iwd) | Working DHCP in the virtual machine | In progress (2026-11-18, implementation-3): NetworkManager in the defconfig; CI boot test checks DHCP on eth0. Done when CI confirms DHCP lease in the VM |
-| P1-T05 | UEFI boot chain: systemd-boot with a unified kernel image (UKI) | Bootable EFI image | Boots through systemd-boot |
+| P1-T05 | UEFI boot chain: systemd-boot with a unified kernel image (UKI) | Bootable EFI image | In progress (2026-11-18, implementation-3): systemd-boot + EFI-stub UKI with embedded cmdline; genimage ESP+rootfs disk (`aetheros-efi.img`); CI OVMF boot test added. Done when CI confirms the UEFI chain boots |
 | P1-T06 | Measure boot time and base image size | Numbers in D6 results log | Base image ≤ 150 MB compressed |
-| P1-T07 | Legacy BIOS boot path with GRUB for MBR disks | Bootable BIOS image | Boots in a legacy BIOS virtual machine |
+| P1-T07 | Legacy BIOS boot path with GRUB for MBR disks | Bootable BIOS image | In progress (2026-11-18, implementation-3): GRUB2 i386-pc, ext4 /boot + MBR-dos layout (`aetheros-bios.img` via make-bios-image.sh); CI SeaBIOS boot test added. Done when CI confirms the BIOS chain boots |
 | P1-T08 | Boot speed: stage timing (addendum 1 F11 section 1.2), service start order, boot-time report (BT-09), trimming of unused kernel parts | Boot-time report | Stage budget met in the virtual machine; report produced |
 
 Exit criteria (M1): boots in a virtual machine to login in ≤ 10 s; base image ≤ 150 MB compressed; UEFI and legacy BIOS boot. Re-estimate P2 to P4 here.

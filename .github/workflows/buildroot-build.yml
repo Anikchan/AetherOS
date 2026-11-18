@@ -60,10 +60,33 @@ jobs:
           grep -q 'S_BOOT_LOGIN_OK' boot-test.log || { echo "FAIL: no login prompt"; exit 1; }
           grep -q 'S_MOUNTS_OK' boot-test.log || { echo "FAIL: /var,/home not on tmpfs"; exit 1; }
           grep -q 'S_DHCP_OK' boot-test.log || { echo "FAIL: no DHCP lease"; exit 1; }
+      - name: UEFI boot test — systemd-boot + UKI (P1-T05)
+        timeout-minutes: 20
+        run: |
+          sudo apt-get install -y ovmf
+          export DISK=os-build/buildroot/buildroot/output/images/aetheros-efi.img
+          test -f "$DISK" || { echo "FAIL: UEFI disk image missing"; exit 1; }
+          export OVMF=/usr/share/OVMF/OVMF_CODE.fd
+          export TRANSCRIPT=$(mktemp)
+          expect os-build/test/ci-boot-uefi.exp | tee boot-uefi.log
+          grep -q 'S_UEFI_BOOT_OK' boot-uefi.log || { echo "FAIL: UEFI boot chain failed"; exit 1; }
+      - name: BIOS boot test — GRUB2 MBR (P1-T07)
+        timeout-minutes: 20
+        run: |
+          sudo apt-get install -y grub-pc-bin
+          chmod +x os-build/board/aetheros/make-bios-image.sh
+          sudo os-build/board/aetheros/make-bios-image.sh \
+            os-build/buildroot/buildroot/output/images os-build/board/aetheros
+          export DISK=os-build/buildroot/buildroot/output/images/aetheros-bios.img
+          export TRANSCRIPT=$(mktemp)
+          expect os-build/test/ci-boot-bios.exp | tee boot-bios.log
+          grep -q 'S_BIOS_BOOT_OK' boot-bios.log || { echo "FAIL: BIOS boot chain failed"; exit 1; }
       - uses: actions/upload-artifact@v4
         with:
           name: aetheros-images
           path: |
             os-build/buildroot/buildroot/output/images/
             boot-test.log
+            boot-uefi.log
+            boot-bios.log
           retention-days: 7

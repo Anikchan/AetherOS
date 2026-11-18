@@ -1,0 +1,24 @@
+#!/usr/bin/expect -f
+# P1-T05: UEFI boot test — boots aetheros-efi.img through OVMF and expects
+# systemd-boot to load the UKI and reach the login prompt.
+# Env: DISK (aetheros-efi.img), OVMF (OVMF_CODE.fd), TRANSCRIPT.
+# Marker (quoted so terminal echo cannot fake a pass): S_UEFI_BOOT_"OK"
+
+set timeout 600
+set t0 [clock seconds]
+log_file -noappend $env(TRANSCRIPT)
+
+spawn qemu-system-x86_64 -m 512 -nographic -no-reboot \
+  -drive if=pflash,format=raw,readonly=on,file=$env(OVMF) \
+  -drive file=$env(DISK),format=raw,if=virtio
+
+expect {
+    -re "login:" { }
+    timeout { puts "TIMEOUT waiting for login prompt (UEFI chain)"; exit 2 }
+}
+puts "S_UEFI_SECONDS: [expr [clock seconds] - $t0]"
+send "root\r"
+expect "# "
+send {echo S_UEFI_BOOT_"OK"; poweroff}
+send "\r"
+expect eof

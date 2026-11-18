@@ -102,3 +102,10 @@ resume without duplication.
 - 2026-11-18: Next in sequence after T02–T04 confirm green: P1-T05 (UKI +
   systemd-boot ESP boot chain — needs a genimage/ESP disk-image session),
   P1-T07 (legacy BIOS GRUB), P1-T06/T08 (numbers from CI logs).
+- 2026-11-18: P1-T05/T07 In progress: post-image.sh builds the UKI
+  (linuxx64.efi.stub + bzImage + embedded cmdline) and a genimage
+  `aetheros-efi.img` (ESP + squashfs root); make-bios-image.sh builds a GRUB2
+  i386-pc MBR `aetheros-bios.img`; CI runs OVMF and SeaBIOS boot tests for
+  both chains plus the existing direct-kernel smoke test. Pushed; evidence
+  pending owner confirmation of the CI run. Next after green: P1-T06/T08
+  numbers → D6 results log; then P2 or remaining P0 graphics spikes (VM).
