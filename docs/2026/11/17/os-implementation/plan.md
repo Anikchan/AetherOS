@@ -109,10 +109,17 @@ resume without duplication.
   both chains plus the existing direct-kernel smoke test. Pushed; evidence
   pending owner confirmation of the CI run. Next after green: P1-T06/T08
   numbers → D6 results log; then P2 or remaining P0 graphics spikes (VM).
-- 2026-11-18: P0-T12 (spike S5) In progress: Wine spike made headless-capable
-  in CI (`os-build/test/spike-s5.sh`, mingw-w64 console exe, `wine-spike`
-  workflow) — program runs + startup time in the Linux VM; the GUI-app run
-  follows in the graphical VM. P0-T07/T08 delegated to a developer agent
-  (session ses_e133c18afffeH93IuhVSRghOEw): Slint custom-platform layer-shell
-  spike + headless Smithay compositor + graphics-spikes workflow; commit and
-  push on its return. Phase rows updated (P1 In progress).
+- 2026-11-18: P0-T12 (spike S5) **Done (headless scope)**: wine-spike run
+  44232865848 green — Wine 10.0, Windows console exe ran, 20 ms startup.
+  D6 log: docs/2026/11/18/results/p0-t12-spike-s5-wine.md. GUI-app residual
+  noted. gh CLI access confirmed (owner logged in) — CI now self-verifiable.
+- 2026-11-18: CI failure round 1 fixed: buildroot/init-compare pinned to
+  ubuntu-22.04 (host-m4 gnulib vs new gcc C23 `_Generic`); graphics-spikes
+  gained fontconfig. Round 2: slint `compat-1-18` enabled.
+- 2026-11-18: P0-T07 **Blocked** — retry budget exhausted; six Wayland API
+  compile errors recorded in the roadmap row (S1 binary kept non-blocking in
+  CI so its finding still gets captured). P0-T08 unaffected: workflow split
+  so S2+client build and run independently; first real S2 run triggered.
+- 2026-11-18: buildroot-build (run 44234669522, ubuntu-22.04 pin) in progress
+  (~1 h); boot-chain flips (P1-T02..T05, T07) and P1-T06/T08 D6 numbers wait
+  on its verdict.
