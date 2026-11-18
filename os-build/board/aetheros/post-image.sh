@@ -16,17 +16,29 @@ SD_BOOT="${TARGET_DIR}/usr/lib/systemd/boot/efi/systemd-bootx64.efi"
 [ -f "${SD_BOOT}" ] || { echo "ERROR: systemd-boot not found at ${SD_BOOT}"; exit 1; }
 
 # --- UKI: kernel + cmdline in the EFI stub (cmdline fixed: vda2 is rootfs) ---
-OBJCOPY=objcopy
-[ -x "${HOST_DIR}/bin/objcopy" ] && OBJCOPY="${HOST_DIR}/bin/objcopy"
+# Prefer ukify (systemd's supported UKI builder) when available; fall back to
+# objcopy with section VMAs above the stub's image base.
 printf 'root=/dev/vda2 rootfstype=squashfs console=ttyS0\n' > "${BINARIES_DIR}/aetheros.cmdline"
 printf 'ID=aetheros\nNAME=AetherOS\nVERSION=0.1\n' > "${BINARIES_DIR}/aetheros.osrel"
-${OBJCOPY} \
-    --add-section .osrel="${BINARIES_DIR}/aetheros.osrel" --change-section-vma .osrel=0x20000 \
-    --add-section .cmdline="${BINARIES_DIR}/aetheros.cmdline" --change-section-vma .cmdline=0x30000 \
-    --add-section .linux="${BINARIES_DIR}/bzImage" --change-section-vma .linux=0x40000 \
-    --set-section-flags .osrel=data,contents --set-section-flags .cmdline=data,contents \
-    --set-section-flags .linux=data,contents \
-    "${STUB}" "${BINARIES_DIR}/aetheros.efi"
+
+if command -v ukify >/dev/null 2>&1; then
+    ukify build \
+        --linux="${BINARIES_DIR}/bzImage" \
+        --os-release="${BINARIES_DIR}/aetheros.osrel" \
+        --cmdline="@${BINARIES_DIR}/aetheros.cmdline" \
+        --stub="${STUB}" \
+        --output="${BINARIES_DIR}/aetheros.efi"
+else
+    OBJCOPY=objcopy
+    [ -x "${HOST_DIR}/bin/objcopy" ] && OBJCOPY="${HOST_DIR}/bin/objcopy"
+    ${OBJCOPY} \
+        --add-section .osrel="${BINARIES_DIR}/aetheros.osrel" --change-section-vma .osrel=0x20000 \
+        --add-section .cmdline="${BINARIES_DIR}/aetheros.cmdline" --change-section-vma .cmdline=0x30000 \
+        --add-section .linux="${BINARIES_DIR}/bzImage" --change-section-vma .linux=0x40000 \
+        --set-section-flags .osrel=data,contents --set-section-flags .cmdline=data,contents \
+        --set-section-flags .linux=data,contents \
+        "${STUB}" "${BINARIES_DIR}/aetheros.efi"
+fi
 
 # --- Stage ESP contents for genimage ---
 mkdir -p "${BINARIES_DIR}/efi-part/EFI/BOOT" "${BINARIES_DIR}/efi-part/EFI/Linux"
