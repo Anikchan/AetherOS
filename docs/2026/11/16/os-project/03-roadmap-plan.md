@@ -89,7 +89,7 @@ Each task has an ID. Use the ID in progress logs and commit messages.
 | P0-T09 | Spike S3: `cgroup.freeze`, `memory.reclaim`, and PSI all work on the test kernel | Spike report with numbers | Done (2026-11-18, implementation-2, partial result): freeze Pass, memory.reclaim Pass (~40 MB reclaimed on demand); PSI absent from the Alpine virt kernel (no `/proc/pressure`, even with `psi=1`) — `CONFIG_PSI=y` required in the P1-T01 kernel fragment, PSI re-test folded into P1. Report: `docs/2026/11/18/results/p0-t09-spike-s3.md` |
 | P0-T10 | Spike S4: battery state through UPower and sysfs; charge-limit controls | Spike report | Readings match system tools |
 | P0-T11 | Verification setup: budgets file (`os-build/budgets.toml`), results log folder, metrics format (addendum 1 D6; addendum 2 D10) | Budgets file; results folder | Done (2026-11-17, implementation-1): budgets file, metrics format (`os-build/metrics/FORMAT.md`), and `os-build/check-budgets.py` wired into CI; verified pass and over-limit fail cases locally |
-| P0-T12 | Spike S5: one Windows test program through the Wine engine in a Linux virtual machine | Spike report with startup time | Program runs; startup time recorded |
+| P0-T12 | Spike S5: one Windows test program through the Wine engine in a Linux virtual machine | Spike report with startup time | In progress (2026-11-18, implementation-3): headless-first in the CI Linux VM — mingw-w64-built test exe through Wine, startup time recorded; GUI-app run under the graphical VM follows |
 
 Exit criteria: all ADRs decided; spikes S1 to S5 reported; test environment and budgets working.
 

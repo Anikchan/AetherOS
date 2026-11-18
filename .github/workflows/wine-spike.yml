@@ -1,0 +1,36 @@
+name: wine-spike
+
+# P0-T12 / Spike S5: one Windows test program through Wine on a Linux VM.
+# Cheap and independent of the Buildroot build; runs on manual dispatch or
+# when the spike inputs change.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "os-build/test/spike-s5*"
+      - ".github/workflows/wine-spike.yml"
+
+jobs:
+  spike-s5:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Wine and mingw-w64
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends wine64 gcc-mingw-w64-x86-64 time
+          sudo dpkg --add-architecture amd64 || true
+      - name: Run spike S5
+        run: |
+          chmod +x os-build/test/spike-s5.sh
+          os-build/test/spike-s5.sh | tee spike-s5.log
+          grep -q 'S5_WINE_RUN_OK' spike-s5.log || { echo "FAIL: Windows program did not run under Wine"; exit 1; }
+          grep -q 'S5_STARTUP_MS' spike-s5.log || { echo "FAIL: no startup time recorded"; exit 1; }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: spike-s5-log
+          path: spike-s5.log
+          retention-days: 7
