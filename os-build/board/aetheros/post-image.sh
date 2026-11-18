@@ -5,7 +5,8 @@
 # HOST_DIR). Produces ${BINARIES_DIR}/aetheros-efi.img:
 #   p1  EFI system partition (FAT): systemd-boot + UKI with embedded cmdline
 #   p2  rootfs.squashfs (read-only root, P1-T03)
-set -eu
+# Ensure mtools (mcopy) is on PATH for genimage's vfat step.
+export PATH="/usr/bin:/bin:${PATH}"
 
 : "${BINARIES_DIR:?}" "${TARGET_DIR:?}" "${HOST_DIR:?}"
 BOARD_DIR="$(dirname "$0")"
