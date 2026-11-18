@@ -128,3 +128,16 @@ resume without duplication.
   Wayland API errors (edits only; coordinating session commits after the
   in-flight S2 run 44235635068 completes). P0-T07 moves Blocked → In progress
   on the next push.
+- 2026-11-18: LOCAL LINUX TYPE-CHECK ESTABLISHED (unblocks all spike work):
+  brew rustup + `rustup toolchain install stable -t aarch64-apple-darwin,
+  x86_64-unknown-linux-gnu`; run checks as
+  `RUSTUP_TOOLCHAIN=stable-aarch64-apple-darwin
+  RUSTC=~/.rustup/toolchains/stable-aarch64-apple-darwin/bin/rustc
+  $(brew --prefix rustup)/bin/cargo check --target x86_64-unknown-linux-gnu`
+  from spikes/ (RUSTC override is required — cargo otherwise picks up brew's
+  rustc without the linux std). s1's fontconfig build script cannot run
+  cross, but s1 already compiles on CI; s2 + client fully check locally.
+- 2026-11-18: S2 fixes pushed (delegate macro imports, SeatHandler impl with
+  WlSurface focus types + SeatState field, accept() io::Result handling);
+  local check clean; gate run 44236833280 watching. buildroot-build
+  (44234669522) still building.
