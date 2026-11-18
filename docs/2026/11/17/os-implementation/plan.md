@@ -141,3 +141,10 @@ resume without duplication.
   WlSurface focus types + SeatState field, accept() io::Result handling);
   local check clean; gate run 44236833280 watching. buildroot-build
   (44234669522) still building.
+- 2026-11-18: graphics-spikes run 44236833280 **green**. P0-T07 **Done**
+  (S1_LAYERSHELL_SURFACE_OK; blur finding recorded: needs
+  org_kde_kwin_blur_manager — Smithay extension queued for P2; ADR-004
+  confirmed) and P0-T08 **Done** (S2_CLIENT_MAPPED; ADR-009/016 validated).
+  D6 report: docs/2026/11/18/results/p0-t07-t08-spikes-s1-s2.md. P0 now has
+  only T10 (battery) open — blocked on real hardware. buildroot-build verdict
+  pending for the P1 boot-chain flips and P1-T06/T08 numbers.
