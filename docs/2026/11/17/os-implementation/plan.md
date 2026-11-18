@@ -109,3 +109,10 @@ resume without duplication.
   both chains plus the existing direct-kernel smoke test. Pushed; evidence
   pending owner confirmation of the CI run. Next after green: P1-T06/T08
   numbers → D6 results log; then P2 or remaining P0 graphics spikes (VM).
+- 2026-11-18: P0-T12 (spike S5) In progress: Wine spike made headless-capable
+  in CI (`os-build/test/spike-s5.sh`, mingw-w64 console exe, `wine-spike`
+  workflow) — program runs + startup time in the Linux VM; the GUI-app run
+  follows in the graphical VM. P0-T07/T08 delegated to a developer agent
+  (session ses_e133c18afffeH93IuhVSRghOEw): Slint custom-platform layer-shell
+  spike + headless Smithay compositor + graphics-spikes workflow; commit and
+  push on its return. Phase rows updated (P1 In progress).
