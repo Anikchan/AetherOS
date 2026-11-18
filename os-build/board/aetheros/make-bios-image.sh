@@ -33,7 +33,7 @@ ${P1_START},131072,83,*
 ${P2_START},,83
 EOF
 
-LO="$(sudo losetup --find --show "${IMG}")"
+LO="$(sudo losetup --find --show --partscan "${IMG}")"
 trap 'sudo losetup -d ${LO} 2>/dev/null || true' EXIT
 sudo partprobe "${LO}"
 

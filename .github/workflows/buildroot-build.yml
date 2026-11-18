@@ -75,7 +75,7 @@ jobs:
       - name: BIOS boot test — GRUB2 MBR (P1-T07)
         timeout-minutes: 20
         run: |
-          sudo apt-get install -y grub-pc-bin
+          sudo apt-get install -y grub-pc-bin grub-common parted
           chmod +x os-build/board/aetheros/make-bios-image.sh
           sudo os-build/board/aetheros/make-bios-image.sh \
             os-build/buildroot/buildroot/output/images os-build/board/aetheros
