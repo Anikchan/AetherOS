@@ -1,0 +1,31 @@
+name: coverage-sample
+
+# P2-T08: sample run of the hardware coverage report tool. The GitHub runner's
+# virtual hardware is the stand-in sample until the first real-machine boot
+# (spare Dell), where the report feeds the 04 §6.2 matrix.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "os-build/test/coverage-report.sh"
+      - ".github/workflows/coverage-sample.yml"
+
+jobs:
+  sample:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run coverage report (sample on runner hardware)
+        run: |
+          chmod +x os-build/test/coverage-report.sh
+          os-build/test/coverage-report.sh | tee coverage-sample.md
+          grep -q "## Hardware coverage report" coverage-sample.md
+          grep -q "### PCI devices" coverage-sample.md
+      - uses: actions/upload-artifact@v4
+        with:
+          name: coverage-sample
+          path: coverage-sample.md
+          retention-days: 7

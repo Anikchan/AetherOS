@@ -119,7 +119,7 @@ Exit criteria (M1): boots in a virtual machine to login in ≤ 10 s; base image 
 | P2-T05 | Input: touchpad, keyboard backlight, brightness keys | Working input | Checklist passes |
 | P2-T06 | Sleep and resume: suspend-to-idle, lid switch | Working sleep | 10 suspend cycles without failure |
 | P2-T07 | Update the hardware matrix | Table in 04 section 6 | Recorded |
-| P2-T08 | Hardware coverage report (Working, Partly, Needs firmware, No driver) | Report tool and sample | Lists all devices on test machines |
+| P2-T08 | Hardware coverage report (Working, Partly, Needs firmware, No driver) | Report tool and sample | In progress (2026-11-18, implementation-3): report tool scripted; CI sample run against the runner's virtual hardware; real-machine data at first Dell boot (depends on P2 bring-up) |
 
 Exit criteria (M2): owner's real machine passes the checklist (04 section 6). Coverage report works.
 
