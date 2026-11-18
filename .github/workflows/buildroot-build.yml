@@ -49,8 +49,21 @@ jobs:
           python3 "$GITHUB_WORKSPACE/os-build/check-budgets.py" metrics.txt || true
           # Hard gate: P1-T06 base image <= 150 MB compressed.
           [ "$SIZE_KB" -le 153600 ] || { echo "FAIL: base image over 150 MB"; exit 1; }
+      - name: Boot test — login, mounts, DHCP (P1-T02/T03/T04)
+        timeout-minutes: 20
+        run: |
+          sudo apt-get install -y qemu-system-x86 expect
+          export KERNEL=os-build/buildroot/buildroot/output/images/bzImage
+          export ROOTFS=os-build/buildroot/buildroot/output/images/rootfs.squashfs
+          export TRANSCRIPT=$(mktemp)
+          expect os-build/test/ci-boot.exp | tee boot-test.log
+          grep -q 'S_BOOT_LOGIN_OK' boot-test.log || { echo "FAIL: no login prompt"; exit 1; }
+          grep -q 'S_MOUNTS_OK' boot-test.log || { echo "FAIL: /var,/home not on tmpfs"; exit 1; }
+          grep -q 'S_DHCP_OK' boot-test.log || { echo "FAIL: no DHCP lease"; exit 1; }
       - uses: actions/upload-artifact@v4
         with:
           name: aetheros-images
-          path: os-build/buildroot/buildroot/output/images/
+          path: |
+            os-build/buildroot/buildroot/output/images/
+            boot-test.log
           retention-days: 7

@@ -1,0 +1,2 @@
+tmpfs /var tmpfs rw,nodev,relatime 0 0
+tmpfs /home tmpfs rw,nosuid,nodev,relatime 0 0

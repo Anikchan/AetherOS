@@ -1,0 +1,36 @@
+#!/usr/bin/expect -f
+# ci-boot.exp — shared CI/VM boot test for the AetherOS Buildroot image
+# (P1-T02 boots to login; P1-T03 read-only root + tmpfs /var,/home; P1-T04 DHCP).
+# Environment: KERNEL (bzImage path), ROOTFS (rootfs.squashfs path), TRANSCRIPT.
+# Markers (emitted quoted so the terminal echo cannot fake a pass):
+#   S_BOOT_LOGIN_"OK", S_MOUNTS_"OK", S_DHCP_"OK"
+
+set timeout 600
+set kernel $env(KERNEL)
+set rootfs $env(ROOTFS)
+log_file -noappend $env(TRANSCRIPT)
+
+spawn qemu-system-x86_64 -m 512 -nographic -no-reboot \
+  -kernel $kernel \
+  -drive file=$rootfs,format=raw,if=virtio \
+  -append {root=/dev/vda rootfstype=squashfs console=ttyS0}
+
+expect {
+    -re "login:" { }
+    timeout { puts "TIMEOUT waiting for login prompt"; exit 2 }
+}
+send "root\r"
+expect "# "
+
+# --- P1-T03: /var and /home on tmpfs over the read-only squashfs root ---
+send {echo S_BOOT_LOGIN_"OK"; sleep 8; echo S_MOUNTS_BEGIN; mount | grep " /var " ; mount | grep " /home "; mount | grep " on / type "; mount | grep " /var " | grep -q tmpfs && mount | grep " /home " | grep -q tmpfs && echo S_MOUNTS_"OK"; echo S_MOUNTS_DONE}
+send "\r"
+expect "S_MOUNTS_DONE"
+
+# --- P1-T04: DHCP on eth0 (qemu user networking) ---
+send {echo S_DHCP_BEGIN; nmcli networking connectivity 2>/dev/null; ip -4 addr show dev eth0 | grep inet && echo S_DHCP_"OK"; echo S_DHCP_DONE}
+send "\r"
+expect "S_DHCP_DONE"
+
+send "poweroff\r"
+expect eof

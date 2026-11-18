@@ -29,6 +29,8 @@ BR2_PACKAGE_SYSTEMD=y
 BR2_TARGET_ROOTFS_SQUASHFS=y
 BR2_TARGET_ROOTFS_SQUASHFS4_XZ=y
 # BR2_TARGET_ROOTFS_TAR is not set
+# Rootfs overlay: tmpfs /var and /home over the read-only root (P1-T03)
+BR2_ROOTFS_OVERLAY="../../board/aetheros/overlay"
 
 # --- Userspace bases: filesystem tools ---
 BR2_PACKAGE_E2FSPROGS=y

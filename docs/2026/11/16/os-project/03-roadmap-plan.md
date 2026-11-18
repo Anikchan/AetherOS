@@ -97,10 +97,10 @@ Exit criteria: all ADRs decided; spikes S1 to S5 reported; test environment and 
 
 | ID | Task | Output | Done when |
 | --- | --- | --- | --- |
-| P1-T01 | Buildroot configuration and kernel fragment: UEFI EFI stub, legacy BIOS, cgroup v2, PSI, zram, squashfs, ext4, Btrfs, DRM for Intel and AMD, tickless idle, runtime power management, virtio, **binder IPC support (for Android, P6-AND)**; built-in drivers for owner's hardware | `os-build/` config | In progress (2026-11-18, session "implementation-2": defconfig + kernel fragment drafted with CI config check; first build pending in the Linux VM) |
-| P1-T02 | Init: systemd minimal profile. Compare with runit or s6 | ADR-003 decision | Boots to login |
-| P1-T03 | Read-only squashfs root with overlay for `/var` and `/home` | Mount plan (D4) | Root read-only after boot |
-| P1-T04 | Networking with NetworkManager (or systemd-networkd with iwd) | Working DHCP in the virtual machine | Network reachable |
+| P1-T01 | Buildroot configuration and kernel fragment: UEFI EFI stub, legacy BIOS, cgroup v2, PSI, zram, squashfs, ext4, Btrfs, DRM for Intel and AMD, tickless idle, runtime power management, virtio, **binder IPC support (for Android, P6-AND)**; built-in drivers for owner's hardware | `os-build/` config | Done (2026-11-18, implementation-2): fragment + defconfig verified green in CI (`kernel-config` and `buildroot-build` confirmed by owner); owner-hardware built-in driver list is refined in P2 from the coverage report |
+| P1-T02 | Init: systemd minimal profile. Compare with runit or s6 | ADR-003 decision | In progress (2026-11-18, implementation-3): CI boot test added (boots the built image to login on serial); busybox-init comparison job added (dispatch-only). Done when the owner confirms the CI boot test green |
+| P1-T03 | Read-only squashfs root with overlay for `/var` and `/home` | Mount plan (D4) | In progress (2026-11-18, implementation-3): rootfs overlay with tmpfs `/var` and `/home` added; CI boot test checks mounts. Done when CI confirms mounts on the read-only root |
+| P1-T04 | Networking with NetworkManager (or systemd-networkd with iwd) | Working DHCP in the virtual machine | In progress (2026-11-18, implementation-3): NetworkManager in the defconfig; CI boot test checks DHCP on eth0. Done when CI confirms DHCP lease in the VM |
 | P1-T05 | UEFI boot chain: systemd-boot with a unified kernel image (UKI) | Bootable EFI image | Boots through systemd-boot |
 | P1-T06 | Measure boot time and base image size | Numbers in D6 results log | Base image ≤ 150 MB compressed |
 | P1-T07 | Legacy BIOS boot path with GRUB for MBR disks | Bootable BIOS image | Boots in a legacy BIOS virtual machine |

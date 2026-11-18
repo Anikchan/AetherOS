@@ -1,0 +1,39 @@
+name: init-compare
+
+# ADR-003 evidence (P1-T02): builds a busybox-init variant of the same
+# defconfig and compares image size against the systemd build. Manual dispatch
+# only (each run is a full Buildroot build, ~1 hour of runner time).
+
+on:
+  workflow_dispatch:
+
+jobs:
+  busybox-init:
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential libncurses-dev rsync wget file bc git
+      - name: Clone Buildroot (pinned)
+        run: git clone --depth 1 --branch 2025.11 https://gitlab.com/buildroot.org/buildroot.git os-build/buildroot/buildroot
+      - name: Generate busybox-init defconfig (systemd removed)
+        run: |
+          grep -v '^BR2_PACKAGE_SYSTEMD=y' os-build/buildroot/aetheros_defconfig > /tmp/busybox_defconfig
+      - name: Build
+        run: |
+          cd os-build/buildroot/buildroot
+          make BR2_DEFCONFIG=/tmp/busybox_defconfig defconfig
+          make -j"$(nproc)"
+      - name: Report comparison sizes
+        run: |
+          echo "### Init comparison (ADR-003, P1-T02)"
+          echo "busybox-init rootfs.squashfs: $(du -k os-build/buildroot/buildroot/output/images/rootfs.squashfs | cut -f1) KB"
+          echo "(the systemd build size is in the buildroot-build workflow log)"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: busybox-init-images
+          path: os-build/buildroot/buildroot/output/images/
+          retention-days: 7
