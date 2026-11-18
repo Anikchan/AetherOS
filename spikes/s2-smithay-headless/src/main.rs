@@ -22,6 +22,11 @@ use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 
+use smithay::delegate_compositor;
+use smithay::delegate_layer_shell;
+use smithay::delegate_shm;
+use smithay::delegate_xdg_shell;
+use smithay::input::{SeatHandler, SeatState};
 use smithay::reexports::wayland_server::backend::{ClientData, ClientId, DisconnectReason};
 use smithay::reexports::wayland_server::protocol::wl_buffer::WlBuffer;
 use smithay::reexports::wayland_server::protocol::wl_output::WlOutput;
@@ -58,6 +63,7 @@ struct SpikeState {
     shm: ShmState,
     xdg_shell: XdgShellState,
     layer_shell: WlrLayerShellState,
+    seat_state: SeatState<Self>,
     /// Set once a client surface committed with a buffer attached.
     mapped: bool,
     /// Set when the first surface is mapped; the compositor exits after this
@@ -155,6 +161,19 @@ delegate_shm!(SpikeState);
 delegate_xdg_shell!(SpikeState);
 delegate_layer_shell!(SpikeState);
 
+// Required by the xdg-shell dispatch bounds (see smithay's xdg_shell module
+// docs). No wl_seat global is created by this spike; the focus types are
+// only trait plumbing.
+impl SeatHandler for SpikeState {
+    type KeyboardFocus = WlSurface;
+    type PointerFocus = WlSurface;
+    type TouchFocus = WlSurface;
+
+    fn seat_state(&mut self) -> &mut SeatState<Self> {
+        &mut self.seat_state
+    }
+}
+
 fn main() {
     if let Err(err) = run() {
         eprintln!("spike-s2-smithay-headless: FATAL: {err}");
@@ -169,18 +188,19 @@ fn run() -> Result<(), String> {
 
     let mut display: Display<SpikeState> =
         Display::new().map_err(|e| format!("Display::new: {e:?}"))?;
-    let dh = display.handle();
+    let mut dh = display.handle();
 
     let mut state = SpikeState {
         compositor: CompositorState::new::<SpikeState>(&dh),
         shm: ShmState::new::<SpikeState>(&dh, vec![]),
         xdg_shell: XdgShellState::new::<SpikeState>(&dh),
         layer_shell: WlrLayerShellState::new::<SpikeState>(&dh),
+        seat_state: SeatState::new(),
         mapped: false,
         shutdown_at: None,
     };
 
-    let mut socket =
+    let socket =
         ListeningSocket::bind(SOCKET_NAME).map_err(|e| format!("bind {SOCKET_NAME}: {e:?}"))?;
     println!("S2_SOCKET_READY: {SOCKET_NAME}");
 
@@ -189,9 +209,13 @@ fn run() -> Result<(), String> {
         display
             .dispatch_clients(&mut state)
             .map_err(|e| format!("dispatch_clients: {e}"))?;
-        if let Some(stream) = socket.accept() {
-            dh.insert_client(stream, Arc::new(ClientState::default()))
-                .map_err(|e| format!("insert_client: {e:?}"))?;
+        match socket.accept() {
+            Ok(Some(stream)) => {
+                dh.insert_client(stream, Arc::new(ClientState::default()))
+                    .map_err(|e| format!("insert_client: {e:?}"))?;
+            }
+            Ok(None) => {}
+            Err(err) => return Err(format!("accept: {err}")),
         }
         display
             .flush_clients()
