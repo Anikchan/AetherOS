@@ -19,7 +19,7 @@ echo
 echo "### PCI devices"
 printf '| Device | Driver | Coverage |\n| --- | --- | --- |\n'
 lspci -nnk 2>/dev/null | awk '
-    /^[0-9a-f][0-9a-f]:/ {
+    /^[0-9a-f]+:/ {
         if (dev != "" && !printed) printf "| %s | - | No driver |\n", dev
         dev = $0; printed = 0
         next
