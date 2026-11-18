@@ -28,6 +28,7 @@ BR2_LINUX_KERNEL_CONFIG_FRAGMENT_FILES="../../kernel/aether.fragment"
 BR2_LINUX_KERNEL_NEEDS_HOST_OPENSSL=y
 
 # --- Init: systemd minimal profile (ADR-003; P1-T02 compares runit/s6) ---
+BR2_INIT_SYSTEMD=y
 BR2_PACKAGE_SYSTEMD=y
 # Minimal profile: trim services we do not use.
 # BR2_PACKAGE_SYSTEMD_JOURNALGATEWAYD is not set
