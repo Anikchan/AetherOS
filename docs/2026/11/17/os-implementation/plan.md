@@ -148,3 +148,14 @@ resume without duplication.
   D6 report: docs/2026/11/18/results/p0-t07-t08-spikes-s1-s2.md. P0 now has
   only T10 (battery) open — blocked on real hardware. buildroot-build verdict
   pending for the P1 boot-chain flips and P1-T06/T08 numbers.
+- 2026-11-18: coverage-report.sh verified on the runner — populated PCI rows
+  (device + driver + Working) after two portability fixes (mawk interval
+  regex; full PCI domain `0000:00:xx.x` slot format). P2-T08 tool ready for
+  the first real-machine boot.
+- 2026-11-18: buildroot-build failure 2 diagnosed — `expected 2.6.x headers`
+  exposed that the defconfig never pinned headers AND used the default
+  uclibc toolchain, so glibc-only packages (systemd, NetworkManager, Upower)
+  were silently dropped from the P1-T01 green build (evidence caveat recorded
+  in the tracker). Fix: BR2_TOOLCHAIN_BUILDROOT_GLIBC=y +
+  BR2_KERNEL_HEADERS_AS_KERNEL=y. Next run re-verifies P1-T01 with the real
+  userspace; watch the 150 MB gate (glibc adds bulk).
