@@ -1,0 +1,18 @@
+# Standalone Cargo workspace for the graphics spikes (P0-T07 / P0-T08).
+# Deliberately NOT a member of the repository root workspace: the spikes target
+# Linux x86-64 only and must not break root builds on macOS.
+[workspace]
+resolver = "2"
+members = ["s1-slint-layershell", "s2-smithay-headless", "spike-client"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+[workspace.dependencies]
+libc = "0.2.170"
+wayland-client = "0.31.10"
+wayland-scanner = "0.31.11"
+wayland-protocols = "0.32.8"
+wayland-protocols-wlr = "0.3.8"

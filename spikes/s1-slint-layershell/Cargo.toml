@@ -1,0 +1,17 @@
+[package]
+name = "spike-s1-slint-layershell"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+libc.workspace = true
+wayland-client.workspace = true
+wayland-scanner.workspace = true
+wayland-protocols-wlr.workspace = true
+slint = { version = "1.19.0", default-features = false, features = [
+    "renderer-software",
+    "software-renderer-systemfonts",
+    "std",
+] }

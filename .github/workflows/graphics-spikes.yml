@@ -1,0 +1,100 @@
+# Graphics spikes P0-T07 (S1: Slint layer-shell surface + blur request) and
+# P0-T08 (S2: minimal Smithay compositor shows one client window).
+#
+# The dev host is macOS; AetherOS targets Linux x86-64, so the spikes are
+# compiled and run on ubuntu-latest VMs (owner-approved route). This workflow
+# only PRODUCES the spike evidence (log markers); marking the roadmap tasks
+# Done is verified separately by the owner.
+name: graphics-spikes
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "spikes/**"
+      - ".github/workflows/graphics-spikes.yml"
+  pull_request:
+    paths:
+      - "spikes/**"
+      - ".github/workflows/graphics-spikes.yml"
+
+jobs:
+  graphics-spikes:
+    name: Graphics spikes (linux-x86_64)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libxkbcommon0 libxkbcommon-dev pkg-config
+
+      - name: Build spikes (linux x86-64)
+        working-directory: spikes
+        run: |
+          cargo build --release \
+            -p spike-s1-slint-layershell \
+            -p spike-s2-smithay-headless \
+            -p spike-client
+
+      - name: Spike S2 + spike-client (minimal Smithay compositor maps one client window)
+        run: |
+          set -o pipefail
+          export XDG_RUNTIME_DIR="$(mktemp -d)"
+          chmod 700 "$XDG_RUNTIME_DIR"
+          mkdir -p spike-logs
+
+          spikes/target/release/spike-s2-smithay-headless \
+            > spike-logs/s2-client-test.log 2>&1 &
+          S2_PID=$!
+          for _ in $(seq 1 100); do
+            grep -q S2_SOCKET_READY spike-logs/s2-client-test.log && break
+            sleep 0.2
+          done
+
+          WAYLAND_DISPLAY=wayland-0 timeout 60 spikes/target/release/spike-client \
+            2>&1 | tee spike-logs/client.log
+          CLIENT_RC=${PIPESTATUS[0]}
+          wait "$S2_PID" || true
+          echo "spike-client exit code: $CLIENT_RC"
+
+          grep -q CLIENT_WINDOW_MAPPED spike-logs/client.log
+          grep -q S2_CLIENT_MAPPED spike-logs/s2-client-test.log
+          grep -q S2_SOCKET_READY spike-logs/s2-client-test.log
+
+      - name: Spike S1 (Slint layer-shell surface + blur request, hosted by S2)
+        run: |
+          set -o pipefail
+          export XDG_RUNTIME_DIR="$(mktemp -d)"
+          chmod 700 "$XDG_RUNTIME_DIR"
+
+          spikes/target/release/spike-s2-smithay-headless \
+            > spike-logs/s2-s1-host.log 2>&1 &
+          S2_PID=$!
+          for _ in $(seq 1 100); do
+            grep -q S2_SOCKET_READY spike-logs/s2-s1-host.log && break
+            sleep 0.2
+          done
+
+          # The S2 host advertises zwlr_layer_shell_v1 but not the KDE blur
+          # protocol, so S1_BLUR_UNAVAILABLE is an expected finding here.
+          WAYLAND_DISPLAY=wayland-0 timeout 120 \
+            spikes/target/release/spike-s1-slint-layershell \
+            2>&1 | tee spike-logs/s1.log
+          S1_RC=${PIPESTATUS[0]}
+          wait "$S2_PID" || true
+          echo "spike-s1 exit code: $S1_RC"
+
+          grep -q S1_LAYERSHELL_SURFACE_OK spike-logs/s1.log
+
+      - name: Upload spike logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: graphics-spike-logs
+          path: spike-logs/
+          if-no-files-found: warn

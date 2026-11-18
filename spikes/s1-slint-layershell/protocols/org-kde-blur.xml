@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Minimal client-side definition of the KDE blur protocol (org-kde-blur).
+     Not shipped by the wayland-protocols crates, so Spike S1 inlines it here
+     to be able to bind org_kde_kwin_blur_manager when the host compositor
+     (e.g. KWin) advertises it. Only the requests S1 sends are declared. -->
+<protocol name="org_kde_blur">
+  <copyright>
+    SPDX-License-Identifier: MIT
+    Spike-local transcription of the KDE blur protocol for testing only.
+  </copyright>
+
+  <interface name="org_kde_kwin_blur_manager" version="1">
+    <request name="create" new_id="org_kde_kwin_blur">
+      <arg name="surface" type="object" interface="wl_surface"/>
+    </request>
+    <request name="unset">
+      <arg name="surface" type="object" interface="wl_surface"/>
+    </request>
+  </interface>
+
+  <interface name="org_kde_kwin_blur" version="1">
+    <request name="set_region">
+      <arg name="region" type="object" interface="wl_region" allow-null="true"/>
+    </request>
+    <request name="commit"/>
+  </interface>
+</protocol>

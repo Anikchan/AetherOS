@@ -1,0 +1,9 @@
+[package]
+name = "spike-s2-smithay-headless"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+smithay = { version = "0.7.0", default-features = false, features = ["wayland_frontend"] }
