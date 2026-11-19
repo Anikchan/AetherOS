@@ -20,7 +20,65 @@ Usage: check-budgets.py [metrics-file]   (default: os-build/metrics/sample.txt)
 from __future__ import annotations
 
 import sys
-import tomllib
+try:
+    import tomllib
+except ModuleNotFoundError:
+    try:
+        import tomli as tomllib
+    except ModuleNotFoundError:
+        # Minimal TOML parser for budgets.toml (Python 3.10 fallback)
+        class _TomlShim:
+            @staticmethod
+            def loads(text):
+                result = {}
+                section = None
+                for line in text.splitlines():
+                    line = line.strip()
+                    if not line or line.startswith("#"):
+                        continue
+                    if line.startswith("[") and line.endswith("]"):
+                        section = line[1:-1]
+                        parts = section.split(".")
+                        cur = result
+                        for p in parts:
+                            cur = cur.setdefault(p, {})
+                        continue
+                    if "=" in line:
+                        key, _, val = line.partition("=")
+                        key = key.strip()
+                        val = val.strip()
+                        # Parse inline table { limit = 150 } or { limit = 512, target = 400 }
+                        if val.startswith("{"):
+                            inner = val.strip("{}").strip()
+                            d = {}
+                            for pair in inner.split(","):
+                                pair = pair.strip()
+                                if "=" in pair:
+                                    k, _, v = pair.partition("=")
+                                    v = v.strip()
+                                    try:
+                                        d[k.strip()] = float(v) if "." in v else int(v)
+                                    except ValueError:
+                                        d[k.strip()] = v
+                            if section:
+                                parts = section.split(".")
+                                cur = result
+                                for p in parts:
+                                    cur = cur.setdefault(p, {})
+                                cur[key] = d
+                        else:
+                            try:
+                                v = float(val) if "." in val else int(val)
+                            except ValueError:
+                                v = val
+                            if section:
+                                parts = section.split(".")
+                                cur = result
+                                for p in parts:
+                                    cur = cur.setdefault(p, {})
+                                cur[key] = v
+                return result
+        tomllib = _TomlShim()
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent

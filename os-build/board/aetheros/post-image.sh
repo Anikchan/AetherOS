@@ -29,6 +29,14 @@ linux /bzImage
 options root=/dev/vda2 rootfstype=squashfs console=ttyS0 net.ifnames=0 biosdevname=0
 EOF
 
+# --- Create ESP vfat image manually (genimage's mcopy can't find mtools) ---
+export PATH="/usr/bin:/bin:${PATH}"
+VFA="${BINARIES_DIR}/efi-part.vfat"
+rm -f "${VFA}"
+mkdosfs -F 32 -n "AETHEROS" "${VFA}" 32768
+# Copy ESP contents into the vfat image recursively
+MTOOLS_SKIP_CHECK=1 mcopy -sp -i "${VFA}" "${BINARIES_DIR}/efi-part/"* "::"
+
 # --- Assemble the bootable UEFI disk image ---
 "${HOST_DIR}/bin/genimage" \
     --config "${BOARD_DIR}/genimage-efi.cfg" \
