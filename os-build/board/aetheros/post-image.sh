@@ -23,6 +23,11 @@ cp "${SD_BOOT}" "${BINARIES_DIR}/efi-part/EFI/BOOT/BOOTX64.EFI"
 cp "${BINARIES_DIR}/bzImage" "${BINARIES_DIR}/efi-part/bzImage"
 
 # systemd-boot loader entry (traditional, no UKI) — avoids objcopy/ukify.
+mkdir -p "${BINARIES_DIR}/efi-part/loader/entries"
+cat > "${BINARIES_DIR}/efi-part/loader/loader.conf" <<'EOF'
+default aetheros
+timeout 3
+EOF
 cat > "${BINARIES_DIR}/efi-part/loader/entries/aetheros.conf" <<'EOF'
 title AetherOS
 linux /bzImage
