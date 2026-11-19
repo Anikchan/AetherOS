@@ -26,7 +26,8 @@ jobs:
       - name: Install build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential libncurses-dev rsync wget file bc git libelf-dev mtools
+          sudo apt-get install -y build-essential libncurses-dev rsync wget file bc git libelf-dev mtools \
+            qemu-system-x86 expect ovmf grub-pc-bin grub-common parted
       - name: Clone Buildroot (pinned)
         run: git clone --depth 1 --branch 2025.11 https://gitlab.com/buildroot.org/buildroot.git os-build/buildroot/buildroot
       - name: Configure
@@ -57,7 +58,6 @@ jobs:
           # Free disk space: boot tests only need output/images/
           rm -rf os-build/buildroot/buildroot/output/build \
                  os-build/buildroot/buildroot/output/host
-          sudo apt-get install -y qemu-system-x86 expect
           export KERNEL=os-build/buildroot/buildroot/output/images/bzImage
           export ROOTFS=os-build/buildroot/buildroot/output/images/rootfs.squashfs
           export TRANSCRIPT=$(mktemp)
@@ -68,7 +68,6 @@ jobs:
       - name: UEFI boot test — systemd-boot + UKI (P1-T05)
         timeout-minutes: 20
         run: |
-          sudo apt-get install -y ovmf
           export DISK=os-build/buildroot/buildroot/output/images/aetheros-efi.img
           test -f "$DISK" || { echo "FAIL: UEFI disk image missing"; exit 1; }
           export OVMF=/usr/share/OVMF/OVMF_CODE.fd
@@ -80,7 +79,6 @@ jobs:
       - name: BIOS boot test — GRUB2 MBR (P1-T07)
         timeout-minutes: 20
         run: |
-          sudo apt-get install -y grub-pc-bin grub-common parted
           chmod +x os-build/board/aetheros/make-bios-image.sh
           sudo os-build/board/aetheros/make-bios-image.sh \
             os-build/buildroot/buildroot/output/images os-build/board/aetheros
