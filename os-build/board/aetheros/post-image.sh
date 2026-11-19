@@ -39,7 +39,7 @@ rm -f "${VFA}"
 truncate -s 64M "${VFA}" || dd if=/dev/zero of="${VFA}" bs=1M count=64
 mkdosfs -F 32 -n "AETHEROS" "${VFA}" || { echo "ERROR: mkdosfs failed"; exit 1; }
 # Copy ESP contents into the vfat image recursively
-MTOOLS_SKIP_CHECK=1 mcopy -sp -i "${VFA}" "${BINARIES_DIR}/efi-part/"* "::" || { echo "ERROR: mcopy failed"; exit 1; }
+MTOOLS_SKIP_CHECK=1 mcopy -s -i "${VFA}" "${BINARIES_DIR}/efi-part/." "::" || { echo "ERROR: mcopy failed"; exit 1; }
 
 # --- Assemble the bootable UEFI disk image ---
 "${HOST_DIR}/bin/genimage" \
