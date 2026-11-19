@@ -54,6 +54,9 @@ jobs:
       - name: Boot test — login, mounts, DHCP (P1-T02/T03/T04)
         timeout-minutes: 20
         run: |
+          # Free disk space: boot tests only need output/images/
+          rm -rf os-build/buildroot/buildroot/output/build \
+                 os-build/buildroot/buildroot/output/host
           sudo apt-get install -y qemu-system-x86 expect
           export KERNEL=os-build/buildroot/buildroot/output/images/bzImage
           export ROOTFS=os-build/buildroot/buildroot/output/images/rootfs.squashfs
