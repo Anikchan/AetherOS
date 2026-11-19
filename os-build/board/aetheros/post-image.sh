@@ -31,11 +31,13 @@ EOF
 
 # --- Create ESP vfat image manually (genimage's mcopy can't find mtools) ---
 export PATH="/usr/bin:/bin:${PATH}"
+mkdir -p "${BINARIES_DIR}" || { echo "ERROR: cannot create ${BINARIES_DIR}"; exit 1; }
+ls -ld "${BINARIES_DIR}" || { echo "ERROR: ${BINARIES_DIR} does not exist"; exit 1; }
 VFA="${BINARIES_DIR}/efi-part.vfat"
 rm -f "${VFA}"
-mkdosfs -F 32 -n "AETHEROS" "${VFA}" 32768
+mkdosfs -F 32 -n "AETHEROS" "${VFA}" 32768 || { echo "ERROR: mkdosfs failed"; exit 1; }
 # Copy ESP contents into the vfat image recursively
-MTOOLS_SKIP_CHECK=1 mcopy -sp -i "${VFA}" "${BINARIES_DIR}/efi-part/"* "::"
+MTOOLS_SKIP_CHECK=1 mcopy -sp -i "${VFA}" "${BINARIES_DIR}/efi-part/"* "::" || { echo "ERROR: mcopy failed"; exit 1; }
 
 # --- Assemble the bootable UEFI disk image ---
 "${HOST_DIR}/bin/genimage" \
