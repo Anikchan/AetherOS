@@ -36,7 +36,7 @@ ls -ld "${BINARIES_DIR}" || { echo "ERROR: ${BINARIES_DIR} does not exist"; exit
 VFA="${BINARIES_DIR}/efi-part.vfat"
 rm -f "${VFA}"
 # Create the file first (mkdosfs on this version can't create it)
-truncate -s 32M "${VFA}" || dd if=/dev/zero of="${VFA}" bs=1M count=32
+truncate -s 64M "${VFA}" || dd if=/dev/zero of="${VFA}" bs=1M count=64
 mkdosfs -F 32 -n "AETHEROS" "${VFA}" || { echo "ERROR: mkdosfs failed"; exit 1; }
 # Copy ESP contents into the vfat image recursively
 MTOOLS_SKIP_CHECK=1 mcopy -sp -i "${VFA}" "${BINARIES_DIR}/efi-part/"* "::" || { echo "ERROR: mcopy failed"; exit 1; }
