@@ -8,6 +8,7 @@
 | `metrics-export.sh` | Export a metrics file in D6 fixed text format. |
 | `artifact-clean.sh` | Remove local build artifacts and caches. |
 | `kernel-config-check.sh` | Cached reimplementation of the kernel-config workflow (optimization proposal for S1). |
+| `spike-runner.sh` | Reusable harness for running a spike script with timeout, log capture, and marker verification (supports S2). |
 
 ## Local type-check recipe
 

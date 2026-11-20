@@ -70,6 +70,9 @@ Completed by autonomous session (S4 territory). Delivered:
 - Metrics: TEMPLATE.txt added; os-build/README.md documents type-check/boot/metrics.
 - Out-of-territory items (kernel-config.yml optimization, spike-*/coverage-report.sh
   refinements) documented as proposals in scripts/ and left for S1/S2 to apply.
+- Added `os-build/scripts/spike-runner.sh`: reusable harness for running any
+  spike script with timeout, log capture, and marker verification (supports S2
+  and S4's test-harness goal); documented in scripts/README.md.
 
 Note: all CI runs currently blocked on billing (S1's blocker); S4's workflow edits
 can still be made locally and pushed, but they won't execute until billing is
