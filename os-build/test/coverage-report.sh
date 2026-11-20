@@ -16,12 +16,17 @@ grep -m1 "model name" /proc/cpuinfo || true
 free -h | sed -n '2p' || true
 echo
 
-# Pre-compute the set of drivers reporting missing firmware (dmesg scan).
+# Pre-compute the set of firmware files and driver modules reporting missing
+# firmware (dmesg scan). MISSING_FW holds firmware file names; MISSING_DRV
+# holds the driver/module tokens that appear on those dmesg lines, used to
+# auto-classify "Needs firmware" below (best-effort; final verdicts are
+# confirmed by the 04 section 6 checklists).
 MISSING_FW="$(dmesg 2>/dev/null | grep -ioE 'failed to load firmware [^ ]+|firmware: failed to load [^ ]+' | sed -E 's/.* //; s/\.bin$//' | sort -u)"
+MISSING_DRV="$(dmesg 2>/dev/null | grep -iE 'firmware.*(fail|missing)|failed to load.*firmware' | sed -E 's/^\[[^]]*\][[:space:]]*//; s/[[:space:]].*//' | grep -E '^[a-zA-Z0-9_-]+$' | sort -u)"
 
 echo "### PCI devices"
 printf '| Device | Driver | Coverage |\n| --- | --- | --- |\n'
-lspci -nnk 2>/dev/null | awk -v mf="$MISSING_FW" '
+lspci -nnk 2>/dev/null | awk -v md="$MISSING_DRV" '
     /^[0-9a-f]+:/ {
         if (dev != "" && !printed) printf "| %s | - | No driver |\n", dev
         dev = $0; printed = 0
@@ -30,6 +35,12 @@ lspci -nnk 2>/dev/null | awk -v mf="$MISSING_FW" '
     /Kernel driver in use/ {
         sub(/.*: /, ""); drv = $0
         cov = "Working"
+        # Best-effort auto-classify: if the bound driver appears in the set of
+        # modules reporting missing firmware in dmesg, mark "Needs firmware".
+        n = split(md, arr, "\n")
+        for (i = 1; i <= n; i++) {
+            if (arr[i] != "" && arr[i] == drv) { cov = "Needs firmware"; break }
+        }
         printf "| %s | %s | %s |\n", dev, drv, cov
         printed = 1
     }
@@ -60,4 +71,4 @@ echo
 echo "### Missing firmware (dmesg)"
 dmesg 2>/dev/null | grep -iE "firmware.*fail|failed to load.*firmware|firmware.*missing" | tail -10 || echo "(none / dmesg unavailable)"
 echo
-echo "_Classification: Working = driver bound, no firmware errors for the device; Needs firmware = driver bound but a missing-firmware line is listed above (correlate by driver name); No driver = no bound driver. Final Working/Partly verdicts are confirmed by the 04 §6 checklists._"
+echo "_Classification: Working = driver bound and no missing-firmware line names its module; Needs firmware = driver bound and its module appears in the missing-firmware dmesg scan above (best-effort auto-classify); No driver = no bound driver. Final Working/Partly verdicts are confirmed by the 04 §6 checklists._"

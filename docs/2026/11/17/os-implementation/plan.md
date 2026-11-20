@@ -173,6 +173,27 @@ resume without duplication.
   Mesa/Vulkan + PipeWire + firmware Buildroot symbols to merge when P2 starts.
   Tracker P1 row updated with the billing block. No active defconfig change
   (keeps the P1 150 MB gate meaningful).
+- 2026-11-20: S2 autonomous run (session S2). Prep work completed for all
+  startable S2 items; hardware-dependent runs remain blocked:
+  (a) Created `os-build/test/spike-s4.sh` (battery spike: sysfs + UPower +
+  charge-limit probe, read-only, D6 markers) and D6 skeleton
+  `docs/2026/11/20/results/p0-t10-spike-s4-battery.md`. Run pending spare
+  Dell + battery.
+  (b) Refined `os-build/test/coverage-report.sh`: auto-classify "Needs
+  firmware" by correlating bound driver with the missing-firmware dmesg scan
+  (`MISSING_DRV`); updated classification note. Verified `bash -n` + smoke
+  run. D6 skeleton `docs/2026/11/20/results/p2-t08-coverage-report.md`. Run
+  pending spare Dell.
+  (c) Created `os-build/test/spike-s5-gui.c` (Win32 window app) and
+  `os-build/test/spike-s5-gui.sh` (mingw build + Wine + Xvfb, latency
+  marker). D6 skeleton
+  `docs/2026/11/20/results/p0-t12-spike-s5-gui.md`. Run pending Linux host
+  with Wine/Xvfb/CI.
+  (d) Verified s2 + spike-client type-check clean on x86_64-unknown-linux-gnu
+  (cargo check, 2026-11-20). s1 cannot be cross-checked locally (fontconfig
+  sysroot); it compiles on CI (Ubuntu) per run 44236833280. P0-T07 is Done.
+  Updated `docs/2026/11/19/session-s2-plan.md` status/tasks. Tracker updates
+  are S1's.
 - 2026-11-20: **S1 autonomous run.** Verified `cargo build --workspace` and
   `cargo test --workspace` pass; grep-verified all 17 P1-required kernel
   options still present plus P2 additions; reviewed boot-chain scripts
