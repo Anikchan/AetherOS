@@ -182,3 +182,7 @@ resume without duplication.
   clang not accepted by Kconfig's linker check) — deferred to CI. No further
   startable S1 tasks remain (P1 verification needs billing; P2-T01/P0-T10
   need S2 hardware). Parallel WIP from S2/S3/S4 left untouched.
+
+- 2026-11-20: Session S4 (tooling & infra) completed autonomously: hardened boot-test.sh; added disk-image-test.sh; added os-build/Makefile and os-build/scripts/* (type-check, fetch-kernel, ci-local, metrics-export, artifact-clean, kernel-config-check) with README; added metrics/TEMPLATE.txt; updated ci.yml (concurrency, cargo cache, timeouts, artifact retention, optional notify-on-failure) and added artifact-cleanup.yml; added concurrency to coverage-sample, graphics-spikes, init-compare, wine-spike; updated os-build/README.md. Out-of-territory items recorded as proposals for S1/S2.
+
+- 2026-11-20: Session S3 (docs & design) completed autonomously: reviewed/updated design docs (internal-architecture ADR-004/009/012 status + Slint spike note; ui-design Slint layer-shell/blur implementation note; process-manager PSI caveat; power-management battery/PSI notes); updated feature docs 01/02/03/07 with spike findings; updated project README status line; updated p1-boot-speed.md with billing-block note (no fabricated numbers); opportunistic nexa- -> aether- rename across S3 territory (design/, features/, README, boot results). D6 logs for P0-T06/T09/T12/T07-T08 already present; P1-T06/T08 stays pending on billing. Tracker (roadmap section 4) left to S1. Parallel WIP from S1/S2/S4 left untouched.

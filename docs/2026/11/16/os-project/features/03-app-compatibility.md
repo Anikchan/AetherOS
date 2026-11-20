@@ -2,7 +2,7 @@
 
 Note (addendum 1, 2026-11-17): how these apps are installed and run without user-visible third-party tools is defined in `docs/2026/11/17/os-addendum-1/F9-app-platform.md`.
 
-Owner components: `nexa-pkg` (package service), software store (shell), `nexa-compat` (Wine and Proton manager).
+Owner components: `aether-pkg` (package service), software store (shell), `aether-compat` (Wine and Proton manager).
 
 ## 1. Support Model
 
@@ -11,7 +11,7 @@ Owner components: `nexa-pkg` (package service), software store (shell), `nexa-co
 | Linux native apps | Full | Flatpak (primary), AppImage (portable), distribution packages where available | Best experience |
 | Unix command-line tools | Full | POSIX shell, GNU and BSD-like tools, package manager | Terminal is available but not required |
 | Cross-platform apps (Java, Python, Node, Electron, Flutter, Qt, GTK, web apps) | Full | Runtime libraries and sample apps | Most modern apps fall in this group |
-| Windows apps (x86-64) | Partial | Wine and Proton managed by `nexa-compat` | Compatibility varies (section 4) |
+| Windows apps (x86-64) | Partial | Wine and Proton managed by `aether-compat` | Compatibility varies (section 4) |
 | Windows apps that cannot run through Wine | Via dual boot | Boot into Windows | Recommended fallback |
 | macOS apps | Not supported as macOS packages | Not feasible (see 02 section 1, row 5) | Use cross-platform builds (Windows or Linux targets, Electron, Flutter, Qt, Java, Python, web) or native AetherOS bundles. The owner's own macOS apps follow this path. |
 | Android apps | Not in v1 | Optional later (Waydroid-style container) | Open question Q6 |
@@ -72,4 +72,9 @@ Owner components: `nexa-pkg` (package service), software store (shell), `nexa-co
 ## 7. Open Questions
 
 - Which Wine build to ship: stable upstream Wine or a Proton-based build. Decide in P6-T03.
+
+Implementation note (spike S5, P0-T12, 2026-11-18, headless scope): Wine 10.0 ran a
+Windows console program in the Linux VM with a 20 ms startup. A GUI-app-through-Wayland
+residual is tracked for the graphical VM session (P2). The 20 ms number is a
+functional data point only, not a bare-metal measurement.
 - Whether to ship Wine by default or install it on first use. Proposed: install on first use to save space in the base image (see D4 size budget).

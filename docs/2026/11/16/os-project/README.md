@@ -2,10 +2,10 @@
 
 - Created: 2026-11-16
 - Last updated: 2026-11-17 (addendum 1: five questions and three requirements; addendum 2: Android apps, Activity Manager, battery analytics, screen time, optional packs; see `docs/2026/11/17/os-addendum-1/README.md` and `docs/2026/11/17/os-addendum-2/README.md`)
-- Status: Implementation started. Phase P0 nearly complete (Done: T01–T06 except T07/T08/T10/T12 spikes, T09 partial, T11 — all ADRs Accepted; remote pushed). Phase P1 started (P1-T01 In progress: kernel fragment + Buildroot defconfig drafted, CI config check added). Blocked on environments: graphical Linux session (T07/T08), real battery (T10), Wine GUI (T12).
+- Status: Implementation in progress (2026-11-20). P0 mostly complete: T01–T06, T09 (partial: PSI re-test in P1), T11, T12 (headless) Done; T07/T08 Done (spikes S1/S2 green); T10 (battery) blocked on real hardware. P1 in progress: T01 Done (owner-confirmed green CI); T02/T03/T04/T05/T07 In progress with CI evidence pending owner confirmation; P1 verification currently blocked on a GitHub Actions billing failure (owner action). Active parallel sessions S1–S4; S3 owns this docs/design territory.
 - Scope: Personal Edition first. Public release is a distant future goal.
 - Team: One engineer (the owner) at 26 hours per week.
-- OS name: AetherOS (chosen by the owner on 2026-11-17). Component names still use the "nexa-" prefix as a placeholder; rename to "aether-" when code starts. Trademark check is deferred until public release (task P0-T03b).
+- OS name: AetherOS (chosen by the owner on 2026-11-17). Component names use the "aether-" prefix (Cargo workspace: aether-compositor, aether-shell, aether-lifecycled, aether-installer). Trademark check is deferred until public release (task P0-T03b).
 
 ## Document Map
 

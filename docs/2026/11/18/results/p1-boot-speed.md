@@ -26,4 +26,7 @@
 - TCG (software emulation) timings are functional evidence only — not
   representative of the bare-metal Dell target (D6 §6). The bare-metal
   numbers come from P2 hardware bring-up.
-- Filled in once the definitive `buildroot-build` run lands green.
+- Filled in once the definitive `buildroot-build` run lands green. **Blocked (2026-11-20):** all GitHub Actions runs fail to start with
+  "recent account payments have failed or your spending limit needs to be increased" — the owner must fix billing before P1
+  verification can complete. Numbers above stay `_pending_` until then; do not fabricate. S1's local P2 prep (kernel fragment +
+  defconfig additions) is documented in `os-build/kernel/aether.fragment` and `os-build/buildroot/aetheros-p2-additions.defconfig`.

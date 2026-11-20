@@ -1,10 +1,22 @@
-# D5 — Power Management Design (`nexa-powerd`)
+# D5 — Power Management Design (`aether-powerd`)
 
 This document defines the contracts first (section 4), then the behavior. Feature requirements are in F7. Process management interactions are in D3.
 
 ## 1. Purpose
 
 Choose the best power profile and device settings for the current situation, estimate battery life accurately, protect battery health, and explain every decision. Keep the decision logic separate from the kernel writes, so that the logic can be tested without hardware.
+
+## 1.1 Implementation notes (spikes, 2026-11-18)
+
+- **Battery telemetry (spike S4, P0-T10)** is still **blocked on real
+  hardware** (a machine with a battery; the spare Dell or a laptop VM
+  passthrough). The design assumes UPower-first with a sysfs fallback
+  (section 10) and a "not reported" display for missing values (risk R15);
+  both are retained. No battery numbers are recorded yet.
+- **PSI (spike S3, P0-T09)** was absent from the Alpine virt kernel; the
+  P1-T01 fragment sets `CONFIG_PSI=y`. Powerd does not depend on PSI
+  directly, but any future pressure-aware tuning must check availability
+  (see D3 note).
 
 ## 2. Mechanisms
 
@@ -29,12 +41,12 @@ Paths are the standard Linux interfaces. Each one is checked at startup. A missi
 
 | Component | Responsibility |
 | --- | --- |
-| `nexa-powerd` (Rust) | Policy: decides profile, device settings, actions, and notifications. Owns the tuner and the estimator. |
+| `aether-powerd` (Rust) | Policy: decides profile, device settings, actions, and notifications. Owns the tuner and the estimator. |
 | UPower | Reads battery state. Used instead of writing a new battery reader (ADR-014). |
 | power-profiles-daemon | Applies profiles to the platform and CPU. |
 | thermald | Intel thermal control (where used). |
-| `nexa-lifecycled` (D3) | Receives background limits from `nexa-powerd` and applies them to app scopes. |
-| `nexa-shell` (control center and power view) | Shows status and accepts user choices. |
+| `aether-lifecycled` (D3) | Receives background limits from `aether-powerd` and applies them to app scopes. |
+| `aether-shell` (control center and power view) | Shows status and accepts user choices. |
 
 ## 4. Contracts (Rust)
 
@@ -204,7 +216,7 @@ Tuning never changes devices that are in use by a safety-critical function (for 
 Every action is logged with its reason. Example:
 
 ```
-2026-11-16T19:40:02 nexa-powerd: profile Balanced->Saver reason=source_changed(battery)
+2026-11-16T19:40:02 aether-powerd: profile Balanced->Saver reason=source_changed(battery)
 ```
 
 ## 12. Tests

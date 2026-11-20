@@ -1,6 +1,6 @@
 # F7 — Battery and Power Management
 
-Owner component: `nexa-powerd` (power policy). Mechanisms come from the Linux kernel, UPower, and power-profiles-daemon. Design: D5.
+Owner component: `aether-powerd` (power policy). Mechanisms come from the Linux kernel, UPower, and power-profiles-daemon. Design: D5.
 
 Battery management is a top priority (03 and 01 section 2). The goal is the longest battery life possible without manual tuning, with battery health protected and no loss of responsiveness when plugged in.
 
@@ -30,7 +30,7 @@ Battery management is a top priority (03 and 01 section 2). The goal is the long
 | PWR-11 | Thermal management | MVP (basic), v1 (fan curves) | Keeps temperatures in range while saving power. Intel thermal daemon where used; platform fan control where supported. |
 | PWR-12 | Energy impact per app | v1 | Relative energy score in the activity monitor, from CPU time, wakeups, and GPU use. |
 | PWR-13 | Wakeup control | v1 | Flags apps that wake the CPU often; limits their timers in background. |
-| PWR-14 | Power report | v1 | `nexactl power report` writes a text report: drain sources, profile history, sleep events, and battery health. |
+| PWR-14 | Power report | v1 | `aetherctl power report` writes a text report: drain sources, profile history, sleep events, and battery health. |
 | PWR-15 | Low-power mode switch | MVP | One toggle in the control center. Sets Saver and reduces effects (F6 tiers). |
 | PWR-16 | Battery and power view | MVP | Shows status, profile, time remaining, and why the current profile was chosen. |
 | PWR-17 | Optimized charging | Later | Delay full charge until shortly before typical unplug time. Needs usage history. |
@@ -64,6 +64,14 @@ Exact values are proposed. They are tuned on the owner's machines with the batte
 - Resume target: desktop ready in 3 seconds (PT-08 in 04).
 - Wi-Fi reconnects automatically after resume.
 - A failed resume is logged, and the next boot reports the reason.
+
+## 5.1 Implementation note (spike S4, P0-T10, 2026-11-18)
+
+Battery telemetry through UPower/sysfs (cycle count, charge limits) is **blocked
+on real hardware** (a machine with a battery; the spare Dell or a laptop VM
+passthrough). The design retains UPower-first with a sysfs fallback (D5
+section 10) and a "not reported" display for missing values (risk R15). No
+battery numbers are recorded yet; spike S4 lands in P2 bring-up.
 
 ## 6. Dependencies
 

@@ -1,6 +1,6 @@
 # F4 — Customization (Unix-Style)
 
-Owner components: `nexa-confd` (configuration daemon), `nexactl` (command-line tool), Lua runtime for hooks, settings app (`nexa-settings`).
+Owner components: `aether-confd` (configuration daemon), `aetherctl` (command-line tool), Lua runtime for hooks, settings app (`aether-settings`).
 
 ## 1. Principles
 
@@ -53,11 +53,11 @@ pinned = ["org.mozilla.firefox", "com.nexa.terminal", "org.gnome.TextEditor"]
 | CUS-01 | Layered configuration | MVP | Defaults, system overrides, and user overrides (section 1). |
 | CUS-02 | Config validation | MVP | Schema check on save. Errors show file, line, and key. Last valid config stays active. |
 | CUS-03 | Theme tokens | MVP | Colors, radii, blur strength, tint, font, and spacing in one file (D1 section 5). |
-| CUS-04 | Live reload | v1 | `nexactl reload` or automatic reload on save. |
+| CUS-04 | Live reload | v1 | `aetherctl reload` or automatic reload on save. |
 | CUS-05 | Keybindings file | MVP | Remap any shell shortcut. Conflicts are reported. |
 | CUS-06 | Dock and menu bar layout file | MVP | Position, pinned items, and menu items are set by file. |
 | CUS-07 | Shell and terminal choice | MVP | Default shell (bash, zsh, or fish) and default terminal app. |
-| CUS-08 | `nexactl` command-line tool | MVP (basic), v1 (full) | Commands in section 6. |
+| CUS-08 | `aetherctl` command-line tool | MVP (basic), v1 (full) | Commands in section 6. |
 | CUS-09 | Lua hooks | v1 | Scripts run on events (for example, on login, on focus change, on Wi-Fi connect). Sandboxed with a time limit. |
 | CUS-10 | Extension API | Later | Shell extensions can add menu bar items and launcher actions. Signed or local only. |
 | CUS-11 | Reset to defaults | MVP | Reset one file, one section, or everything. |
@@ -71,19 +71,19 @@ pinned = ["org.mozilla.firefox", "com.nexa.terminal", "org.gnome.TextEditor"]
 - Each hook has a time limit (default 200 ms) and no direct filesystem write access outside `~/.config/nexa/`.
 - A failing hook is disabled and reported in the activity log. It does not stop the shell.
 
-## 6. `nexactl` Commands (MVP)
+## 6. `aetherctl` Commands (MVP)
 
 | Command | Purpose |
 | --- | --- |
-| `nexactl config get <key>` | Print a value |
-| `nexactl config set <key> <value>` | Set a value and validate it |
-| `nexactl config reset <key or file>` | Reset to default |
-| `nexactl config check` | Validate all files |
-| `nexactl reload` | Reload configuration |
-| `nexactl apps list` | List running apps and their states (F2) |
-| `nexactl apps suspend <app-id>` | Suspend an app |
-| `nexactl apps quit <app-id>` | Quit an app |
-| `nexactl version` | Show OS and component versions |
+| `aetherctl config get <key>` | Print a value |
+| `aetherctl config set <key> <value>` | Set a value and validate it |
+| `aetherctl config reset <key or file>` | Reset to default |
+| `aetherctl config check` | Validate all files |
+| `aetherctl reload` | Reload configuration |
+| `aetherctl apps list` | List running apps and their states (F2) |
+| `aetherctl apps suspend <app-id>` | Suspend an app |
+| `aetherctl apps quit <app-id>` | Quit an app |
+| `aetherctl version` | Show OS and component versions |
 
 ## 7. Dependencies
 
@@ -96,7 +96,7 @@ pinned = ["org.mozilla.firefox", "com.nexa.terminal", "org.gnome.TextEditor"]
 | --- | --- | --- |
 | CUS-AC-01 | Changing `dock.toml` position moves the dock without restart | Not tested |
 | CUS-AC-02 | Invalid TOML shows file, line, and key; previous settings remain active | Not tested |
-| CUS-AC-03 | `nexactl config set` and `get` round-trip a value | Not tested |
+| CUS-AC-03 | `aetherctl config set` and `get` round-trip a value | Not tested |
 | CUS-AC-04 | Reset of one file restores the default values | Not tested |
 | CUS-AC-05 | Every settings screen maps to a file key (automated check) | Not tested |
 | CUS-AC-06 | A Lua hook that runs past its time limit is stopped and reported | Not tested |

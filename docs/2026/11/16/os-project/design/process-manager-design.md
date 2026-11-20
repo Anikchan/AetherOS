@@ -1,4 +1,4 @@
-# D3 — Process Manager Design (`nexa-lifecycled`)
+# D3 — Process Manager Design (`aether-lifecycled`)
 
 This document defines the contracts first (section 4), then the behavior (sections 3, 6, and 7). Feature requirements are in F2. Benchmarks are in 04 section 4.
 
@@ -21,6 +21,16 @@ Keep many apps open while inactive apps use almost no memory and no CPU. Protect
 | Poll on PSI triggers | `poll()` on pressure files | Event-driven pressure notifications with no polling loop |
 
 Kernel minimum: 5.19 (required for `memory.reclaim`). Target: LTS 6.x.
+
+Implementation note (spike S3, P0-T09, 2026-11-18): `cgroup.freeze` and
+`memory.reclaim` were verified Pass on the test kernel (~40 MB reclaimed on
+demand). PSI (`/proc/pressure`) was **absent** from the Alpine virt kernel
+even with `psi=1` on the command line — the kernel was built without
+`CONFIG_PSI`. The P1-T01 kernel fragment therefore sets `CONFIG_PSI=y`, and
+the PSI check is re-run there. Until that is confirmed, pressure-driven
+features (section 6) must treat a missing `/proc/pressure/memory` as
+"pressure unavailable" and fall back to reclaim-only behavior rather than
+crashing.
 
 ## 3. States and Transition Rules
 

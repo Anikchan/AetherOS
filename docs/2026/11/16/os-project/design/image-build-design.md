@@ -13,7 +13,7 @@ Scope: how the system image is built, the size budget, the firmware policy, the 
 | 5. Pack root filesystem | `mksquashfs` with zstd compression | `root.squashfs` |
 | 6. Build initramfs | Dracut or Buildroot cpio | `initrd` |
 | 7. Build unified kernel image | `ukify` | Signed `nexa.efi` (section 5) |
-| 8. Build installer ISO | `xorriso` | `nexa-<version>.iso` |
+| 8. Build installer ISO | `xorriso` | `aether-<version>.iso` |
 | 9. Run boot test in QEMU | Test script (04) | Pass or fail report |
 | 10. Sign and publish | Signing scripts (P9-T05) | Signed image and checksums |
 
@@ -103,7 +103,7 @@ UEFI (Secure Boot on, with Microsoft keys) -> shim (signed by a Microsoft-signed
 | Slots | Root A and Root B (section 2) |
 | Update bundle | Signed full image of the new root (RAUC bundle) |
 | Install | Write to inactive slot, verify checksum and signature, mark slot as next-boot |
-| Health check | After boot, `nexa-updater` checks that the shell, compositor, and network start within 120 s. If it passes, the slot is confirmed. |
+| Health check | After boot, `aether-updater` checks that the shell, compositor, and network start within 120 s. If it passes, the slot is confirmed. |
 | Rollback | If the health check fails, the bootloader returns to the previous slot |
 | Data | `/var` and `/home` are not part of the slots; they survive updates |
 

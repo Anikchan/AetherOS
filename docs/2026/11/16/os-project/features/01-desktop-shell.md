@@ -1,6 +1,6 @@
 # F1 — Desktop Shell
 
-Owner component: `nexa-shell` (menu bar, dock, launcher, control center, notifications, lock screen, file manager, overview) on top of `nexa-compositor`.
+Owner component: `aether-shell` (menu bar, dock, launcher, control center, notifications, lock screen, file manager, overview) on top of `aether-compositor`.
 
 Priority key: MVP (needed for the first daily-driver build), v1 (needed for release), Later (after release).
 

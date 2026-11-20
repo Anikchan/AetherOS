@@ -1,6 +1,6 @@
 # F5 — Installer and Dual Boot
 
-Owner component: `nexa-install` (installer), `nexa-boot` (boot entries and Windows detection). Partition and boot details: D4.
+Owner component: `aether-install` (installer), `aether-boot` (boot entries and Windows detection). Partition and boot details: D4.
 
 ## 1. Goal
 

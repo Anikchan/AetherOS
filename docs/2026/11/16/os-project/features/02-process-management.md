@@ -1,6 +1,6 @@
 # F2 — Process Management (iOS-Style)
 
-Owner component: `nexa-lifecycled`. Detailed design: D3.
+Owner component: `aether-lifecycled`. Detailed design: D3.
 
 ## 1. Goal
 
@@ -36,7 +36,7 @@ State rules are in D3 section 3.
 | PRM-09 | Per-app limits | v1 | User can set CPU weight and memory ceiling for an app. |
 | PRM-10 | Activity monitor (now Activity Manager, addendum 2 F13) | MVP (basic), v1 (full) | Lists apps, state, memory, CPU, and reason for any exception. Allows manual suspend, hibernate, and quit. |
 | PRM-11 | State restoration | v1 | Apps that support it restore their window and document state after termination. |
-| PRM-12 | Power-aware behavior | v1 | On battery, the grace period is shorter and hibernation starts sooner. Set by `nexa-powerd` (F7 PWR-05, D5). |
+| PRM-12 | Power-aware behavior | v1 | On battery, the grace period is shorter and hibernation starts sooner. Set by `aether-powerd` (F7 PWR-05, D5). |
 | PRM-13 | Pinned apps | MVP | Apps the user pins are never terminated by the pressure killer (they can still be hibernated). |
 
 ## 4. Rules
@@ -46,6 +46,15 @@ State rules are in D3 section 3.
 3. System services (compositor, shell, lifecycle daemon, audio server, network) are never terminated by the killer.
 4. The user can always force-quit an app from the activity monitor.
 5. Every system action is logged with its reason (for example, "hibernated: idle 10 min").
+
+## 4.1 Implementation note (spike S3, P0-T09, 2026-11-18)
+
+`cgroup.freeze` and `memory.reclaim` were verified Pass on the test kernel
+(~40 MB reclaimed on demand). PSI (`/proc/pressure`) was absent from the
+Alpine virt kernel (no `CONFIG_PSI`); the P1-T01 kernel fragment sets
+`CONFIG_PSI=y` and the check is re-run there. Pressure-driven features (F2
+PRM-08, D3 section 6) must treat a missing pressure file as "unavailable"
+and fall back to reclaim-only behavior rather than crashing.
 
 ## 5. Dependencies
 

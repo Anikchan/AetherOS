@@ -64,6 +64,27 @@ Rules:
 - Glass panels over dark wallpaper must keep text contrast ≥ 4.5:1 (see section 9).
 - The compositor applies blur only to visible regions (damage-based) to save GPU time.
 
+## 4.1 Implementation notes from spike S1 (P0-T07, 2026-11-18)
+
+Spike S1 confirmed the shell's rendering route and recorded one finding that
+constrains the glass material above.
+
+- **Layer-shell works with Slint**, but not through winit (winit has no
+  layer-shell support; rust-windowing/winit#2582). The working route is a
+  custom Slint `Platform` plus `SoftwareRenderer` over pure-Rust
+  `wayland-client` (`zwlr_layer_shell_v1`). This is a supported, stable API
+  path; **ADR-004 (Slint) is confirmed and the iced fallback is not
+  triggered.**
+- **Background blur is requestable only on compositors advertising
+  `org_kde_kwin_blur_manager`.** The minimal spike host did not advertise it,
+  so the blur request path could not complete end-to-end. AetherOS's own
+  compositor will implement the KDE blur protocol as an extension (queued for
+  P2 graphics work), so the shell's blur-region design stays viable.
+- **Graceful degradation:** on compositors without the blur manager, the shell
+  must render glass surfaces with tint and edge highlight only (Reduced/Minimal
+  tier behavior) rather than failing. Full-tier Dual Kawase blur (radius 24 px)
+  therefore depends on the compositor blur extension landing in P2.
+
 ## 5. Design Tokens
 
 All tokens live in `~/.config/nexa/theme/tokens.toml` (F4 CUS-03). Defaults ship in `/usr/share/nexa/defaults/theme/`.
