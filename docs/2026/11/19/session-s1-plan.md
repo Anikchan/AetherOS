@@ -57,7 +57,7 @@ Local verification performed this run:
 - `os-build/kernel/aether.fragment` — all 17 P1-required options present (grep-verified), plus P2 additions (sound, cfg80211/mac80211, Bluetooth, input, sleep/resume).
 - `os-build/buildroot/aetheros-p2-additions.defconfig` — created (documented-only merge).
 - Boot chain scripts (`ci-boot*.exp`, `post-image.sh`, `make-bios-image.sh`, `grub.cfg`) — reviewed; internally consistent (partitions, markers, root=/dev/vda2).
-- Kernel-config local validation (make olddefconfig + merge_config) — **not possible on this host**: no GNU `ld` (homebrew binutils ships no `ld` on macOS; clang present but not accepted by Kconfig's linker check). Deferred to the `kernel-config` CI job once billing is restored.
+- Kernel-config local validation — **PASS (performed this run)**. Base x86_64 defconfig + `aether.fragment` merged (fragment appended to `.config` then `make ARCH=x86_64 olddefconfig`, since `merge_config.sh` needs GNU sed unavailable on macOS) using `ld.lld` from the rustup toolchain as `LD` (Kconfig only needs a version-reporting linker; config step does not link). All 17 P1-required options present after resolution, plus P2 additions (SND, SND_HDA_INTEL, CFG80211, MAC80211, BT, HIBERNATION, ACPI) also resolved to `=y`. Method recorded for reproducibility; the `kernel-config` CI job remains the authoritative check once billing is restored.
 
 Blocked tasks (recorded, not actionable by S1):
 - P1 build verification (T02/T03/T04/T05/T07) — billing.

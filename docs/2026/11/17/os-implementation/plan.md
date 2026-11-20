@@ -198,10 +198,13 @@ resume without duplication.
   `cargo test --workspace` pass; grep-verified all 17 P1-required kernel
   options still present plus P2 additions; reviewed boot-chain scripts
   (ci-boot*.exp, post-image.sh, make-bios-image.sh, grub.cfg) — internally
-  consistent. Local kernel-config validation (make olddefconfig + merge_config)
-  blocked on missing GNU ld on the macOS host (homebrew binutils ships no ld;
-  clang not accepted by Kconfig's linker check) — deferred to CI. No further
-  startable S1 tasks remain (P1 verification needs billing; P2-T01/P0-T10
+  consistent. Local kernel-config validation **passed**: base x86_64 defconfig +
+  `aether.fragment` merged (fragment appended, then `make ARCH=x86_64
+  olddefconfig`) using rustup's `ld.lld` as `LD`; all 17 required options and
+  the P2 additions resolved to `=y`. `merge_config.sh` itself needs GNU sed
+  (unavailable on macOS) so the append+olddefconfig route was used. The
+  `kernel-config` CI job remains authoritative once billing is restored. No
+  further startable S1 tasks remain (P1 verification needs billing; P2-T01/P0-T10
   need S2 hardware). Parallel WIP from S2/S3/S4 left untouched.
 
 - 2026-11-20: Session S4 (tooling & infra) completed autonomously: hardened boot-test.sh; added disk-image-test.sh; added os-build/Makefile and os-build/scripts/* (type-check, fetch-kernel, ci-local, metrics-export, artifact-clean, kernel-config-check) with README; added metrics/TEMPLATE.txt; updated ci.yml (concurrency, cargo cache, timeouts, artifact retention, optional notify-on-failure) and added artifact-cleanup.yml; added concurrency to coverage-sample, graphics-spikes, init-compare, wine-spike; updated os-build/README.md. Out-of-territory items recorded as proposals for S1/S2.
