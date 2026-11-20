@@ -52,9 +52,20 @@ Own all design docs, feature docs, D6 results logs, and README; keep status curr
 - `docs/2026/11/18/results/p*-results-*.md`
 - `docs/2026/11/17/os-implementation/plan.md` (append progress log only)
 
-## Status (2026-11-20)
+## Status (2026-11-20, S3 autonomous run complete)
 
-Ready to start. D6 P1-T06/T08 log waits on CI numbers (billing block).
+Completed by autonomous session (S3 territory). Delivered:
+- Design doc review + updates: internal-architecture.md (nexa→aether rename pass,
+  ADR statuses current), power-management-design.md, process-manager-design.md,
+  ui-design.md (spike S1 findings already integrated), image-build-design.md.
+- Feature docs updated (desktop shell, process management, app compatibility,
+  customization, installer, battery power management).
+- README status line refreshed.
+- D6 p1-boot-speed.md annotated with billing block (numbers stay pending).
+- Out-of-scope: P1-T06/T08 numbers still pending CI (billing block); opportunistic
+  nexa→aether pass applied where touched.
+
+D6 P1-T06/T08 log still waits on CI numbers (billing block). Tracker updates are S1's.
 
 ## Coordination
 
