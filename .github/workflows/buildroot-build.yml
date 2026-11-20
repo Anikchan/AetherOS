@@ -27,7 +27,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential libncurses-dev rsync wget file bc git libelf-dev mtools \
-            qemu-system-x86 expect ovmf grub-pc-bin grub-common parted
+            qemu-system-x86 expect ovmf grub-pc-bin grub-efi-amd64-bin grub-common parted
       - name: Clone Buildroot (pinned)
         run: git clone --depth 1 --branch 2025.11 https://gitlab.com/buildroot.org/buildroot.git os-build/buildroot/buildroot
       - name: Configure
@@ -65,17 +65,6 @@ jobs:
           grep -q 'S_BOOT_LOGIN_OK' boot-test.log || { echo "FAIL: no login prompt"; exit 1; }
           grep -q 'S_MOUNTS_OK' boot-test.log || { echo "FAIL: /var,/home not on tmpfs"; exit 1; }
           grep -q 'S_DHCP_OK' boot-test.log || { echo "FAIL: no DHCP lease"; exit 1; }
-      - name: UEFI boot test — systemd-boot + UKI (P1-T05)
-        timeout-minutes: 20
-        run: |
-          export DISK=os-build/buildroot/buildroot/output/images/aetheros-efi.img
-          test -f "$DISK" || { echo "FAIL: UEFI disk image missing"; exit 1; }
-          export OVMF=/usr/share/OVMF/OVMF_CODE.fd
-          cp /usr/share/OVMF/OVMF_VARS.fd ./OVMF_VARS.fd
-          export OVMF_VARS=$PWD/OVMF_VARS.fd
-          export TRANSCRIPT=$(mktemp)
-          expect os-build/test/ci-boot-uefi.exp | tee boot-uefi.log
-          grep -q 'S_UEFI_BOOT_OK' boot-uefi.log || { echo "FAIL: UEFI boot chain failed"; exit 1; }
       - name: BIOS boot test — GRUB2 MBR (P1-T07)
         timeout-minutes: 20
         run: |
@@ -86,6 +75,24 @@ jobs:
           export TRANSCRIPT=$(mktemp)
           expect os-build/test/ci-boot-bios.exp | tee boot-bios.log
           grep -q 'S_BIOS_BOOT_OK' boot-bios.log || { echo "FAIL: BIOS boot chain failed"; exit 1; }
+      - name: UEFI boot test — systemd-boot + UKI (P1-T05)
+        timeout-minutes: 20
+        run: |
+          export DISK=os-build/buildroot/buildroot/output/images/aetheros-efi.img
+          test -f "$DISK" || { echo "FAIL: UEFI disk image missing"; exit 1; }
+          # Debug: list ESP contents
+          echo "=== ESP contents ==="
+          mdir -i os-build/buildroot/buildroot/output/images/efi-part.vfat :: 2>/dev/null || echo "mdir failed"
+          echo "=== loader entries ==="
+          mtype -i os-build/buildroot/buildroot/output/images/efi-part.vfat ::/loader/entries/aetheros.conf 2>/dev/null || echo "mtype failed"
+          echo "=== loader.conf ==="
+          mtype -i os-build/buildroot/buildroot/output/images/efi-part.vfat ::/loader/loader.conf 2>/dev/null || echo "mtype failed"
+          export OVMF=/usr/share/OVMF/OVMF_CODE.fd
+          cp /usr/share/OVMF/OVMF_VARS.fd ./OVMF_VARS.fd
+          export OVMF_VARS=$PWD/OVMF_VARS.fd
+          export TRANSCRIPT=$(mktemp)
+          expect os-build/test/ci-boot-uefi.exp | tee boot-uefi.log
+          grep -q 'S_UEFI_BOOT_OK' boot-uefi.log || { echo "FAIL: UEFI boot chain failed"; exit 1; }
       - uses: actions/upload-artifact@v4
         with:
           name: aetheros-images
