@@ -173,3 +173,12 @@ resume without duplication.
   Mesa/Vulkan + PipeWire + firmware Buildroot symbols to merge when P2 starts.
   Tracker P1 row updated with the billing block. No active defconfig change
   (keeps the P1 150 MB gate meaningful).
+- 2026-11-20: **S1 autonomous run.** Verified `cargo build --workspace` and
+  `cargo test --workspace` pass; grep-verified all 17 P1-required kernel
+  options still present plus P2 additions; reviewed boot-chain scripts
+  (ci-boot*.exp, post-image.sh, make-bios-image.sh, grub.cfg) — internally
+  consistent. Local kernel-config validation (make olddefconfig + merge_config)
+  blocked on missing GNU ld on the macOS host (homebrew binutils ships no ld;
+  clang not accepted by Kconfig's linker check) — deferred to CI. No further
+  startable S1 tasks remain (P1 verification needs billing; P2-T01/P0-T10
+  need S2 hardware). Parallel WIP from S2/S3/S4 left untouched.

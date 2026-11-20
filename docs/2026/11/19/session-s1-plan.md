@@ -47,9 +47,25 @@ Own the build verification loop, defconfig, kernel fragment, and boot chains; dr
 - `docs/2026/11/16/os-project/03-roadmap-plan.md` (tracker only)
 - `docs/2026/11/17/os-implementation/plan.md`
 
-## Status (2026-11-20)
+## Status (2026-11-20, autonomous run complete)
 
-P1 verification blocked on GitHub Actions billing. Local P2 prep complete and pushed (`b4f6cc2`). Next: re-run CI workflows once billing restored.
+P1 verification blocked on GitHub Actions billing (owner action). Local P2 prep complete and pushed (`b4f6cc2`).
+
+Local verification performed this run:
+- `cargo build --workspace` — pass (0.10s).
+- `cargo test --workspace` — pass (0 tests, 0 failures).
+- `os-build/kernel/aether.fragment` — all 17 P1-required options present (grep-verified), plus P2 additions (sound, cfg80211/mac80211, Bluetooth, input, sleep/resume).
+- `os-build/buildroot/aetheros-p2-additions.defconfig` — created (documented-only merge).
+- Boot chain scripts (`ci-boot*.exp`, `post-image.sh`, `make-bios-image.sh`, `grub.cfg`) — reviewed; internally consistent (partitions, markers, root=/dev/vda2).
+- Kernel-config local validation (make olddefconfig + merge_config) — **not possible on this host**: no GNU `ld` (homebrew binutils ships no `ld` on macOS; clang present but not accepted by Kconfig's linker check). Deferred to the `kernel-config` CI job once billing is restored.
+
+Blocked tasks (recorded, not actionable by S1):
+- P1 build verification (T02/T03/T04/T05/T07) — billing.
+- P1-T06/T08 D6 results log — needs CI numbers.
+- P2-T01 firmware list — needs S2 coverage report + design doc (S3).
+- P0-T10 battery spike — needs spare Dell (S2).
+
+No further startable tasks remain in S1's territory. Parallel sessions S2/S3/S4 have WIP present in the tree (uncommitted, in their own territories) — left untouched.
 
 ## Coordination
 
