@@ -57,7 +57,23 @@ Own CI workflows (except S1's), build scripts, test harnesses, and dev environme
 
 ## Status (2026-11-20)
 
-Ready to start. Note: all CI runs currently blocked on billing (S1's blocker); S4's workflow edits can still be made locally and pushed, but they won't execute until billing is restored.
+Completed by autonomous session (S4 territory). Delivered:
+- CI: ci.yml now has concurrency, cargo cache, timeouts, artifact upload with
+  7-day retention, and an optional notify-on-failure job (Discord/Slack webhooks
+  gated on secrets). New artifact-cleanup.yml scheduled workflow.
+- Concurrency groups added to coverage-sample, graphics-spikes, init-compare,
+  wine-spike.
+- Build scripts: boot-test.sh hardened (tool checks, validation, timing,
+  keep-work, extra append); new disk-image-test.sh for raw disk images.
+- Dev tooling: os-build/Makefile, os-build/scripts/ (type-check, fetch-kernel,
+  ci-local, metrics-export, artifact-clean, kernel-config-check) + README.
+- Metrics: TEMPLATE.txt added; os-build/README.md documents type-check/boot/metrics.
+- Out-of-territory items (kernel-config.yml optimization, spike-*/coverage-report.sh
+  refinements) documented as proposals in scripts/ and left for S1/S2 to apply.
+
+Note: all CI runs currently blocked on billing (S1's blocker); S4's workflow edits
+can still be made locally and pushed, but they won't execute until billing is
+restored.
 
 ## Coordination
 

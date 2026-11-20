@@ -4,6 +4,10 @@ name: coverage-sample
 # virtual hardware is the stand-in sample until the first real-machine boot
 # (spare Dell), where the report feeds the 04 §6.2 matrix.
 
+concurrency:
+  group: coverage-sample-${{ github.ref }}
+  cancel-in-progress: true
+
 on:
   workflow_dispatch:
   push:

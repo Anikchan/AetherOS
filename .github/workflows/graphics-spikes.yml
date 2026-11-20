@@ -7,6 +7,10 @@
 # Done is verified separately by the owner.
 name: graphics-spikes
 
+concurrency:
+  group: graphics-spikes-${{ github.ref }}
+  cancel-in-progress: true
+
 on:
   workflow_dispatch:
   push:

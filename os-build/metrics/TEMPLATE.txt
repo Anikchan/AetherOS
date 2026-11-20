@@ -1,0 +1,15 @@
+# Template metrics file (D6 fixed text format).
+# Copy to a real metrics file and fill in measured values.
+# Only keys present are checked; missing keys are skipped with a warning.
+
+# image_size_mb = 400
+# base_image_compressed_mb = 120
+# installed_size_gb = 2.5
+# idle_ram_mb = 260
+# idle_cpu_percent = 1.2
+# boot_median_s = 9.5
+# app_launch_cold_median_ms = 420
+# app_restore_median_ms = 380
+# idle_drain_percent_per_h = 5.0
+# monitoring_cpu_percent = 1.5
+# monitoring_ram_mb = 80

@@ -1,5 +1,9 @@
 name: wine-spike
 
+concurrency:
+  group: wine-spike-${{ github.ref }}
+  cancel-in-progress: true
+
 # P0-T12 / Spike S5: one Windows test program through Wine on a Linux VM.
 # Cheap and independent of the Buildroot build; runs on manual dispatch or
 # when the spike inputs change.

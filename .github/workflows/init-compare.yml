@@ -1,5 +1,9 @@
 name: init-compare
 
+concurrency:
+  group: init-compare-${{ github.ref }}
+  cancel-in-progress: true
+
 # ADR-003 evidence (P1-T02): builds a busybox-init variant of the same
 # defconfig and compares image size against the systemd build. Manual dispatch
 # only (each run is a full Buildroot build, ~1 hour of runner time).
