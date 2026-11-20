@@ -315,7 +315,7 @@ Update this table whenever a task changes state. Allowed statuses: Not started, 
 | Phase | Status | Owner | Last updated |
 | --- | --- | --- | --- |
 | P0 Foundation, spikes, verification setup | In progress (Done: T01, T02, T03, T04, T05, T06, T09 (partial: PSI re-test in P1), T11. T07/T08/T12 In progress via CI Linux VMs (implementation-3). T10 blocked on real battery) | Owner | 2026-11-18 |
-| P1 Base system boots and boot speed | In progress (T01 Done, owner-confirmed green CI; T02/T03/T04/T05/T07 In progress, CI boot-test evidence pending owner confirmation; T06/T08 numbers from CI logs next) | Owner | 2026-11-18 |
+| P1 Base system boots and boot speed | In progress (T01 Done, owner-confirmed green CI; T02/T03/T04/T05/T07 In progress, CI boot-test evidence pending owner confirmation; T06/T08 numbers from CI logs next). **Blocked 2026-11-20: GitHub Actions runs fail to start ("recent account payments have failed or spending limit needs to be increased") — owner must fix billing before P1 verification can complete. S1 pivoted to local P2 prep (kernel fragment + defconfig additions documented).** | Owner | 2026-11-20 |
 | P2 Hardware bring-up | Not started | Owner | 2026-11-17 |
 | P3 Compositor, window system, no-hang design | Not started | Owner | 2026-11-17 |
 | P4 Desktop shell and default apps | Not started | Owner | 2026-11-17 |

@@ -3,7 +3,7 @@
 - Date: 2026-11-20
 - Owner: Anik
 - Coordinator: Session 1 (this session)
-- Status: P1 base system build verification in progress (run 44449813519)
+- Status: P1 base system build verification **blocked 2026-11-20** — GitHub Actions runs fail to start ("recent account payments have failed or spending limit needs to be increased"). Owner must fix billing before any CI verification. S1 pivoted to local P2 prep (kernel fragment P2 section + defconfig additions doc).
 
 ## Design principle: zero overlap
 
@@ -25,13 +25,11 @@ The session plan (`plan.md`) is updated by all sessions (append-only progress lo
 **Owns:** The build verification loop, defconfig, kernel fragment, boot chains.
 
 ### Current tasks (in sequence)
-1. **P1 build verification** — waiting on run 44449813519
-2. On green: flip P1-T01/T02/T03/T04/T05/T07 → Done
-3. Write P1-T06/T08 D6 results log (boot seconds, image size)
-4. **P2-T02 prep:** Add Mesa (Intel/AMD) + Vulkan to defconfig
-5. **P2-T04 prep:** Add PipeWire + WirePlumber to defconfig
-6. **P2-T01:** Firmware list (from coverage report data)
-7. **P0-T10:** Battery spike (needs spare Dell — owner action)
+1. **P1 build verification** — **BLOCKED** on GitHub Actions billing (owner action). Re-run `buildroot-build` + `kernel-config` once billing is fixed; on green flip P1-T01/T02/T03/T04/T05/T07 → Done and write P1-T06/T08 D6 results log.
+2. **P2 prep (local, no CI):** P2 kernel additions appended to `os-build/kernel/aether.fragment` (sound, cfg80211/mac80211, Bluetooth, input, sleep/resume). Done 2026-11-20.
+3. **P2 prep (local, no CI):** P2 Buildroot package additions documented in `os-build/buildroot/aetheros-p2-additions.defconfig` (Mesa/Vulkan, PipeWire, firmware). Merge into the active defconfig only after P1 is green. Done 2026-11-20.
+4. **P2-T01:** Firmware list (from coverage report data) — waits on S2 (spare Dell).
+5. **P0-T10:** Battery spike (needs spare Dell — owner action, S2).
 
 ### Files this session touches
 - `os-build/buildroot/aetheros_defconfig`
@@ -182,15 +180,15 @@ The session plan (`plan.md`) is updated by all sessions (append-only progress lo
 
 | Session | Current task | Status |
 |---|---|---|
-| S1 | P1 build verification (run 44449813519) | In progress |
+| S1 | P1 build verification (billing-blocked) + local P2 prep | Blocked on billing / prep done |
 | S2 | P0-T10 battery spike (needs spare Dell) | Blocked on hardware |
 | S3 | D6 results logs + design doc review | Ready to start |
 | S4 | CI improvements + build scripts | Ready to start |
 
 ## What to do right now
 
-- **S1 (this session):** Continue waiting for build 44449813519. On verdict, flip trackers and push.
-- **S2:** Prepare battery spike script (os-build/test/spike-s4.sh) and wait for Dell.
+- **S1 (this session):** Billing blocked — owner must fix GitHub Actions spending limit. Local P2 prep done (kernel fragment + defconfig additions doc). Next: re-run `kernel-config` and `buildroot-build` workflows once billing restored; on green flip P1 trackers and write P1-T06/T08 D6 log.
+- **S2:** Prepare battery spike script (os-build/test/spike-s4.sh) and wait for Dell; run coverage-report.sh on the Dell once AetherOS boots.
 - **S3:** Start writing D6 results logs and reviewing design docs.
 - **S4:** Start CI improvements and build script enhancements.
 

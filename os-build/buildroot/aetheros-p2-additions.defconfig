@@ -1,0 +1,42 @@
+# P2 additions to os-build/buildroot/aetheros_defconfig (Session 1 prep, 2026-11-20).
+#
+# STATUS: DOCUMENTED ONLY. These symbols are NOT yet merged into the active
+# aetheros_defconfig because P1 verification (base image <= 150 MB) is still
+# pending and must remain meaningful. Merge this file's contents into
+# aetheros_defconfig when P2 starts (after P1 is green), then run the
+# buildroot-build CI job and check the new image size.
+#
+# Merge command (on a Linux host):
+#   cat aetheros_defconfig aetheros-p2-additions.defconfig > /tmp/merged.defconfig
+#   (review /tmp/merged.defconfig, then replace aetheros_defconfig)
+#
+# --- Graphics (P2-T02): Mesa + Vulkan (ANV, RADV) ---
+# BR2_PACKAGE_MESA3D=y
+# BR2_PACKAGE_MESA3D_GALLIUM_DRIVER_IRIS=y
+# BR2_PACKAGE_MESA3D_GALLIUM_DRIVER_RADEONSI=y
+# BR2_PACKAGE_MESA3D_VULKAN_DRIVER_INTEL=y
+# BR2_PACKAGE_MESA3D_VULKAN_DRIVER_AMD=y
+# BR2_PACKAGE_VULKAN_LOADER=y
+# BR2_PACKAGE_LIBDRM=y
+# BR2_PACKAGE_WAYLAND=y
+# BR2_PACKAGE_WAYLAND_PROTOCOLS=y
+#
+# --- Audio (P2-T04): PipeWire + WirePlumber ---
+# BR2_PACKAGE_PIPEWIRE=y
+# BR2_PACKAGE_WIREPLUMBER=y
+# BR2_PACKAGE_ALSA_LIB=y
+# BR2_PACKAGE_ALSA_UTILS=y
+#
+# --- Wireless/Bluetooth firmware (P2-T01, P2-T03) ---
+# BR2_PACKAGE_LINUX_FIRMWARE=y
+# BR2_PACKAGE_LINUX_FIRMWARE_IWLWIFI_7265D=y
+# BR2_PACKAGE_LINUX_FIRMWARE_RTL_8169=y
+# BR2_PACKAGE_BLUEZ5_UTILS=y
+#
+# --- Input / power helpers ---
+# BR2_PACKAGE_LIBINPUT=y
+# BR2_PACKAGE_UDEV=y
+#
+# Note: enabling these will push the image well past the P1 150 MB gate;
+# that is expected for P2. Re-establish a P2-specific size budget in
+# os-build/budgets.toml when P2 starts.

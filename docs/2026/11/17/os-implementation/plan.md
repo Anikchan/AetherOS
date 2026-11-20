@@ -164,3 +164,12 @@ resume without duplication.
   in the tracker). Fix: BR2_TOOLCHAIN_BUILDROOT_GLIBC=y +
   BR2_KERNEL_HEADERS_AS_KERNEL=y. Next run re-verifies P1-T01 with the real
   userspace; watch the 150 MB gate (glibc adds bulk).
+- 2026-11-20: **Billing block.** All GitHub Actions runs now fail to start
+  with "recent account payments have failed or your spending limit needs to
+  be increased". Owner must fix billing before P1 verification. S1 pivoted to
+  local-only P2 prep: appended a P2 section (sound, cfg80211/mac80211,
+  Bluetooth, input, sleep/resume) to `os-build/kernel/aether.fragment`, and
+  created `os-build/buildroot/aetheros-p2-additions.defconfig` documenting the
+  Mesa/Vulkan + PipeWire + firmware Buildroot symbols to merge when P2 starts.
+  Tracker P1 row updated with the billing block. No active defconfig change
+  (keeps the P1 150 MB gate meaningful).

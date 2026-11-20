@@ -57,3 +57,46 @@ CONFIG_ANDROID=y
 CONFIG_ANDROID_BINDER_IPC=y
 CONFIG_ANDROID_BINDERFS=y
 CONFIG_ANDROID_BINDER_DEVICES="binder,hwbinder,vndbinder"
+
+# ---------------------------------------------------------------------------
+# P2 additions (hardware bring-up) — additive; do not remove any P1 option.
+# These are required for P2-T03 (Wi-Fi/BT), P2-T04 (audio), P2-T05 (input),
+# P2-T06 (sleep/resume). Validated once the kernel-config CI job runs again.
+# ---------------------------------------------------------------------------
+
+# --- Sound (P2-T04): ALSA core + common codecs/HDA/USB ---
+CONFIG_SOUND=y
+CONFIG_SND=y
+CONFIG_SND_HDA_INTEL=y
+CONFIG_SND_HDA_CODEC_REALTEK=y
+CONFIG_SND_HDA_CODEC_HDMI=y
+CONFIG_SND_USB_AUDIO=y
+
+# --- Wireless (P2-T03): cfg80211/mac80211 + common drivers ---
+CONFIG_CFG80211=y
+CONFIG_MAC80211=y
+CONFIG_RFKILL=y
+CONFIG_IWLWIFI=y
+CONFIG_ATH10K=y
+CONFIG_ATH10K_PCI=y
+
+# --- Bluetooth (P2-T03) ---
+CONFIG_BT=y
+CONFIG_BT_RFCOMM=y
+CONFIG_BT_BNEP=y
+CONFIG_BT_HIDP=y
+CONFIG_BT_HCIBTUSB=y
+
+# --- Input (P2-T05): HID, touchpad, backlight ---
+CONFIG_INPUT=y
+CONFIG_HID=y
+CONFIG_HID_MULTITOUCH=y
+CONFIG_LEDS_CLASS=y
+CONFIG_BACKLIGHT_CLASS_DEVICE=y
+CONFIG_ACPI_VIDEO=y
+
+# --- Sleep and resume (P2-T06) ---
+CONFIG_HIBERNATION=y
+CONFIG_PM_SLEEP=y
+CONFIG_ACPI_SLEEP=y
+CONFIG_ACPI=y
