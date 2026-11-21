@@ -57,6 +57,9 @@ trap - EXIT
 
 # Write the rootfs as partition 2 content.
 dd if="${ROOTFS}" of="${IMG}" bs=${SECTOR} seek=${P2_START} conv=notrunc status=none
-# Ensure the image is readable by the (non-root) user that runs QEMU in CI.
+# Ensure the image is owned/readable by the (non-root) user that runs QEMU in CI.
+# The script runs under sudo, so the file would otherwise be root-owned and the
+# runner user could not open it (Permission denied).
+chown --reference="${BIN}" "${IMG}" 2>/dev/null || chown "$(stat -c %u:%g "${BIN}")" "${IMG}"
 chmod 644 "${IMG}"
 echo "make-bios-image: ${IMG} ready"
