@@ -59,7 +59,16 @@ Own spike reports, hardware verification, and coverage-tool runs on the spare De
 - `docs/2026/11/18/results/p*-coverage-*.md`
 - `docs/2026/11/17/os-implementation/plan.md` (append progress log only)
 
-## Status (2026-11-20, S2 autonomous run)
+## Status (2026-11-22, S2 CI runs green)
+
+CI is restored (billing fixed, repo public). Spike workflows re-run and succeeded:
+- graphics-spikes (run 44936653674): S2_CLIENT_MAPPED, CLIENT_WINDOW_MAPPED,
+  S1_LAYERSHELL_SURFACE_OK, S1_BLUR_UNAVAILABLE (expected), S1_SPIKE_DONE.
+- wine-spike (run 44936657353): S5_WINE_RUN_OK, S5_STARTUP_MS 30.
+- coverage-sample (run 44936660772): report produced on runner hardware.
+
+P0-T07 (Done), P0-T08 (Done), P0-T12 (Done, headless scope) all re-verified
+by CI. P0-T10 and P2-T08/P2-T07 still blocked on spare Dell hardware.
 
 Prep work complete for all startable items:
 - `spike-s4.sh` (battery) created; D6 skeleton written.
