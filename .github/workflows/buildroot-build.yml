@@ -39,6 +39,7 @@ jobs:
           grep -q "^CONFIG_PSI=y" output/build/linux-*/.config 2>/dev/null || \
             echo "WARN: CONFIG_PSI not confirmed yet (checked again after build)"
       - name: Build
+        timeout-minutes: 90
         run: |
           cd os-build/buildroot/buildroot
           make -j"$(nproc)"
