@@ -57,4 +57,6 @@ trap - EXIT
 
 # Write the rootfs as partition 2 content.
 dd if="${ROOTFS}" of="${IMG}" bs=${SECTOR} seek=${P2_START} conv=notrunc status=none
+# Ensure the image is readable by the (non-root) user that runs QEMU in CI.
+chmod 644 "${IMG}"
 echo "make-bios-image: ${IMG} ready"
