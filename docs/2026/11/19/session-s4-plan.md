@@ -74,9 +74,9 @@ Completed by autonomous session (S4 territory). Delivered:
   spike script with timeout, log capture, and marker verification (supports S2
   and S4's test-harness goal); documented in scripts/README.md.
 
-Note: all CI runs currently blocked on billing (S1's blocker); S4's workflow edits
-can still be made locally and pushed, but they won't execute until billing is
-restored.
+Note: GitHub Actions billing unblocked (2026-11-22) by making the repo public
+on the free tier; kernel-config run 44936411307 passed (28 s) and buildroot-build
+run 44936414669 is in progress. S4's workflow edits now execute in CI.
 
 ## Coordination
 
