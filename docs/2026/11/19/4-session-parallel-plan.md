@@ -3,7 +3,7 @@
 - Date: 2026-11-20
 - Owner: Anik
 - Coordinator: Session S1 (final merge authority)
-- Status: All four sessions' autonomous runs complete (2026-11-20). S1: P1 verification blocked on GitHub Actions billing (owner action); local verification done (cargo build/test pass; kernel-config merge + olddefconfig PASS via rustup ld.lld; boot scripts reviewed). S2: prep complete (battery spike, Wine GUI spike, coverage-report refine, D6 skeletons); hardware runs blocked on spare Dell. S3: docs & design pass complete (design/feature docs, README, D6 annotations). S4: tooling & infra pass complete (CI hardening, boot/disk-image tests, Makefile, scripts). Remaining work across all sessions is blocked on: (1) owner fixing GitHub Actions billing, (2) owner spare-Dell hardware runs.
+- Status: All four sessions' autonomous runs complete (2026-11-20). **Plan of record superseded by v2** (dependency-sliced): `docs/2026/11/22/parallel-plan-v2.md`. v1 retained for history. Billing unblocked (repo public). Dell ready (Ubuntu, SSH, runner, reserved IP). P1: UEFI blocked (retry budget exhausted); real-Dell UEFI investigation is the next S1 path.
 
 ## Per-session plans
 
