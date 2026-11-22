@@ -31,7 +31,7 @@ EOF
 cat > "${BINARIES_DIR}/efi-part/loader/entries/aetheros.conf" <<'EOF'
 title AetherOS
 linux /bzImage
-options root=/dev/vda2 rootfstype=squashfs console=ttyS0,115200n8 earlyprintk=serial,ttyS0,115200 net.ifnames=0 biosdevname=0
+options root=/dev/vda2 rootfstype=squashfs console=ttyS0 net.ifnames=0 biosdevname=0 rootwait
 EOF
 
 # --- Create ESP vfat image manually (genimage's mcopy can't find mtools) ---
