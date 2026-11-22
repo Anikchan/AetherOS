@@ -1,52 +1,29 @@
 #!/bin/sh
-# P1-T05: UEFI boot chain — systemd-boot + unified kernel image (UKI), D4 §3.
+# P1-T05: UEFI boot chain — kernel EFI stub directly (experimental).
 #
 # Runs as a Buildroot post-image script (env: BINARIES_DIR, TARGET_DIR,
 # HOST_DIR). Produces ${BINARIES_DIR}/aetheros-efi.img:
-#   p1  EFI system partition (FAT): systemd-boot + UKI with embedded cmdline
+#   p1  EFI system partition (FAT): kernel EFI stub as BOOTX64.EFI
 #   p2  rootfs.squashfs (read-only root, P1-T03)
-# Ensure mtools (mcopy) is on PATH for genimage's vfat step.
+# The kernel has CONFIG_EFI_STUB=y and CONFIG_CMDLINE set, so it boots
+# with the embedded command line (root=/dev/vda2).
 export PATH="/usr/bin:/bin:${PATH}"
 
 : "${BINARIES_DIR:?}" "${TARGET_DIR:?}" "${HOST_DIR:?}"
 BOARD_DIR="$(dirname "$0")"
-STUB="${TARGET_DIR}/usr/lib/systemd/boot/efi/linuxx64.efi.stub"
-SD_BOOT="${TARGET_DIR}/usr/lib/systemd/boot/efi/systemd-bootx64.efi"
-
-# STUB no longer needed (traditional loader entry, no UKI).
-[ -f "${SD_BOOT}" ] || { echo "ERROR: systemd-boot not found at ${SD_BOOT}"; exit 1; }
 
 # --- Stage ESP contents for genimage ---
-mkdir -p "${BINARIES_DIR}/efi-part/EFI/BOOT" \
-         "${BINARIES_DIR}/efi-part/loader/entries"
-cp "${SD_BOOT}" "${BINARIES_DIR}/efi-part/EFI/BOOT/BOOTX64.EFI"
-cp "${BINARIES_DIR}/bzImage" "${BINARIES_DIR}/efi-part/bzImage"
+mkdir -p "${BINARIES_DIR}/efi-part/EFI/BOOT"
+cp "${BINARIES_DIR}/bzImage" "${BINARIES_DIR}/efi-part/EFI/BOOT/BOOTX64.EFI"
 
-# systemd-boot loader entry (traditional, no UKI) — avoids objcopy/ukify.
-mkdir -p "${BINARIES_DIR}/efi-part/loader/entries"
-cat > "${BINARIES_DIR}/efi-part/loader/loader.conf" <<'EOF'
-default aetheros
-timeout 3
-EOF
-cat > "${BINARIES_DIR}/efi-part/loader/entries/aetheros.conf" <<'EOF'
-title AetherOS
-linux /bzImage
-options root=/dev/vda2 rootfstype=squashfs console=tty0 console=ttyS0 net.ifnames=0 biosdevname=0 rootwait debug
-EOF
-
-# --- Create ESP vfat image manually (genimage's mcopy can't find mtools) ---
+# --- Create ESP vfat image manually ---
 export PATH="/usr/bin:/bin:${PATH}"
 mkdir -p "${BINARIES_DIR}" || { echo "ERROR: cannot create ${BINARIES_DIR}"; exit 1; }
-ls -ld "${BINARIES_DIR}" || { echo "ERROR: ${BINARIES_DIR} does not exist"; exit 1; }
 VFA="${BINARIES_DIR}/efi-part.vfat"
 rm -f "${VFA}"
-# Create the file first (mkdosfs on this version can't create it)
 truncate -s 64M "${VFA}" || dd if=/dev/zero of="${VFA}" bs=1M count=64
 mkdosfs -F 32 -n "AETHEROS" "${VFA}" || { echo "ERROR: mkdosfs failed"; exit 1; }
-# Copy ESP contents into the vfat image (avoid . and .. entries)
 MTOOLS_SKIP_CHECK=1 mcopy -s -i "${VFA}" "${BINARIES_DIR}/efi-part/EFI" "::/"
-MTOOLS_SKIP_CHECK=1 mcopy -s -i "${VFA}" "${BINARIES_DIR}/efi-part/loader" "::/"
-MTOOLS_SKIP_CHECK=1 mcopy -i "${VFA}" "${BINARIES_DIR}/efi-part/bzImage" "::/"
 
 # --- Assemble the bootable UEFI disk image ---
 "${HOST_DIR}/bin/genimage" \
