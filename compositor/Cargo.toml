@@ -4,4 +4,9 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[[bin]]
+name = "aether-compositor"
+path = "src/main.rs"
+
 [dependencies]
+smithay = { version = "0.7.0", default-features = false, features = ["wayland_frontend"] }

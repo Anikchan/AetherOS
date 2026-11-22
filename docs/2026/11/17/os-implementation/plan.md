@@ -173,7 +173,13 @@ resume without duplication.
   Mesa/Vulkan + PipeWire + firmware Buildroot symbols to merge when P2 starts.
   Tracker P1 row updated with the billing block. No active defconfig change
   (keeps the P1 150 MB gate meaningful).
-- 2026-11-23: S1 P1 verification complete. CI runs 44936414669 + 44948381548
+- 2026-11-23: S1 started P3-T01 (compositor skeleton). Created `compositor/src/lib.rs`
+  (AetherCompositor: Wayland core, XDG shell, layer shell, SHM, buffer commit
+  detection, seat handler) and `compositor/src/main.rs`. Based on spike S2.
+  Type-checks clean on x86_64-unknown-linux-gnu. Builds on macOS with
+  LIBRARY_PATH. DRM/KMS/input/output deferred to P2. Tracker P3 row updated
+  to In progress. P1 verification complete (T02/T03/T04/T06/T07 Done,
+  T05 Blocked, T08 partial). D6: p1-boot-speed.md updated.
   verified: P1-T02 (login), P1-T03 (mounts), P1-T04 (DHCP), P1-T06 (14 MB
   image), P1-T07 (BIOS boot) all pass. P1-T05 (UEFI) blocked — kernel EFI stub
   loads under OVMF but produces no serial output; tried systemd-boot, GRUB2,

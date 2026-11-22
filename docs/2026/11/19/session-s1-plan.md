@@ -47,7 +47,13 @@ Own the build verification loop, defconfig, kernel fragment, and boot chains; dr
 - `docs/2026/11/16/os-project/03-roadmap-plan.md` (tracker only)
 - `docs/2026/11/17/os-implementation/plan.md`
 
-## Status (2026-11-23, S1 P1 verification complete)
+## Status (2026-11-23, S1 P3-T01 in progress)
+
+P3-T01 started: compositor skeleton in `compositor/` crate using headless Smithay
+backend (from spike S2). Wayland core protocol, XDG shell, layer shell, SHM,
+buffer commit detection. Type-checks clean on x86_64-unknown-linux-gnu. Builds
+on macOS with LIBRARY_PATH=/opt/homebrew/lib. DRM/KMS, input, output deferred
+to P2 (hardware bring-up, blocked on spare Dell).
 
 P1 verification (run 44936414669 + 44948381548) completed. Results:
 - P1-T01 Done (kernel config verified, run 44936411307 PASS).
