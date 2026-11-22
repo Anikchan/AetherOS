@@ -31,11 +31,12 @@ Own the build verification loop, defconfig, kernel fragment, and boot chains; dr
 
 ## Current tasks (in sequence)
 
-1. **P1 build verification** — **BLOCKED** on GitHub Actions billing (owner action). Re-run `kernel-config` + `buildroot-build` once billing is fixed; on green flip P1-T01/T02/T03/T04/T05/T07 → Done and write P1-T06/T08 D6 results log.
-2. **P2 prep (local, no CI):** P2 kernel additions appended to `os-build/kernel/aether.fragment` (sound, cfg80211/mac80211, Bluetooth, input, sleep/resume). Done 2026-11-20.
-3. **P2 prep (local, no CI):** P2 Buildroot package additions documented in `os-build/buildroot/aetheros-p2-additions.defconfig`. Merge into active defconfig only after P1 is green. Done 2026-11-20.
-4. **P2-T01:** Firmware list (from coverage report data) — waits on S2 (spare Dell).
-5. **P0-T10:** Battery spike (needs spare Dell — owner action, S2).
+1. **P1-T05 UEFI boot chain** — **BLOCKED** (retry budget exhausted, 2026-11-23): kernel EFI stub loads under OVMF but produces no serial output / timeout. QEMU-based retries exhausted. **New path now available:** debug on the Dell's real UEFI firmware (not a retry of the QEMU test). Candidate: inspect the GRUB2 EFI ESP from the build artifact, try booting the image on the Dell via USB, compare OVMF vs real firmware output. S1 owns `buildroot-build.yml`, `post-image.sh`, `ci-boot-uefi.exp`.
+2. **P1-T08 D6 boot-speed log** — **Done 2026-11-23**: image 15 MB (pass), direct boot 23–24 s (TCG), BIOS 27 s (TCG), UEFI n/a. Written to `docs/2026/11/18/results/p1-boot-speed.md`.
+3. **P2 prep (local, no CI):** kernel fragment P2 additions + defconfig additions doc. Done 2026-11-20.
+4. **P2-T01 Firmware list** — **unblocked now that the Dell is ready.** Waits on S2 (P2-T08 coverage report) running on the Dell. S1 fills the template (`docs/2026/11/18/results/p2-t01-firmware-list-template.md`) and updates the defconfig firmware subset.
+5. **P0-T10 Battery spike** — **unblocked now that the Dell is ready.** S2 runs `spike-s4.sh` on the Dell (battery present); S1 updates tracker.
+6. **P3 continuation** — P3-T01 Done (compositor skeleton). Next: P3-T02 (XDG shell, layer shell, multi-monitor, HiDPI) — can be developed on the Dell/Linux VM without real hardware. P3-T03+ (XWayland, window management, glass pipeline) follow.
 
 ## Files this session touches
 
@@ -47,17 +48,18 @@ Own the build verification loop, defconfig, kernel fragment, and boot chains; dr
 - `docs/2026/11/16/os-project/03-roadmap-plan.md` (tracker only)
 - `docs/2026/11/17/os-implementation/plan.md`
 
-## Status (2026-11-23, S1 P3-T01 Done)
+## Status (2026-11-23, Dell ready)
 
-P3-T01 Done: compositor skeleton in `compositor/` crate using headless Smithay
-backend (from spike S2). Wayland core protocol, XDG shell, layer shell, SHM,
-buffer commit detection. Type-checks clean. Builds on macOS (LIBRARY_PATH).
-CI smoke test passes (socket ready + client mapped). DRM/KMS/input/output
-deferred to P2 (hardware bring-up, blocked on spare Dell).
-backend (from spike S2). Wayland core protocol, XDG shell, layer shell, SHM,
-buffer commit detection. Type-checks clean on x86_64-unknown-linux-gnu. Builds
-on macOS with LIBRARY_PATH=/opt/homebrew/lib. DRM/KMS, input, output deferred
-to P2 (hardware bring-up, blocked on spare Dell).
+P1: T01/T02/T03/T04/T06/T07 Done (verified by CI). T05 (UEFI) Blocked — retry
+budget exhausted on QEMU/OVMF; real-Dell UEFI investigation is the next path.
+T08 partial (direct 23–24 s, BIOS 27 s, TCG; bare-metal pending P2).
+P3-T01 Done (compositor skeleton; CI smoke test passes).
+P2 prep done (fragment + defconfig additions doc).
+**Dell is now ready** (Ubuntu 22.04, SSH, sudo, self-hosted runner, lid-close
+disabled, reserved IP 192.168.68.112). P0-T10 and P2-T08 are unblocked — S2
+can run them on the Dell. S1's next unilateral tasks: P2-T01 firmware list
+(after S2's coverage data), P1-T05 UEFI debug on real hardware, P1-T08 D6 log
+(done), and P3-T02+ compositor work.
 
 P1 verification (run 44936414669 + 44948381548) completed. Results:
 - P1-T01 Done (kernel config verified, run 44936411307 PASS).
