@@ -77,7 +77,7 @@ jobs:
           expect os-build/test/ci-boot-bios.exp | tee boot-bios.log
           grep -q 'S_BIOS_BOOT_OK' boot-bios.log || { echo "FAIL: BIOS boot chain failed"; exit 1; }
       - name: UEFI boot test — systemd-boot + UKI (P1-T05)
-        timeout-minutes: 20
+        timeout-minutes: 15
         run: |
           export DISK=os-build/buildroot/buildroot/output/images/aetheros-efi.img
           test -f "$DISK" || { echo "FAIL: UEFI disk image missing"; exit 1; }
@@ -95,6 +95,7 @@ jobs:
           expect os-build/test/ci-boot-uefi.exp | tee boot-uefi.log
           grep -q 'S_UEFI_BOOT_OK' boot-uefi.log || { echo "FAIL: UEFI boot chain failed"; exit 1; }
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: aetheros-images
           path: |
