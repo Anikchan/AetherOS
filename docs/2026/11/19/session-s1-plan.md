@@ -47,9 +47,13 @@ Own the build verification loop, defconfig, kernel fragment, and boot chains; dr
 - `docs/2026/11/16/os-project/03-roadmap-plan.md` (tracker only)
 - `docs/2026/11/17/os-implementation/plan.md`
 
-## Status (2026-11-23, S1 P3-T01 in progress)
+## Status (2026-11-23, S1 P3-T01 Done)
 
-P3-T01 started: compositor skeleton in `compositor/` crate using headless Smithay
+P3-T01 Done: compositor skeleton in `compositor/` crate using headless Smithay
+backend (from spike S2). Wayland core protocol, XDG shell, layer shell, SHM,
+buffer commit detection. Type-checks clean. Builds on macOS (LIBRARY_PATH).
+CI smoke test passes (socket ready + client mapped). DRM/KMS/input/output
+deferred to P2 (hardware bring-up, blocked on spare Dell).
 backend (from spike S2). Wayland core protocol, XDG shell, layer shell, SHM,
 buffer commit detection. Type-checks clean on x86_64-unknown-linux-gnu. Builds
 on macOS with LIBRARY_PATH=/opt/homebrew/lib. DRM/KMS, input, output deferred

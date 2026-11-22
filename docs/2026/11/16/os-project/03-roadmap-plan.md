@@ -317,7 +317,7 @@ Update this table whenever a task changes state. Allowed statuses: Not started, 
 | P0 Foundation, spikes, verification setup | In progress (Done: T01, T02, T03, T04, T05, T06, T09 (partial: PSI re-test in P1), T11. T07/T08/T12 In progress via CI Linux VMs (implementation-3). T10 blocked on real battery) | Owner | 2026-11-18 |
 | P1 Base system boots and boot speed | In progress. **kernel-config run 44936411307 PASS (2026-11-22): all 17 required options present.** buildroot-build runs: direct kernel boot PASS (S_BOOT_LOGIN_OK, S_MOUNTS_OK, S_DHCP_OK, 23 s); image size 14 MB (≤150 MB gate pass); BIOS boot PASS (run 44948381548, S_BIOS_BOOT_OK). UEFI boot BLOCKED (P1-T05): kernel EFI stub loads under OVMF but produces no serial output; root cause under investigation (2-retry budget exhausted, 2026-11-23). T02/T03/T04/T06/T07 Done; T01 Done (kernel config). T05 Blocked; T08 partial (direct boot 23 s only; BIOS/UEFI timings unavailable). | Owner | 2026-11-23 |
 | P2 Hardware bring-up | Not started | Owner | 2026-11-17 |
-| P3 Compositor, window system, no-hang design | In progress (P3-T01 started 2026-11-23, S1: headless Smithay compositor skeleton in `compositor/` crate; DRM/KMS deferred to P2 hardware bring-up) | Owner | 2026-11-23 |
+| P3 Compositor, window system, no-hang design | In progress (P3-T01 Done 2026-11-23: headless Smithay compositor skeleton builds and passes smoke test in CI — socket ready + client mapped. DRM/KMS/input/output deferred to P2. P3-T02..T08 not started.) | Owner | 2026-11-23 |
 | P4 Desktop shell and default apps | Not started | Owner | 2026-11-17 |
 | P5 Process, power, Activity Manager, battery analytics | Not started | Owner | 2026-11-17 |
 | P6 Internal app platform | Not started | Owner | 2026-11-17 |
