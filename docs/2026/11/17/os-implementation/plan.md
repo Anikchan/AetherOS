@@ -173,6 +173,15 @@ resume without duplication.
   Mesa/Vulkan + PipeWire + firmware Buildroot symbols to merge when P2 starts.
   Tracker P1 row updated with the billing block. No active defconfig change
   (keeps the P1 150 MB gate meaningful).
+- 2026-11-23: S1 P1 verification complete. CI runs 44936414669 + 44948381548
+  verified: P1-T02 (login), P1-T03 (mounts), P1-T04 (DHCP), P1-T06 (14 MB
+  image), P1-T07 (BIOS boot) all pass. P1-T05 (UEFI) blocked — kernel EFI stub
+  loads under OVMF but produces no serial output; tried systemd-boot, GRUB2,
+  kernel stub, UKI, various console params. Deferred to P2. P1-T01 Done
+  (kernel config). P1-T08 partial (direct boot 23 s). Tracker updated (P1
+  row + task statuses). D6 results: p1-boot-speed.md updated with numbers.
+  Multiple retries used on UEFI (8+ attempts, 2-retry budget exhausted per
+  attempt; root cause: kernel produces no serial output in UEFI mode).
 - 2026-11-20: S2 autonomous run (session S2). Prep work completed for all
   startable S2 items; hardware-dependent runs remain blocked:
   (a) Created `os-build/test/spike-s4.sh` (battery spike: sysfs + UPower +

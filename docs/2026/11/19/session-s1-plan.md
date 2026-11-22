@@ -47,9 +47,25 @@ Own the build verification loop, defconfig, kernel fragment, and boot chains; dr
 - `docs/2026/11/16/os-project/03-roadmap-plan.md` (tracker only)
 - `docs/2026/11/17/os-implementation/plan.md`
 
-## Status (2026-11-20, autonomous run complete)
+## Status (2026-11-23, S1 P1 verification complete)
 
-P1 verification blocked on GitHub Actions billing (owner action). Local P2 prep complete and pushed (`b4f6cc2`).
+P1 verification (run 44936414669 + 44948381548) completed. Results:
+- P1-T01 Done (kernel config verified, run 44936411307 PASS).
+- P1-T02 Done (direct kernel boot: login prompt, 23 s TCG).
+- P1-T03 Done (S_MOUNTS_OK: /var and /home on tmpfs over read-only root).
+- P1-T04 Done (S_DHCP_OK: DHCP lease on eth0).
+- P1-T05 Blocked: UEFI boot test fails — kernel EFI stub loads under OVMF
+  but produces no serial output. Tried systemd-boot, GRUB2, kernel EFI stub,
+  UKI, various console params. Root cause under investigation; deferred to P2.
+- P1-T06 Done: base image 14 MB compressed (≤150 MB gate pass).
+- P1-T07 Done: BIOS boot test passed (S_BIOS_BOOT_OK, run 44948381548).
+- P1-T08 Partial: direct boot 23 s recorded; BIOS/UEFI stage timings
+  unavailable (UEFI blocked). Full stage timing in P2 (bare-metal).
+
+M1 exit criteria: boots in VM to login ≤ 10 s (TCG 23 s, bare-metal
+expected faster); base image ≤ 150 MB compressed (14 MB, pass); UEFI and
+legacy BIOS boot (BIOS pass, UEFI blocked). P1 not fully complete due to
+P1-T05 block. Re-estimate P2-P4 here.
 
 Local verification performed this run:
 - `cargo build --workspace` — pass (0.10s).
