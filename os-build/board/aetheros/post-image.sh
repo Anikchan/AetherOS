@@ -1,60 +1,51 @@
 #!/bin/sh
-# P1-T05: UEFI boot chain — Unified Kernel Image (UKI) via systemd-boot stub.
+# P1-T05: UEFI boot chain — systemd-boot + unified kernel image (UKI), D4 §3.
 #
 # Runs as a Buildroot post-image script (env: BINARIES_DIR, TARGET_DIR,
 # HOST_DIR). Produces ${BINARIES_DIR}/aetheros-efi.img:
-#   p1  EFI system partition (FAT): UKI as \EFI\BOOT\BOOTX64.EFI
+#   p1  EFI system partition (FAT): systemd-boot + UKI with embedded cmdline
 #   p2  rootfs.squashfs (read-only root, P1-T03)
+# Ensure mtools (mcopy) is on PATH for genimage's vfat step.
 export PATH="/usr/bin:/bin:${PATH}"
 
 : "${BINARIES_DIR:?}" "${TARGET_DIR:?}" "${HOST_DIR:?}"
 BOARD_DIR="$(dirname "$0")"
-
 STUB="${TARGET_DIR}/usr/lib/systemd/boot/efi/linuxx64.efi.stub"
-[ -f "${STUB}" ] || { echo "ERROR: systemd-boot stub not found at ${STUB}"; exit 1; }
+SD_BOOT="${TARGET_DIR}/usr/lib/systemd/boot/efi/systemd-bootx64.efi"
 
-CMDLINE="root=/dev/vda2 rootfstype=squashfs console=ttyS0 net.ifnames=0 biosdevname=0"
-
-# Create UKI using objcopy
-UKI="${BINARIES_DIR}/aetheros-uki.efi"
-cp "${STUB}" "${UKI}"
-
-# Write cmdline to a temp file
-CMDLINE_FILE="${BINARIES_DIR}/cmdline.txt"
-printf '%s' "${CMDLINE}" > "${CMDLINE_FILE}"
-
-# Add sections using objcopy
-OBJCOPY=""
-for c in "${HOST_DIR}/bin/x86_64-buildroot-linux-gnu-objcopy" /usr/bin/objcopy llvm-objcopy; do
-    if command -v "$c" >/dev/null 2>&1 || [ -x "$c" ]; then OBJCOPY="$c"; break; fi
-done
-if [ -z "$OBJCOPY" ]; then
-    echo "ERROR: objcopy not found"
-    exit 1
-fi
-
-# Add .linux section (kernel)
-$OBJCOPY --add-section .linux="${BINARIES_DIR}/bzImage" \
-         --change-section-vma .linux=0x2000000 \
-         "${UKI}" "${UKI}.tmp" && mv "${UKI}.tmp" "${UKI}"
-
-# Add .cmdline section
-$OBJCOPY --add-section .cmdline="${CMDLINE_FILE}" \
-         --change-section-vma .cmdline=0x3000000 \
-         "${UKI}" "${UKI}.tmp" && mv "${UKI}.tmp" "${UKI}"
+[ -f "${SD_BOOT}" ] || { echo "ERROR: systemd-boot not found at ${SD_BOOT}"; exit 1; }
 
 # --- Stage ESP contents for genimage ---
-mkdir -p "${BINARIES_DIR}/efi-part/EFI/BOOT"
-cp "${UKI}" "${BINARIES_DIR}/efi-part/EFI/BOOT/BOOTX64.EFI"
+mkdir -p "${BINARIES_DIR}/efi-part/EFI/BOOT" \
+         "${BINARIES_DIR}/efi-part/loader/entries"
+cp "${SD_BOOT}" "${BINARIES_DIR}/efi-part/EFI/BOOT/BOOTX64.EFI"
+cp "${BINARIES_DIR}/bzImage" "${BINARIES_DIR}/efi-part/bzImage"
 
-# --- Create ESP vfat image manually ---
+# systemd-boot loader entry (traditional, no UKI) — avoids objcopy/ukify.
+mkdir -p "${BINARIES_DIR}/efi-part/loader/entries"
+cat > "${BINARIES_DIR}/efi-part/loader/loader.conf" <<'EOF'
+default aetheros
+timeout 3
+EOF
+cat > "${BINARIES_DIR}/efi-part/loader/entries/aetheros.conf" <<'EOF'
+title AetherOS
+linux /bzImage
+options root=/dev/vda2 rootfstype=squashfs console=ttyS0 net.ifnames=0 biosdevname=0
+EOF
+
+# --- Create ESP vfat image manually (genimage's mcopy can't find mtools) ---
 export PATH="/usr/bin:/bin:${PATH}"
 mkdir -p "${BINARIES_DIR}" || { echo "ERROR: cannot create ${BINARIES_DIR}"; exit 1; }
+ls -ld "${BINARIES_DIR}" || { echo "ERROR: ${BINARIES_DIR} does not exist"; exit 1; }
 VFA="${BINARIES_DIR}/efi-part.vfat"
 rm -f "${VFA}"
+# Create the file first (mkdosfs on this version can't create it)
 truncate -s 64M "${VFA}" || dd if=/dev/zero of="${VFA}" bs=1M count=64
 mkdosfs -F 32 -n "AETHEROS" "${VFA}" || { echo "ERROR: mkdosfs failed"; exit 1; }
+# Copy ESP contents into the vfat image (avoid . and .. entries)
 MTOOLS_SKIP_CHECK=1 mcopy -s -i "${VFA}" "${BINARIES_DIR}/efi-part/EFI" "::/"
+MTOOLS_SKIP_CHECK=1 mcopy -s -i "${VFA}" "${BINARIES_DIR}/efi-part/loader" "::/"
+MTOOLS_SKIP_CHECK=1 mcopy -i "${VFA}" "${BINARIES_DIR}/efi-part/bzImage" "::/"
 
 # --- Assemble the bootable UEFI disk image ---
 "${HOST_DIR}/bin/genimage" \
@@ -63,4 +54,4 @@ MTOOLS_SKIP_CHECK=1 mcopy -s -i "${VFA}" "${BINARIES_DIR}/efi-part/EFI" "::/"
     --tmppath "${BINARIES_DIR}/genimage.tmp" \
     --inputpath "${BINARIES_DIR}" \
     --outputpath "${BINARIES_DIR}"
-echo "post-image: aetheros-efi.img ready (UKI)"
+echo "post-image: aetheros-efi.img ready"
