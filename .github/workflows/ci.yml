@@ -12,14 +12,21 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
 
       - uses: dtolnay/rust-toolchain@stable
 
       - name: Install system dependencies
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libxkbcommon-dev
+        # libxkbcommon: compositor. fontconfig/freetype: Slint system fonts
+        # (`software-renderer-systemfonts`, used by aether-ui/shell/apps).
+        # fonts-dejavu-core: deterministic text for any future render job —
+        # the current tests are headless and assert structure, not pixels.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libxkbcommon-dev libfontconfig1-dev libfreetype-dev pkg-config fonts-dejavu-core
 
       - name: Cache cargo registry and target
         uses: actions/cache@v4
