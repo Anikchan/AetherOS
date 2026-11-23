@@ -270,3 +270,27 @@ Every action is logged with its reason. Example log line:
 
 - Exact PSI thresholds (section 6). Tune in P5-T05 on the 4 GB reference machine.
 - Whether to use `memory.reclaim` only, or to also use the SDK's `MADV_PAGEOUT` path for apps that release memory themselves.
+
+## 12. Implementation status (2026-11-23)
+
+Implemented in `lifecycled/` (S4, P5-T01..T06/T08):
+
+- Identity and one cgroup v2 scope per app, deterministic unit names, v2 layout
+  `aether.slice/aether-apps.slice/` (`identity.rs`).
+- The full section 3 state table encoded once, with every row tested
+  (`state.rs`).
+- Section 5 protocol over a Unix socket with 2 s/500 ms acknowledgement
+  windows; test app writes state on `WillSuspend` (`protocol.rs`,
+  `tests/lifecycle_protocol.rs`).
+- Freeze/hibernate mechanisms, `memory.reclaim`, zram tuning (`cgroup.rs`);
+  PSI reader with the documented reclaim-only fallback (`pressure.rs`).
+- Priority bands, one-kill-per-decision, 2 s storm guard, foreground never
+  killed (`policy.rs`), background CPU budget (`budget.rs`).
+- Daemon timers, persistence/restore and metrics (`daemon.rs`); `aetherctl
+  apps suspend|quit` writes the control file with a fixed format.
+- 50-app benchmark and soak harness (`bench/`, `aether-bench`); 62 unit + 2
+  integration tests, 50-app real-process run passes B1/B3/B4/B5/G-PM2/G-PM4.
+
+Limits: real freeze/reclaim-on-a-process, G-PM1 figures, G-PM3 cgroup values,
+B2/B6 and the full 72-hour soak need the reference machines. PSI is polled in
+the daemon loop; event-driven `poll()` on the pressure file is still open.

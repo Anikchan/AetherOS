@@ -1,8 +1,8 @@
 # OS Project Documentation (AetherOS)
 
 - Created: 2026-11-16
-- Last updated: 2026-11-17 (addendum 1: five questions and three requirements; addendum 2: Android apps, Activity Manager, battery analytics, screen time, optional packs; see `docs/2026/11/17/os-addendum-1/README.md` and `docs/2026/11/17/os-addendum-2/README.md`)
-- Status: Implementation in progress (2026-11-20). P0 mostly complete: T01–T06, T09 (partial: PSI re-test in P1), T11, T12 (headless) Done; T07/T08 Done (spikes S1/S2 green); T10 (battery) blocked on real hardware. P1 in progress: T01 Done (owner-confirmed green CI); T02/T03/T04/T05/T07 In progress with CI evidence pending owner confirmation; P1 verification currently blocked on a GitHub Actions billing failure (owner action). Active parallel sessions S1–S4; S3 owns this docs/design territory.
+- Last updated: 2026-11-23 (P5–P9 implementation: lifecycle, power, Activity Manager, app platform, config/aetherctl, installer core, A/B updates; see `docs/2026/11/23/results/`)
+- Status: Implementation in progress (2026-11-23). P0/P1 verification is largely complete (P1 UEFI blocked on real-firmware debugging; billing unblocked). P5/P6/P7/P8/P9 core logic is implemented and tested (258+ tests across S4 crates): lifecycle, power/analytics, Activity Manager core, app platform/sandbox/store, config+aetherctl, installer planner/pre-checks, A/B update state machine. Remaining work is hardware validation, the live image, RAUC wiring, UI bindings, and the 30-day dogfood. Active parallel sessions S1–S4; S4 owns design docs and this README, S3 owns feature docs.
 - Scope: Personal Edition first. Public release is a distant future goal.
 - Team: One engineer (the owner) at 26 hours per week.
 - OS name: AetherOS (chosen by the owner on 2026-11-17). Component names use the "aether-" prefix (Cargo workspace: aether-compositor, aether-shell, aether-lifecycled, aether-installer). Trademark check is deferred until public release (task P0-T03b).

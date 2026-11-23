@@ -236,3 +236,27 @@ Every action is logged with its reason. Example:
 
 - Which Windows-like power plan names to show. Proposed: Performance, Balanced, Saver (already used in F7).
 - Whether to use power-profiles-daemon as-is or to ship a small patched version. Proposed: as-is, with our policy on top (ADR-014).
+
+## 14. Implementation status (2026-11-23)
+
+Implemented in `powerd/` (S4, P5-T09..T17):
+
+- Section 5 rules: AC/Battery profile switching, user choice retained per
+  source, thermal cap, background policy for lifecycled (`policy.rs`).
+- Section 7 low-battery machine (20/10/5/3) once per discharge cycle, reset on
+  AC, configured action at 5 %, hibernate at 3 % when swap ≥ RAM.
+- Section 6 estimator: 2–5 min moving average, 2 min warmup, 3× spike
+  rejection, within 10 % after 10 minutes in tests (`estimator.rs`).
+- UPower-first telemetry with a sysfs fallback (`telemetry.rs`); charge limit
+  (`charge.rs`); sleep policy including suspend-then-hibernate (`sleep.rs`).
+- Section 9 tuner: safe list, old-value recording, 10-minute watch window,
+  revert + exclusion, tuning disabled past 10 exclusions (`tuner.rs`).
+- F14 analytics (cycles, daily health, sessions, temperatures, standby drain,
+  energy by app, report) and screen time (P5-T16/T17), Pack E limits and
+  downtime (`analytics.rs`, `screentime.rs`, `limits.rs`).
+- 64 tests; sampler `aether-battery-sampler`, report `aether-power-report`,
+  limits `aether-limits`.
+
+Limits: G-BAT1/G-BAT2 values, real charge-limit writes, tuner device-error
+detection and UPower D-Bus events need the owner's laptop. UPower is read via
+its CLI for now; lifecycled applies `background-policy.json` on its next poll.
