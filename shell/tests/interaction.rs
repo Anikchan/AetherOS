@@ -271,6 +271,42 @@ fn shell_surfaces_are_interactive() {
         assert_eq!(controller.state().overlay, Overlay::Lock);
         controller.handle_shortcut("escape");
 
+        // Closing the app clears the dock's running indicator (P4-T02 close path).
+        assert!(
+            controller
+                .state()
+                .apps
+                .iter()
+                .any(|app| app.id == "aether-text" && app.running),
+            "AetherPad is running before the close"
+        );
+        controller.close_app("aether-text");
+        assert!(
+            controller
+                .state()
+                .apps
+                .iter()
+                .any(|app| app.id == "aether-text" && !app.running),
+            "closing clears app.running"
+        );
+        assert!(
+            !controller
+                .state()
+                .windows
+                .iter()
+                .any(|window| window.app == "aether-text"),
+            "closing removes its windows"
+        );
+        assert_ne!(ui.get_active_app().to_string(), "AetherPad");
+        assert_eq!(
+            ui.get_apps()
+                .iter()
+                .filter(|app| app.name == "AetherPad")
+                .count(),
+            1,
+            "the dock still lists the app, just not as running"
+        );
+
         // The settings schema is complete: every category renders rows.
         for category in Category::ALL {
             let rows = SettingsStore::new(root.clone()).rows_for(category);

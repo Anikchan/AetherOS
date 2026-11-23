@@ -3,8 +3,11 @@
 //! Supports TAR, TAR.GZ (TGZ) and ZIP: format detection by extension and by
 //! magic bytes, entry listing, extraction of everything or a selection,
 //! tar.gz creation and rebuild-based deletion. Extraction refuses absolute
-//! paths and any `..` component (zip-slip / tar-slip), before a single byte is
-//! written. All tests build archives at runtime in temporary directories.
+//! paths, any `..` component (zip-slip / tar-slip) and any member that would
+//! traverse a symlink already present in the destination. The name guard runs
+//! per member before that member is written, so extraction is not transactional:
+//! members that came before a refused one stay on disk. All tests build archives
+//! at runtime in temporary directories.
 
 use std::fs::{self, File};
 use std::io::{self, Read, Write};
@@ -292,7 +295,7 @@ fn extract_tar(
                 continue;
             }
         }
-        let target = dest.join(&relative);
+        let target = prepare_target(dest, &relative, &raw)?;
         let header = item.header();
         let is_dir = header.entry_type().is_dir();
         let mode = header.mode().unwrap_or(0o644);
@@ -300,9 +303,6 @@ fn extract_tar(
             fs::create_dir_all(&target).map_err(|error| ArchiveError::io(&target, error))?;
             extracted += 1;
             continue;
-        }
-        if let Some(parent) = target.parent() {
-            fs::create_dir_all(parent).map_err(|error| ArchiveError::io(parent, error))?;
         }
         // Only regular files are materialised; links are skipped so an archive
         // cannot create a link that later escapes the destination.
@@ -343,14 +343,11 @@ fn extract_zip(
                 continue;
             }
         }
-        let target = dest.join(&relative);
+        let target = prepare_target(dest, &relative, &raw)?;
         if item.is_dir() {
             fs::create_dir_all(&target).map_err(|error| ArchiveError::io(&target, error))?;
             extracted += 1;
             continue;
-        }
-        if let Some(parent) = target.parent() {
-            fs::create_dir_all(parent).map_err(|error| ArchiveError::io(parent, error))?;
         }
         let mut out = File::create(&target).map_err(|error| ArchiveError::io(&target, error))?;
         io::copy(&mut item, &mut out).map_err(|error| ArchiveError::io(&target, error))?;
@@ -360,6 +357,58 @@ fn extract_zip(
         extracted += 1;
     }
     Ok(extracted)
+}
+
+/// Resolve a member target inside `dest` without ever following a symlink.
+///
+/// `safe_entry_path` only validates the member *name*. This walks the parent
+/// components from the canonical destination down, refuses any existing symlink
+/// or non-directory component, creates missing directories, refuses a final
+/// component that is already a symlink (writing through it would escape), and
+/// confirms the result is still inside the destination.
+fn prepare_target(dest: &Path, relative: &Path, entry: &str) -> Result<PathBuf, ArchiveError> {
+    fs::create_dir_all(dest).map_err(|error| ArchiveError::io(dest, error))?;
+    let dest_canon = fs::canonicalize(dest).map_err(|error| ArchiveError::io(dest, error))?;
+    let target = dest_canon.join(relative);
+    if !target.starts_with(&dest_canon) {
+        return Err(ArchiveError::MaliciousEntry(entry.to_string()));
+    }
+
+    let mut current = dest_canon.clone();
+    if let Some(parent) = relative.parent() {
+        for component in parent.components() {
+            let Component::Normal(name) = component else {
+                continue;
+            };
+            current.push(name);
+            match fs::symlink_metadata(&current) {
+                Ok(meta) if meta.file_type().is_symlink() => {
+                    return Err(ArchiveError::MaliciousEntry(entry.to_string()));
+                }
+                Ok(meta) if meta.is_dir() => {}
+                Ok(_) => {
+                    return Err(ArchiveError::io(
+                        &current,
+                        io::Error::new(
+                            io::ErrorKind::Other,
+                            "path component is not a directory",
+                        ),
+                    ));
+                }
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                    fs::create_dir(&current).map_err(|error| ArchiveError::io(&current, error))?;
+                }
+                Err(error) => return Err(ArchiveError::io(&current, error)),
+            }
+        }
+    }
+
+    if let Ok(meta) = fs::symlink_metadata(&target) {
+        if meta.file_type().is_symlink() {
+            return Err(ArchiveError::MaliciousEntry(entry.to_string()));
+        }
+    }
+    Ok(target)
 }
 
 /// Write a tar.gz containing `sources` (files or folders, by name).
@@ -946,4 +995,79 @@ mod tests {
     fn tar_from_cursor(bytes: Vec<u8>) -> tar::Archive<Cursor<Vec<u8>>> {
         tar::Archive::new(Cursor::new(bytes))
     }
+    #[cfg(unix)]
+    #[test]
+    fn extraction_refuses_a_symlink_already_in_the_destination() {
+        // Regression for the escape found in the P4 review: a symlink that
+        // already exists in the destination must not be traversed.
+        let root = fixture();
+        let outside = temp_dir("outside");
+        let dest = root.join("dest");
+        fs::create_dir_all(&dest).unwrap();
+        std::os::unix::fs::symlink(&outside, dest.join("link")).unwrap();
+
+        let tar = root.join("escape.tar");
+        write_raw_tar_member(&tar, "link/pwn.txt", b"escaped");
+
+        let error = extract_all(&tar, &dest, &mut |_, _| {}).unwrap_err();
+        assert!(
+            matches!(error, ArchiveError::MaliciousEntry(_)),
+            "tar member through a destination symlink must be refused, got {error:?}"
+        );
+        assert!(
+            !outside.join("pwn.txt").exists(),
+            "nothing may be written outside the destination"
+        );
+
+        let zip_path = root.join("escape.zip");
+        write_test_zip(&zip_path, &[("link/pwn.zip", b"escaped")]);
+        let error = extract_all(&zip_path, &dest, &mut |_, _| {}).unwrap_err();
+        assert!(matches!(error, ArchiveError::MaliciousEntry(_)));
+        assert!(!outside.join("pwn.zip").exists());
+
+        let _ = fs::remove_dir_all(&root);
+        let _ = fs::remove_dir_all(&outside);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn extraction_refuses_a_symlinked_file_target() {
+        // The final path component must not be an existing symlink either:
+        // File::create would follow it and overwrite the linked file.
+        let root = fixture();
+        let outside = temp_dir("outside-file");
+        let outside_file = outside.join("secret.txt");
+        fs::write(&outside_file, "original").unwrap();
+        let dest = root.join("dest");
+        fs::create_dir_all(&dest).unwrap();
+        std::os::unix::fs::symlink(&outside_file, dest.join("evil.txt")).unwrap();
+
+        let tar = root.join("evil.tar");
+        write_raw_tar_member(&tar, "evil.txt", b"overwritten");
+
+        let error = extract_all(&tar, &dest, &mut |_, _| {}).unwrap_err();
+        assert!(matches!(error, ArchiveError::MaliciousEntry(_)));
+        assert_eq!(
+            fs::read_to_string(&outside_file).unwrap(),
+            "original",
+            "the linked file outside the destination is untouched"
+        );
+
+        let _ = fs::remove_dir_all(&root);
+        let _ = fs::remove_dir_all(&outside);
+    }
+
+    #[test]
+    fn nested_directories_are_created_inside_the_destination() {
+        // The symlink guard must not break ordinary nested extraction.
+        let root = fixture();
+        let dest = root.join("dest");
+        let zip_path = root.join("nested.zip");
+        write_test_zip(&zip_path, &[("a/b/c.txt", b"deep"), ("a/top.txt", b"top")]);
+        assert_eq!(extract_all(&zip_path, &dest, &mut |_, _| {}).unwrap(), 2);
+        assert_eq!(fs::read_to_string(dest.join("a/b/c.txt")).unwrap(), "deep");
+        assert_eq!(fs::read_to_string(dest.join("a/top.txt")).unwrap(), "top");
+        let _ = fs::remove_dir_all(&root);
+    }
+
 }

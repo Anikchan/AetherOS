@@ -61,8 +61,8 @@ the window, and a `--render` entry point for evidence screenshots.
 Commands and results:
 
 ```text
-cargo test --workspace --exclude aether-compositor   # 88 test binaries, 0 failures
-cargo test -p aether-ui -p aether-shell              # 5 + 47 unit, 1 interaction
+cargo test --workspace --exclude aether-compositor   # 66 test binaries, 503 cases, 0 failures
+cargo test -p aether-ui -p aether-shell              # 5 + 49 unit, 1 interaction
 cargo test -p aether-text -p aether-calculator -p aether-terminal
 cargo test -p aether-files -p aether-archive -p aether-images
 cargo test -p aether-calendar -p aether-documents -p aether-player
@@ -70,10 +70,19 @@ cargo test -p aether-browser
 cargo run -p <crate> -- --render docs/2026/11/23/results/screenshots
 ```
 
-Totals: **204 unit/acceptance tests + 11 headless interaction tests** (215 total), all green. The
-`aether-compositor` crate is excluded on the macOS host because Smithay links
-`libxkbcommon`, which only the Linux CI image provides; CI runs the full
-workspace.
+The 66 binaries include 23 empty doc-test runs; P4 contributes 35 test binaries
+and **225 cases**. The exclusion is only for the macOS dev host (Smithay links
+`libxkbcommon`); CI installs it and runs the full workspace.
+
+P4 totals: **214 unit/acceptance tests + 11 headless interaction tests (225
+cases)**, all green. The `aether-compositor` crate is excluded on the macOS host
+because Smithay links `libxkbcommon`, which only the Linux CI image provides.
+
+CI status: the workflow runs `cargo test --workspace`, but the most recent runs
+on `main` are red on `lifecycled`'s `unresponsive_client_times_out`
+(`Socket(ConnectionReset)`), which passes locally and belongs to the P5 session.
+No workflow run exists yet for the P4 commits, so P4's CI status is **pending an
+owner-confirmed green run**, not claimed green here.
 
 Note from the P4 T05 work: Focus now supports a daily schedule
 (`FocusSchedule`, overnight windows included) in addition to the manual toggle,
@@ -105,6 +114,8 @@ All rendered headlessly with the software renderer (`aether-ui::render`):
 - `screenshots/shell-settings.png` — settings app with file/key mapping
 - `screenshots/shell-lock.png` — lock screen
 - `screenshots/shell-overview.png` — overview with workspaces
+- `screenshots/shell-menubar.png` — menu bar strip (1440×96)
+- `screenshots/shell-dock.png` — dock strip (720×140)
 - `screenshots/app-browser.png`, `app-text.png`, `app-calculator.png`,
   `app-terminal.png`, `app-files.png`, `app-archive.png`, `app-images.png`,
   `app-calendar.png`, `app-calendar-clock.png`, `app-documents.png`,
@@ -115,7 +126,7 @@ All rendered headlessly with the software renderer (`aether-ui::render`):
 | Task | Status | Note |
 | --- | --- | --- |
 | P4-T01 menu bar | Implemented, headless-verified | F1 on-device acceptance pending the layer-shell host (P3-T02) |
-| P4-T02 dock | Implemented, headless-verified | Running indicators asserted; auto-hide reveal needs pointer enter from the host |
+| P4-T02 dock | Implemented, headless-verified | Running indicators asserted on launch and close (the File menu's "Close window" clears the app and moves focus); auto-hide reveal needs pointer enter from the host |
 | P4-T03 launcher | Implemented, headless-verified | Ranking + calculation + keyboard model tested |
 | P4-T04 control centre | Implemented, headless-verified | Wi-Fi/BT/volume/brightness/Focus/power mode wired to adapters |
 | P4-T05 notifications | Implemented, headless-verified | Grouping/Focus rules tested; real D-Bus notifications arrive with the session |
@@ -124,13 +135,13 @@ All rendered headlessly with the software renderer (`aether-ui::render`):
 | P4-T08 files | Implemented, verified | Sandbox escape + symlink tests; copy/move/rename/trash on temp trees |
 | P4-T10 AetherPad | Implemented, verified | **DA-AC-01 Pass**: UTF-16 LE/BE + Windows-1252 detection and round trips preserve characters and bytes. **DA-AC-02 Pass**: 10 MB count 77 ms, replace-all 67 ms, load/save 3 ms (release) |
 | P4-T11 Calculator | Implemented, verified | **DA-AC-03 Pass**: 50-case acceptance set; precedence, `^` associativity, domain errors, history cap, memory |
-| P4-T12 Images | Implemented, verified | Decode/metadata/rotate/zoom on generated fixtures |
+| P4-T12 Images | Implemented, verified | All six DA-03 formats decode (PNG/JPEG/GIF/BMP/WebP/TIFF on generated fixtures), metadata, lossless rotate/flip, clamped zoom |
 | P4-T13 Documents | Implemented, verified (PDF env-gated) | Markdown + pagination + search tested; poppler adapter reports NotAvailable when absent |
 | P4-T14 Player | Implemented, verified (audio env-gated) | Playlist/shuffle/repeat/transport tested; GStreamer shell-out is the adapter, mock in tests |
-| P4-T15 Terminal | Implemented, verified (host-gated PTY) | VT parser, forkpty session and copy/paste model hooks tested; host clipboard and event-loop pump arrive with the layer-shell host |
+| P4-T15 Terminal | Implemented, verified (host-gated PTY) | VT parser, forkpty session and copy/paste model hooks tested; Slint 1.19 exposes clipboard hooks on `Platform`, so the layer-shell platform will provide the real clipboard |
 | P4-T16 Calendar/Clock | Implemented, verified | Leap year, month navigation, event CRUD + JSON round trip, hand angles, stopwatch/timer |
 | P4-T17 Archive | Implemented, verified | Malicious tar/zip member rejection, extract/create/delete round trip |
-| P4-T18 browser core | Implemented, verified | Tabs/bookmarks/history/downloads/private/session tested; WebKitGTK embedding awaits graphics bring-up |
+| P4-T18 browser core | Implemented, verified | Tabs/bookmarks/history/downloads tested; a private tab never writes history, session, bookmarks or downloads to the profile; WebKitGTK embedding awaits graphics bring-up |
 | P4-T18a browser media | Decision recorded | Royalty-free codecs only; H.264/AAC path documented, DRM off by default |
 | P4-T18b browser data | Implemented, verified | History de-duplication, cap, downloads, session restore |
 

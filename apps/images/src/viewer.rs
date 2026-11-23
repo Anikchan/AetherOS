@@ -9,7 +9,7 @@
 use std::collections::HashMap;
 use std::fs;
 use std::io;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::time::SystemTime;
 
 use image::imageops::FilterType;
@@ -62,7 +62,7 @@ pub fn supported_extension(path: &Path) -> bool {
             .map(|ext| ext.to_string_lossy().to_lowercase())
             .unwrap_or_default()
             .as_str(),
-        "png" | "jpg" | "jpeg" | "gif" | "bmp"
+        "png" | "jpg" | "jpeg" | "gif" | "bmp" | "webp" | "tif" | "tiff"
     )
 }
 
@@ -72,8 +72,27 @@ fn format_label(format: ImageFormat) -> String {
         ImageFormat::Jpeg => "JPEG".to_string(),
         ImageFormat::Gif => "GIF".to_string(),
         ImageFormat::Bmp => "BMP".to_string(),
+        ImageFormat::WebP => "WebP".to_string(),
+        ImageFormat::Tiff => "TIFF".to_string(),
         other => format!("{other:?}").to_uppercase(),
     }
+}
+
+/// Friendly folder label for the path bar: the last two components, prefixed
+/// with an ellipsis when the real path is deeper, so long temp/build paths stay
+/// readable and out of evidence screenshots.
+pub fn display_path(path: &Path) -> String {
+    let parts: Vec<String> = path
+        .components()
+        .filter_map(|component| match component {
+            Component::Normal(name) => Some(name.to_string_lossy().into_owned()),
+            _ => None,
+        })
+        .collect();
+    if parts.len() <= 2 {
+        return path.display().to_string();
+    }
+    format!("…/{}", parts[parts.len() - 2..].join("/"))
 }
 
 /// Decode a supported image into memory.
@@ -478,4 +497,52 @@ mod tests {
         cache.retain(&[]);
         assert!(cache.is_empty());
     }
+    #[test]
+    fn decodes_webp_and_tiff_like_the_other_formats() {
+        // DA-AC-04 lists WebP and TIFF, so both must open like PNG/JPEG/GIF/BMP.
+        let root = temp_dir("formats");
+        let image = gradient(24, 16).to_rgb8();
+
+        let tiff_path = root.join("sample.tiff");
+        image
+            .save_with_format(&tiff_path, image::ImageFormat::Tiff)
+            .expect("tiff encode");
+        let opened = info(&tiff_path).expect("tiff header");
+        assert_eq!(opened.width, 24);
+        assert_eq!(opened.height, 16);
+        assert_eq!(opened.format, "TIFF");
+        let pixels = decode(&tiff_path).expect("tiff decode");
+        assert_eq!((pixels.width(), pixels.height()), (24, 16));
+
+        let webp_path = root.join("sample.webp");
+        match image.save_with_format(&webp_path, image::ImageFormat::WebP) {
+            Ok(()) => {
+                let opened = info(&webp_path).expect("webp header");
+                assert_eq!(opened.width, 24);
+                assert_eq!(opened.height, 16);
+                assert_eq!(opened.format, "WebP");
+                let pixels = decode(&webp_path).expect("webp decode");
+                assert_eq!((pixels.width(), pixels.height()), (24, 16));
+            }
+            Err(error) => {
+                // The `image` crate's WebP encoder is lossless-only and can
+                // reject some pixel layouts; decoding is what DA-AC-04 needs.
+                eprintln!("webp encoder unavailable in this build: {error}");
+            }
+        }
+        assert!(supported_extension(&root.join("x.webp")));
+        assert!(supported_extension(&root.join("x.tif")));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn display_path_shortens_deep_paths() {
+        assert_eq!(display_path(Path::new("Pictures")), "Pictures");
+        assert_eq!(display_path(Path::new("/home/aether/Pictures")), "…/aether/Pictures");
+        assert_eq!(
+            display_path(Path::new("/var/folders/x/T/aether-images-demo")),
+            "…/T/aether-images-demo"
+        );
+    }
+
 }

@@ -173,6 +173,12 @@ impl BrowserCore {
     }
 
     pub fn toggle_bookmark(&mut self) -> bool {
+        // Private tabs never touch the profile (P4-T18): a bookmark would leak
+        // the private URL into bookmarks.json.
+        if self.active().private {
+            self.status = "Private tab — bookmarks are not saved".to_string();
+            return false;
+        }
         let (url, title) = {
             let tab = self.active();
             (tab.url.clone(), tab.title.clone())
@@ -201,11 +207,17 @@ impl BrowserCore {
         self.sidebar = SidebarSection::from_name(section);
     }
 
-    pub fn start_download(&mut self, url: &str, file_name: &str) -> u64 {
+    /// Record a download. Private tabs keep the download out of the profile,
+    /// so `None` means "not tracked" rather than "failed".
+    pub fn start_download(&mut self, url: &str, file_name: &str) -> Option<u64> {
+        if self.active().private {
+            self.status = format!("Private tab — {file_name} is not added to downloads");
+            return None;
+        }
         let download = self.store.start_download(url, file_name);
         let _ = self.store.save();
         self.status = format!("Downloading {file_name}");
-        download.id
+        Some(download.id)
     }
 
     pub fn finish_download(&mut self, id: u64, bytes: u64, ok: bool) {
@@ -331,6 +343,46 @@ mod tests {
             "private URLs never enter the session"
         );
         let _ = std::fs::remove_dir_all(core.store.root().to_path_buf());
+    }
+
+    #[test]
+    fn private_tabs_never_bookmark_or_record_downloads() {
+        let mut core = core("private-leak");
+        core.open_tab(true);
+        core.navigate("https://secret.example/private-page");
+
+        assert!(!core.toggle_bookmark(), "private bookmark is refused");
+        assert!(core.store.bookmarks().is_empty());
+        assert!(!core.is_bookmarked());
+
+        assert_eq!(
+            core.start_download("https://secret.example/private-page/file.zip", "file.zip"),
+            None,
+            "private downloads are not recorded"
+        );
+        assert!(core.store.downloads().is_empty());
+
+        // Nothing reached the persisted profile either.
+        core.save();
+        let reloaded = BrowserStore::open(core.store.root());
+        assert!(reloaded.bookmarks().is_empty());
+        assert!(reloaded.downloads().is_empty());
+        assert!(reloaded.history().is_empty());
+        assert!(reloaded.session().is_empty());
+    }
+
+    #[test]
+    fn public_tabs_still_bookmark_and_download() {
+        let mut core = core("public-ok");
+        core.navigate("https://aether.example/docs");
+        assert!(core.toggle_bookmark());
+        let id = core
+            .start_download("https://aether.example/os.iso", "os.iso")
+            .expect("public download is tracked");
+        core.finish_download(id, 1024, true);
+        let reloaded = BrowserStore::open(core.store.root());
+        assert_eq!(reloaded.bookmarks().len(), 1);
+        assert_eq!(reloaded.downloads().len(), 1);
     }
 
     #[test]

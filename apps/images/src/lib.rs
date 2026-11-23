@@ -15,7 +15,7 @@ use std::rc::Rc;
 use image::{DynamicImage, GenericImageView};
 use slint::{ModelRc, Rgba8Pixel, SharedPixelBuffer, VecModel};
 
-use viewer::{ImageInfo, Thumbnail, ThumbnailCache, ViewerError};
+use viewer::{display_path, ImageInfo, Thumbnail, ThumbnailCache, ViewerError};
 
 /// Fallback canvas size used before the window reports its real size.
 const FALLBACK_CANVAS: (f32, f32) = (860.0, 560.0);
@@ -273,7 +273,7 @@ fn action_open(ui: &ImagesApp, state: &mut ImageState, folder: &str) {
             state.files = files;
             state.index = 0;
             state.folder = folder;
-            ui.set_folder_path(state.folder.display().to_string().into());
+            ui.set_folder_path(display_path(&state.folder).into());
             load_current(ui, state);
         }
         Err(error) => {

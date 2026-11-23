@@ -574,6 +574,22 @@ impl ShellController {
             .and_then(|group| group.items.iter().nth(index).map(|item| item.label.clone()))
             .unwrap_or_default();
         match label.as_str() {
+            "Close window" => {
+                // The compositor asks for this from the window controls; here it
+                // also clears the dock's running indicator (P4-T02).
+                let id = {
+                    let state = self.state.borrow();
+                    state
+                        .apps
+                        .iter()
+                        .find(|app| app.name == state.active_app)
+                        .map(|app| app.id.clone())
+                        .or_else(|| state.windows.first().map(|window| window.app.clone()))
+                };
+                if let Some(id) = id {
+                    self.close_app(&id);
+                }
+            }
             "Settings…" => self.request_overlay(Overlay::Settings),
             "About AetherOS" => self.request_overlay(Overlay::Settings),
             "Lock screen" => self.request_overlay(Overlay::Lock),
@@ -869,6 +885,12 @@ impl ShellController {
 
     pub fn activate(&self, id: &str) {
         self.dock_chosen(id);
+    }
+
+    /// Close an app: clears its windows and its dock running indicator.
+    pub fn close_app(&self, id: &str) {
+        self.state.borrow_mut().close_app(id);
+        self.sync();
     }
 
     pub fn dismiss(&self, id: &str) {

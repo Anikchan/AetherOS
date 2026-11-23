@@ -466,13 +466,40 @@ impl ShellState {
     }
 
     pub fn close_app(&mut self, id: &str) {
+        let closed_name = self
+            .apps
+            .iter()
+            .find(|app| app.id == id)
+            .map(|app| app.name.clone());
         if let Some(app) = self.apps.iter_mut().find(|app| app.id == id) {
             app.running = false;
             app.badge = 0;
         }
         self.windows.retain(|window| window.app != id);
-        if !self.apps.iter().any(|app| app.running) {
-            self.active_app = "AetherOS".to_string();
+
+        // Focus moves to the next open window (or app) when the active app is
+        // the one being closed, so the menu bar never names a dead app.
+        let active_was_closed = closed_name
+            .as_deref()
+            .map(|name| name == self.active_app)
+            .unwrap_or(false);
+        if active_was_closed {
+            let next = self
+                .windows
+                .first()
+                .and_then(|window| {
+                    self.apps
+                        .iter()
+                        .find(|app| app.id == window.app)
+                        .map(|app| app.name.clone())
+                })
+                .or_else(|| {
+                    self.apps
+                        .iter()
+                        .find(|app| app.running)
+                        .map(|app| app.name.clone())
+                });
+            self.active_app = next.unwrap_or_else(|| "AetherOS".to_string());
         }
     }
 
@@ -682,6 +709,20 @@ mod tests {
         assert!(state.apps[0].running);
         assert_eq!(state.active_app, "AetherPad");
         assert_eq!(state.overlay, Overlay::None);
+    }
+
+    #[test]
+    fn closing_the_active_app_moves_focus_to_a_running_app() {
+        let mut state = ShellState::default();
+        state.apps = vec![
+            app("notes", "AetherPad", true, false),
+            app("files", "Files", true, false),
+        ];
+        state.active_app = "AetherPad".to_string();
+        state.close_app("notes");
+        assert_eq!(state.active_app, "Files", "focus moves to the other running app");
+        state.close_app("files");
+        assert_eq!(state.active_app, "AetherOS");
     }
 
     #[test]
