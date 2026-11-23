@@ -21,11 +21,14 @@ for d in "${HOST_DIR}/lib/grub/x86_64-efi" /usr/lib/grub/x86_64-efi; do
 done
 [ -n "$GRUBMOD_DIR" ] || { echo "ERROR: GRUB2 modules directory not found"; exit 1; }
 
+# Prefer linuxefi (GRUB 2.06 / Ubuntu 22.04) over linux (GRUB 2.12+), because
+# on 2.06 the `linux` command is an alias that triggers an autoload of
+# linuxefi.mod which is NOT on the ESP. Embedding linuxefi avoids the autoload.
 LINUX_MOD=""
-for m in linux linuxefi; do
+for m in linuxefi linux; do
     if [ -f "${GRUBMOD_DIR}/${m}.mod" ]; then LINUX_MOD="$m"; break; fi
 done
-[ -n "$LINUX_MOD" ] || { echo "ERROR: neither linux nor linuxefi module found in $GRUBMOD_DIR"; exit 1; }
+[ -n "$LINUX_MOD" ] || { echo "ERROR: neither linuxefi nor linux module found in $GRUBMOD_DIR"; exit 1; }
 
 # --- Stage ESP contents for genimage ---
 mkdir -p "${BINARIES_DIR}/efi-part/EFI/BOOT" \
