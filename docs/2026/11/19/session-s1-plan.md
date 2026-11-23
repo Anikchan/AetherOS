@@ -34,9 +34,12 @@ Own the build verification loop, defconfig, kernel fragment, and boot chains; dr
 1. **P1-T05 UEFI boot chain** — **BLOCKED** (retry budget exhausted, 2026-11-23): kernel EFI stub loads under OVMF but produces no serial output / timeout. QEMU-based retries exhausted. **New path now available:** debug on the Dell's real UEFI firmware (not a retry of the QEMU test). Candidate: inspect the GRUB2 EFI ESP from the build artifact, try booting the image on the Dell via USB, compare OVMF vs real firmware output. S1 owns `buildroot-build.yml`, `post-image.sh`, `ci-boot-uefi.exp`.
 2. **P1-T08 D6 boot-speed log** — **Done 2026-11-23**: image 15 MB (pass), direct boot 23–24 s (TCG), BIOS 27 s (TCG), UEFI n/a. Written to `docs/2026/11/18/results/p1-boot-speed.md`.
 3. **P2 prep (local, no CI):** kernel fragment P2 additions + defconfig additions doc. Done 2026-11-20.
-4. **P2-T01 Firmware list** — **unblocked now that the Dell is ready.** Waits on S2 (P2-T08 coverage report) running on the Dell. S1 fills the template (`docs/2026/11/18/results/p2-t01-firmware-list-template.md`) and updates the defconfig firmware subset.
-5. **P0-T10 Battery spike** — **unblocked now that the Dell is ready.** S2 runs `spike-s4.sh` on the Dell (battery present); S1 updates tracker.
-6. **P3 continuation** — P3-T01 Done (compositor skeleton). Next: P3-T02 (XDG shell, layer shell, multi-monitor, HiDPI) — can be developed on the Dell/Linux VM without real hardware. P3-T03+ (XWayland, window management, glass pipeline) follow.
+4. **P2-T01 Firmware list** — **Done 2026-11-23.** Populated from Dell coverage report (`docs/2026/11/18/results/p2-t01-firmware-list-template.md`). Base image ships i915 DMC/GuC/HuC + SOF audio; Wi-Fi/BT/NVIDIA optional. D6 log: `docs/2026/11/23/results/p2-t08-coverage-report.md`.
+5. **P0-T10 Battery spike** — **Done 2026-11-23.** Ran `spike-s4.sh` on the Dell (battery present). All markers pass (S4_BATTERY_PRESENT, S4_SYSFS_OK, S4_UPOWER_OK, S4_CHARGE_LIMIT_SUPPORTED, S4_TIME_REMAINING_OK, S4_BATTERY_SPIKE_DONE). D6 log: `docs/2026/11/23/results/p0-t10-spike-s4-battery.md`.
+6. **P2-T08 Coverage report** — **Done 2026-11-23.** Run on Dell; all PCI/USB/NVMe/Wi-Fi/audio Working. D6 log: `docs/2026/11/23/results/p2-t08-coverage-report.md`.
+7. **P2-T07 Hardware matrix** — **Done 2026-11-23.** `04-test-and-acceptance.md` §6.2 updated with Dell Inspiron 5402 data.
+8. **P2-T02..T06** (graphics, Wi-Fi/BT, audio, input, sleep/resume) — pending: need AetherOS running on the Dell (bare-metal or QEMU). Defconfig merge (Mesa/Vulkan) ready in `aetheros-p2-additions.defconfig`; not yet merged (waiting for UEFI resolution to keep image minimal).
+9. **P1-T05 UEFI debug** — **in progress (autonomous).** Root cause identified: GRUB2 EFI reports "error: file `/boot/grub/x86_64-efi/linuxefi.mod' not found." The grub-mkimage module list in `post-image.sh` does not include `linuxefi`, so GRUB2 cannot load the kernel on UEFI. Fix: add `linuxefi` (and supporting modules) to the module list. Testing the fix via CI. P3-T03+ (XWayland, window management, glass pipeline) follow.
 
 ## Files this session touches
 

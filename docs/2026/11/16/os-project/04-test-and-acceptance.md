@@ -120,7 +120,7 @@ filled in by the coverage report (P2-T08) on first boot.
 
 | Machine | CPU and GPU | Wi-Fi | Status | Notes |
 | --- | --- | --- | --- | --- |
-| Reference 1: spare Dell laptop (owner) | Intel Core i5, integrated graphics only (no discrete GPU), 24 GB RAM | Model pending (P2-T08) | Not tested; Windows currently installed | Dual boot with Windows planned (P8); primary OS test machine |
+| Reference 1: spare Dell laptop (owner) — Dell Inspiron 5402 | Intel Core i7-1165G7 (Tiger Lake), Intel Iris Xe (i915) + NVIDIA GeForce MX330 (nvidia), 22 GB RAM, NVMe SSD (Sandisk SN530) | Qualcomm Atheros QCA6174 (ath10k_pci), Bluetooth 0cf3:e007 | Partially tested 2026-11-23 (Ubuntu host): graphics/Wi-Fi/audio/NVMe/USB all Working; sleep/resume + checklist 6.1 pending | Primary OS test machine (M2); dual boot with Windows planned (P8); bare-metal AetherOS tests pending |
 | Reference 2 (owner's Windows machine, to be named, P8) | — | — | Not tested | Needed for the P8 install/uninstall cycles |
 | Reference 3 (owner's Windows machine, to be named, P8) | — | — | Not tested | Same |
 | Reference 4 (owner's Windows machine, to be named, P8) | — | — | Not tested | Same |

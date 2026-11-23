@@ -70,7 +70,7 @@ cargo test -p aether-browser
 cargo run -p <crate> -- --render docs/2026/11/23/results/screenshots
 ```
 
-Totals: **193 unit tests + 11 headless interaction tests**, all green. The
+Totals: **204 unit/acceptance tests + 11 headless interaction tests** (215 total), all green. The
 `aether-compositor` crate is excluded on the macOS host because Smithay links
 `libxkbcommon`, which only the Linux CI image provides; CI runs the full
 workspace.
