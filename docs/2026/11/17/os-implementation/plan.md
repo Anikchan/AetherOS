@@ -251,3 +251,14 @@ resume without duplication.
   sampler dry-run OK. Hardware gates G-BAT1/G-BAT2 and timed G-BAT3 remain
   pending the owner's laptop. Evidence:
   `docs/2026/11/23/results/p5-t09-t17-powerd.md`.
+- 2026-11-23: **S4** P5-T07 Activity Manager core landed in `apps/taskmanager/`:
+  process/system samplers (/proc, /proc/stat, meminfo, net/dev, disk, hwmon,
+  thermal, DRM GPU, zram, PSI), per-column sorting, lifecycle state/band merge,
+  energy-impact column from F14 analytics, end task (SIGTERM/SIGKILL with PID-1
+  and self protection), efficiency mode (nice + cpu.weight), startup item
+  toggling, services/users, CSV/JSON/text export, and spike S7. Verified: 26
+  unit tests pass. Spike S7 on macOS correctly reports Fail (no sysfs) with the
+  documented fallbacks; fixture trees validate Pass/Partial/Fail. Slint window,
+  Ctrl+Shift+Esc, confirmation dialogs, G-TM1/G-TM2 and TM-AC-04/05/06/07 stay
+  pending UI/hardware. Evidence:
+  `docs/2026/11/23/results/p5-t07-activity-manager.md`.

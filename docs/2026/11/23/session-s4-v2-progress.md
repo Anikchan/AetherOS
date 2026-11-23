@@ -29,7 +29,7 @@ Must NOT touch: `os-build/kernel/`, `os-build/buildroot/`, `compositor/`,
 | 4 | P5-T04 Freeze/hibernate (cgroup.freeze, memory.reclaim, zram) | Done (logic+tests); hardware run pending | G-PM3 needs reference machine |
 | 5 | P5-T05 Pressure-driven killer + priority bands | Done (policy+tests); hardware run pending | G-PM4 policy-level pass |
 | 6 | P5-T06 Exceptions + background task budget | Done (logic+tests) | 10-min audio run needs hardware |
-| 7 | P5-T07 Activity Manager + spike S7 | Not started | apps/taskmanager |
+| 7 | P5-T07 Activity Manager + spike S7 | Core Done (2026-11-23); UI + hardware gates pending | `apps/taskmanager`; S7 verdict needs AetherOS |
 | 8 | P5-T08 50-app benchmark + 72 h soak harness | Harness Done; soak run pending (2026-11-23) | `lifecycled/bench/`, `aether-bench` |
 | 9 | P5-T09 powerd policy engine | Done (2026-11-23) | G-BAT3 policy-verified; hardware timed run pending |
 | 10 | P5-T10 Runtime PM tuner + revert | Done (2026-11-23) | revert/exclusion tested; kernel-log watcher follow-up |
@@ -72,3 +72,12 @@ Must NOT touch: `os-build/kernel/`, `os-build/buildroot/`, `compositor/`,
   and lid sleep. Benchmark sampler verified with dry-run rows. Battery view is
   an S3 handoff (PowerStatus JSON), energy-impact API ready for P5-T07.
   Evidence: `docs/2026/11/23/results/p5-t09-t17-powerd.md`.
+- 2026-11-23: P5-T07 core Done (Activity Manager). 26 unit tests pass:
+  /proc sampling, system metrics, sensors, GPU, lifecycle merge, energy-impact
+  column, end task, efficiency mode, startup persistence, services/users,
+  export, spike S7 probe. Spike S7 on macOS reports Fail with no data (honest);
+  fixture trees validate Pass/Partial/Fail parsers. Slint window + shortcut +
+  dialogs remain a UI binding; G-TM1/G-TM2 need the Dell. Evidence:
+  `docs/2026/11/23/results/p5-t07-activity-manager.md`.
+  Cargo.toml committed via index surgery with only S4 members (powerd,
+  apps/taskmanager) because S3's ui/apps members are still in flight.

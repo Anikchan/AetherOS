@@ -6,7 +6,9 @@ members = [
     "compositor",
     "shell",
     "lifecycled",
+    "powerd",
     "installer",
+    "apps/taskmanager",
 ]
 
 [workspace.package]

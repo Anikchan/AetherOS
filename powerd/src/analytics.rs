@@ -264,6 +264,19 @@ impl BatteryAnalytics {
         }
     }
 
+    /// Timestamp of the most recent sample, if any.
+    pub fn last_sample_at(&self) -> Option<u64> {
+        self.samples.last().map(|sample| sample.at)
+    }
+
+    /// Most recent timestamp from samples or per-app energy entries.
+    pub fn latest_activity_at(&self) -> Option<u64> {
+        let sample = self.samples.last().map(|sample| sample.at).unwrap_or(0);
+        let app = self.app_energy.back().map(|entry| entry.at).unwrap_or(0);
+        let latest = sample.max(app);
+        (latest > 0).then_some(latest)
+    }
+
     pub fn cycle_count(&self) -> Option<u32> {
         self.samples.iter().rev().find_map(|s| s.cycle_count)
     }
