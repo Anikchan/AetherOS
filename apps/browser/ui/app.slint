@@ -1,9 +1,554 @@
-// AetherOS Browser — P4 placeholder surface.
-import { Tokens } from "../../../ui/design.slint";
+// AetherOS Browser — chrome, tabs, bookmarks, history, downloads (P4-T18).
+//
+// The rendering surface is the engine adapter's job (`src/engine.rs`): the
+// embedded WebKitGTK surface arrives with the graphics bring-up. This window is
+// the real browser chrome and data model, driven from Rust.
+
+import {
+    Tokens, Icon, IconKind, GlassPanel, AetherButton, IconButton, SegmentedControl,
+    SearchField, Badge, Pill, Divider, SectionLabel, ListRow,
+} from "../../../ui/design.slint";
+
+export struct TabEntry {
+    id: int,
+    title: string,
+    url: string,
+    active: bool,
+    incognito: bool,
+}
+
+export struct BookmarkEntry {
+    id: int,
+    title: string,
+    url: string,
+}
+
+export struct HistoryRow {
+    id: int,
+    title: string,
+    url: string,
+    time: string,
+    visits: string,
+}
+
+export struct DownloadRow {
+    id: int,
+    name: string,
+    size: string,
+    state: string,
+}
+
+component TabStrip inherits Rectangle {
+    in property <[TabEntry]> tabs: [];
+    in property <int> count: 0;
+    callback selected(int);
+    callback closed(int);
+    callback new-tab();
+
+    height: 36px;
+    background: Tokens.surface-low;
+
+    HorizontalLayout {
+        padding-left: 8px;
+        padding-right: 8px;
+        spacing: 4px;
+
+        for entry[idx] in root.tabs : Rectangle {
+            width: Math.min(240px, 220px);
+            height: 28px;
+            border-radius: 8px;
+            background: entry.active ? Tokens.surface : transparent;
+            accessible-role: tab;
+            accessible-label: entry.title;
+            accessible-checked: entry.active;
+
+            HorizontalLayout {
+                padding-left: 10px;
+                padding-right: 6px;
+                spacing: 6px;
+                Icon {
+                    kind: entry.incognito ? IconKind.lock : IconKind.globe;
+                    size: 13px;
+                    tint: entry.incognito ? Tokens.accent-strong : Tokens.text-muted;
+                }
+                Text {
+                    text: entry.title;
+                    color: entry.active ? Tokens.text : Tokens.text-muted;
+                    font-size: Tokens.font-small;
+                    vertical-alignment: center;
+                    overflow: elide;
+                    horizontal-stretch: 1;
+                }
+                IconButton {
+                    kind: IconKind.close;
+                    label: "Close " + entry.title;
+                    button-size: 18px;
+                    icon-size: 11px;
+                    clicked => { root.closed(idx); }
+                }
+            }
+            TouchArea {
+                clicked => { root.selected(idx); }
+            }
+        }
+
+        IconButton {
+            kind: IconKind.plus;
+            label: "Open new tab";
+            button-size: 26px;
+            icon-size: 14px;
+            clicked => { root.new-tab(); }
+        }
+        Rectangle { horizontal-stretch: 1; background: transparent; }
+    }
+}
+
+component AddressBar inherits Rectangle {
+    in-out property <string> address: "";
+    in property <bool> can-back: false;
+    in property <bool> can-forward: false;
+    in property <bool> loading: false;
+    in property <bool> bookmarked: false;
+    in property <bool> incognito: false;
+    in property <int> zoom: 100;
+
+    callback submitted(string);
+    callback back();
+    callback forward();
+    callback reload();
+    callback toggle-bookmark();
+    callback open-sidebar(string);
+    callback zoom-in();
+    callback zoom-out();
+    callback zoom-reset();
+
+    height: 48px;
+    background: Tokens.surface;
+
+    HorizontalLayout {
+        padding-left: 8px;
+        padding-right: 8px;
+        spacing: 4px;
+
+        IconButton { kind: IconKind.chevron-left; label: "Back"; enabled: root.can-back; clicked => { root.back(); } }
+        IconButton { kind: IconKind.chevron-right; label: "Forward"; enabled: root.can-forward; clicked => { root.forward(); } }
+        IconButton { kind: root.loading ? IconKind.close : IconKind.refresh; label: root.loading ? "Stop" : "Reload"; clicked => { root.reload(); } }
+
+        Rectangle {
+            horizontal-stretch: 1;
+            height: 34px;
+            border-radius: Tokens.radius-pill;
+            background: Tokens.surface-low;
+            border-width: 1px;
+            border-color: address-input.has-focus ? Tokens.accent : Tokens.divider;
+
+            HorizontalLayout {
+                padding-left: 12px;
+                padding-right: 6px;
+                spacing: 8px;
+                Icon {
+                    kind: root.incognito ? IconKind.lock : IconKind.search;
+                    size: 14px;
+                    tint: root.incognito ? Tokens.accent-strong : Tokens.text-faint;
+                }
+                address-input := TextInput {
+                    text <=> root.address;
+                    color: Tokens.text;
+                    font-size: Tokens.font-body;
+                    vertical-alignment: center;
+                    horizontal-stretch: 1;
+                    single-line: true;
+                    accessible-role: text-input;
+                    accessible-label: "Address bar";
+                    accepted => { root.submitted(self.text); }
+                }
+                IconButton {
+                    kind: root.bookmarked ? IconKind.star : IconKind.plus;
+                    label: "Bookmark this page";
+                    toggled: root.bookmarked;
+                    clicked => { root.toggle-bookmark(); }
+                }
+            }
+        }
+
+        IconButton { kind: IconKind.download; label: "Downloads"; clicked => { root.open-sidebar("downloads"); } }
+        IconButton {
+            kind: IconKind.menu;
+            label: "Browser menu";
+            clicked => { root.open-sidebar("bookmarks"); }
+        }
+        Rectangle {
+            width: 1px;
+            background: Tokens.divider;
+        }
+        Rectangle {
+            width: 44px;
+            height: 24px;
+            border-radius: 6px;
+            background: Tokens.surface-low;
+            accessible-role: button;
+            accessible-label: "Zoom " + root.zoom + "%";
+            Text {
+                text: "" + root.zoom + "%";
+                color: Tokens.text-muted;
+                font-size: 10px;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+            TouchArea {
+                clicked => { root.zoom-reset(); }
+            }
+        }
+    }
+}
+
+component Sidebar inherits Rectangle {
+    in property <[BookmarkEntry]> bookmarks: [];
+    in property <[HistoryRow]> history: [];
+    in property <[DownloadRow]> downloads: [];
+    in-out property <int> section: 0;
+
+    callback open-url(string);
+    callback remove-bookmark(int);
+    callback clear-history();
+    callback remove-download(int);
+
+    width: 300px;
+    background: Tokens.surface-low;
+    Rectangle {
+        x: 0;
+        y: 0;
+        width: 1px;
+        height: 100%;
+        background: Tokens.divider;
+    }
+
+    VerticalLayout {
+        alignment: start;
+        padding: Tokens.space(3);
+        spacing: Tokens.space(2);
+
+        SegmentedControl {
+            items: ["Bookmarks", "History", "Downloads"];
+            current: root.section;
+            selected(idx) => { root.section = idx; }
+        }
+
+        Flickable {
+            vertical-stretch: 1;
+            VerticalLayout {
+                width: 100%;
+                height: self.preferred-height;
+                alignment: start;
+                spacing: 2px;
+
+                if root.section == 0 : VerticalLayout {
+                    spacing: 2px;
+                    SectionLabel { label: "BOOKMARKS"; }
+                    if root.bookmarks.length == 0 : Text {
+                        text: "Bookmark pages with the star in the address bar.";
+                        color: Tokens.text-muted;
+                        font-size: Tokens.font-small;
+                        wrap: word-wrap;
+                    }
+                    for bookmark in root.bookmarks : Rectangle {
+                        height: 44px;
+                        border-radius: 8px;
+                        background: row-ta.has-hover ? Tokens.hover : transparent;
+                        accessible-role: list-item;
+                        accessible-label: bookmark.title;
+                        HorizontalLayout {
+                            padding-left: 8px;
+                            padding-right: 6px;
+                            spacing: 8px;
+                            Icon { kind: IconKind.star; size: 13px; tint: Tokens.warning; }
+                            VerticalLayout {
+                                alignment: center;
+                                Text { text: bookmark.title; color: Tokens.text; font-size: Tokens.font-body; overflow: elide; }
+                                Text { text: bookmark.url; color: Tokens.text-faint; font-size: 10px; overflow: elide; }
+                            }
+                            IconButton {
+                                kind: IconKind.trash;
+                                label: "Remove bookmark " + bookmark.title;
+                                clicked => { root.remove-bookmark(bookmark.id); }
+                            }
+                        }
+                        row-ta := TouchArea {
+                            clicked => { root.open-url(bookmark.url); }
+                        }
+                    }
+                }
+
+                if root.section == 1 : VerticalLayout {
+                    spacing: 2px;
+                    HorizontalLayout {
+                        SectionLabel { label: "HISTORY"; }
+                        Rectangle { horizontal-stretch: 1; background: transparent; }
+                        AetherButton { text: "Clear"; clicked => { root.clear-history(); } }
+                    }
+                    for row in root.history : Rectangle {
+                        height: 44px;
+                        border-radius: 8px;
+                        background: hist-ta.has-hover ? Tokens.hover : transparent;
+                        accessible-role: list-item;
+                        accessible-label: row.title;
+                        HorizontalLayout {
+                            padding-left: 8px;
+                            padding-right: 8px;
+                            spacing: 8px;
+                            Icon { kind: IconKind.history; size: 13px; tint: Tokens.text-faint; }
+                            VerticalLayout {
+                                alignment: center;
+                                Text { text: row.title; color: Tokens.text; font-size: Tokens.font-body; overflow: elide; }
+                                Text { text: row.url; color: Tokens.text-faint; font-size: 10px; overflow: elide; }
+                            }
+                            Text { text: row.time; color: Tokens.text-faint; font-size: 10px; vertical-alignment: center; }
+                        }
+                        hist-ta := TouchArea {
+                            clicked => { root.open-url(row.url); }
+                        }
+                    }
+                }
+
+                if root.section == 2 : VerticalLayout {
+                    spacing: 2px;
+                    SectionLabel { label: "DOWNLOADS"; }
+                    if root.downloads.length == 0 : Text {
+                        text: "Files you download appear here.";
+                        color: Tokens.text-muted;
+                        font-size: Tokens.font-small;
+                    }
+                    for download in root.downloads : Rectangle {
+                        height: 44px;
+                        border-radius: 8px;
+                        background: dl-ta.has-hover ? Tokens.hover : transparent;
+                        accessible-role: list-item;
+                        accessible-label: download.name;
+                        HorizontalLayout {
+                            padding-left: 8px;
+                            padding-right: 6px;
+                            spacing: 8px;
+                            Icon { kind: IconKind.download; size: 13px; tint: Tokens.text-muted; }
+                            VerticalLayout {
+                                alignment: center;
+                                Text { text: download.name; color: Tokens.text; font-size: Tokens.font-body; overflow: elide; }
+                                Text { text: download.size + " · " + download.state; color: Tokens.text-faint; font-size: 10px; }
+                            }
+                            IconButton {
+                                kind: IconKind.trash;
+                                label: "Remove download " + download.name;
+                                clicked => { root.remove-download(download.id); }
+                            }
+                        }
+                        dl-ta := TouchArea { clicked => {} }
+                    }
+                }
+            }
+        }
+    }
+}
+
+component HomePage inherits Rectangle {
+    in property <[BookmarkEntry]> quick: [];
+    in property <string> engine-name: "webkitgtk";
+    callback open-url(string);
+
+    background: Tokens.background;
+
+    VerticalLayout {
+        alignment: center;
+        width: 100%;
+        spacing: Tokens.space(4);
+
+        Text {
+            text: "AetherOS Browser";
+            color: Tokens.text;
+            font-size: Tokens.font-hero;
+            font-weight: 700;
+            horizontal-alignment: center;
+        }
+        Text {
+            text: "Lightweight engine · tabs · private windows · no tracking";
+            color: Tokens.text-muted;
+            font-size: Tokens.font-body;
+            horizontal-alignment: center;
+        }
+
+        HorizontalLayout {
+            alignment: center;
+            spacing: Tokens.space(3);
+            Flickable {
+                width: 640px;
+                height: 40px;
+                HorizontalLayout {
+                    width: self.preferred-width;
+                    height: 100%;
+                    alignment: center;
+                    spacing: Tokens.space(2);
+                    for bookmark in root.quick : AetherButton {
+                        text: bookmark.title;
+                        clicked => { root.open-url(bookmark.url); }
+                    }
+                }
+            }
+        }
+
+        Rectangle {
+            width: 560px;
+            height: 120px;
+            border-radius: Tokens.radius-panel;
+            background: Tokens.surface.with-alpha(0.7);
+            border-width: 1px;
+            border-color: Tokens.divider;
+            VerticalLayout {
+                padding: Tokens.space(4);
+                spacing: 4px;
+                alignment: center;
+                Text {
+                    text: "Engine surface";
+                    color: Tokens.text;
+                    font-size: Tokens.font-title;
+                    font-weight: 600;
+                    horizontal-alignment: center;
+                }
+                Text {
+                    text: "The embedded " + root.engine-name + " view is wired through the engine adapter and lands with the graphics bring-up (P2/P3). Tabs, bookmarks, history and downloads are live now.";
+                    color: Tokens.text-muted;
+                    font-size: Tokens.font-small;
+                    horizontal-alignment: center;
+                    wrap: word-wrap;
+                }
+            }
+        }
+    }
+}
 
 export component BrowserApp inherits Window {
-    title: "Browser";
-    width: 800px;
-    height: 600px;
+    title: "AetherOS Browser";
+    width: 1200px;
+    height: 800px;
     background: Tokens.background;
+
+    in-out property <[TabEntry]> tabs: [];
+    in-out property <int> active: 0;
+    in-out property <string> address: "about:home";
+    in-out property <bool> can-back: false;
+    in-out property <bool> can-forward: false;
+    in-out property <bool> loading: false;
+    in-out property <bool> bookmarked: false;
+    in-out property <bool> incognito: false;
+    in-out property <int> zoom: 100;
+    in-out property <int> section: 0;
+    in-out property <bool> sidebar-visible: true;
+    in-out property <[BookmarkEntry]> bookmarks: [];
+    in-out property <[HistoryRow]> history: [];
+    in-out property <[DownloadRow]> downloads: [];
+    in-out property <string> status: "Ready";
+    in-out property <string> engine-name: "webkitgtk";
+
+    callback navigate(string);
+    callback go-back();
+    callback go-forward();
+    callback reload();
+    callback new-tab();
+    callback close-tab(int);
+    callback select-tab(int);
+    callback toggle-bookmark();
+    callback open-sidebar(string);
+    callback sidebar-open-url(string);
+    callback remove-bookmark(int);
+    callback clear-history();
+    callback remove-download(int);
+    callback zoom-in();
+    callback zoom-out();
+    callback zoom-reset();
+
+    TabStrip {
+        x: 0;
+        y: 0;
+        width: 100%;
+        tabs: root.tabs;
+        selected(idx) => { root.select-tab(idx); }
+        closed(idx) => { root.close-tab(idx); }
+        new-tab => { root.new-tab(); }
+    }
+
+    AddressBar {
+        x: 0;
+        y: 36px;
+        width: 100%;
+        address: root.address;
+        can-back: root.can-back;
+        can-forward: root.can-forward;
+        loading: root.loading;
+        bookmarked: root.bookmarked;
+        incognito: root.incognito;
+        zoom: root.zoom;
+        submitted(text) => { root.navigate(text); }
+        back => { root.go-back(); }
+        forward => { root.go-forward(); }
+        reload => { root.reload(); }
+        toggle-bookmark => { root.toggle-bookmark(); }
+        open-sidebar(section) => { root.open-sidebar(section); }
+        zoom-in => { root.zoom-in(); }
+        zoom-out => { root.zoom-out(); }
+        zoom-reset => { root.zoom-reset(); }
+    }
+
+    Rectangle {
+        x: 0;
+        y: 84px;
+        width: 100%;
+        height: 1px;
+        background: Tokens.divider;
+    }
+
+    // Content area.
+    Rectangle {
+        x: 0;
+        y: 85px;
+        width: parent.width - (root.sidebar-visible ? 300px : 0px);
+        height: parent.height - 85px - 24px;
+        background: Tokens.background;
+
+        HomePage {
+            width: 100%;
+            height: 100%;
+            quick: root.bookmarks;
+            engine-name: root.engine-name;
+            open-url(url) => { root.sidebar-open-url(url); }
+        }
+    }
+
+    if root.sidebar-visible : Sidebar {
+        x: parent.width - 300px;
+        y: 85px;
+        height: parent.height - 85px - 24px;
+        bookmarks: root.bookmarks;
+        history: root.history;
+        downloads: root.downloads;
+        section: root.section;
+        open-url(url) => { root.sidebar-open-url(url); }
+        remove-bookmark(id) => { root.remove-bookmark(id); }
+        clear-history => { root.clear-history(); }
+        remove-download(id) => { root.remove-download(id); }
+    }
+
+    // Status bar.
+    Rectangle {
+        x: 0;
+        y: parent.height - 24px;
+        width: 100%;
+        height: 24px;
+        background: Tokens.surface-low;
+        HorizontalLayout {
+            padding-left: 10px;
+            padding-right: 10px;
+            spacing: 8px;
+            Text { text: root.status; color: Tokens.text-muted; font-size: Tokens.font-small; vertical-alignment: center; }
+            Rectangle { horizontal-stretch: 1; background: transparent; }
+            if root.incognito : Pill { text: "Private"; tone: Tokens.accent; }
+            Text { text: "Engine: " + root.engine-name; color: Tokens.text-faint; font-size: Tokens.font-small; vertical-alignment: center; }
+        }
+    }
 }
