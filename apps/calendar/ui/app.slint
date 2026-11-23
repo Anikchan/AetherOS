@@ -1,9 +1,606 @@
-// AetherOS Calendar — P4 placeholder surface.
-import { Tokens } from "../../../ui/design.slint";
+// AetherOS Calendar & Clock — month grid, day detail and the clock tab
+// (P4-T16, DA-07).
+//
+// Presentation only: every rule (month grid, event store, clock maths,
+// stopwatch/timer state) lives in Rust (`src/calendar.rs`, `src/clock.rs`) and
+// is applied by `CalendarController` (`src/app.rs`). All spacing follows the
+// 4 px grid through `Tokens.space()`.
+
+import {
+    Tokens, Icon, IconKind, GlassPanel, AetherButton, IconButton, ToggleSwitch,
+    SegmentedControl, Divider, SectionLabel, Pill,
+} from "../../../ui/design.slint";
+
+export struct DayCellView {
+    day: int,
+    in-month: bool,
+    today: bool,
+    weekend: bool,
+    has-events: bool,
+    selected: bool,
+    iso: string,
+}
+
+export struct EventView {
+    id: string,
+    title: string,
+    time: string,
+    note: string,
+    kind: int,
+    multiday: bool,
+    day-label: string,
+}
+
+// A labelled single-line text field (title and time entry of the add form).
+component Field inherits Rectangle {
+    in property <string> label: "";
+    in-out property <string> text;
+    height: 34px;
+    background: Tokens.surface-low;
+    border-radius: Tokens.radius-button;
+    border-width: 1px;
+    border-color: Tokens.divider;
+
+    // Slint 1.19 TextInput has no placeholder property, so an empty field draws
+    // its label itself (the input stays on top when it has focus/text).
+    TextInput {
+        x: 10px;
+        y: 0;
+        width: parent.width - 20px;
+        height: parent.height;
+        text <=> root.text;
+        color: Tokens.text;
+        font-size: Tokens.font-body;
+        vertical-alignment: center;
+        single-line: true;
+        accessible-label: root.label;
+    }
+    if root.text == "" : Text {
+        x: 10px;
+        y: 0;
+        width: parent.width - 20px;
+        height: parent.height;
+        text: root.label;
+        color: Tokens.text-faint;
+        font-size: Tokens.font-body;
+        vertical-alignment: center;
+    }
+}
 
 export component CalendarApp inherits Window {
     title: "Calendar";
-    width: 800px;
-    height: 600px;
+    width: 1200px;
+    height: 800px;
     background: Tokens.background;
+
+    in-out property <int> tab: 0;
+
+    // Month view.
+    in-out property <string> month-label: "";
+    in-out property <string> selected-label: "";
+    in property <string> selected-count-label: "";
+    in property <string> today-label: "";
+    in-out property <[DayCellView]> days: [];
+    in-out property <[EventView]> events: [];
+    in-out property <string> new-title: "";
+    in-out property <string> new-start: "09:00";
+    in-out property <string> new-end: "10:00";
+    in-out property <string> form-error: "";
+
+    // Clock tab.
+    in property <string> clock-digital: "";
+    in property <string> clock-date: "";
+    in property <string> dial-command: "";
+    in property <string> hands-command: "";
+    in property <string> second-command: "";
+    in-out property <bool> use-24h: true;
+    in-out property <string> stopwatch-text: "00:00.0";
+    in-out property <bool> stopwatch-running: false;
+    in-out property <[string]> laps: [];
+    in property <string> timer-text: "05:00";
+    in property <float> timer-progress: 0.0;
+    in-out property <bool> timer-running: false;
+
+    callback prev-month();
+    callback next-month();
+    callback today();
+    callback day-selected(string);
+    callback add-event();
+    callback remove-event(string);
+    callback toggle-format(bool);
+    callback stopwatch-toggle();
+    callback stopwatch-lap();
+    callback stopwatch-reset();
+    callback timer-toggle();
+    callback timer-reset();
+    callback timer-add(int);
+
+    VerticalLayout {
+        padding: Tokens.space(5);
+        spacing: Tokens.space(4);
+
+        // ---------------------------------------------------------- header ---
+        HorizontalLayout {
+            spacing: Tokens.space(3);
+            Icon { kind: IconKind.calendar; size: 22px; tint: Tokens.accent; }
+            VerticalLayout {
+                spacing: 1px;
+                Text {
+                    text: "Calendar";
+                    color: Tokens.text;
+                    font-size: Tokens.font-large;
+                    font-weight: 700;
+                }
+                Text {
+                    text: root.today-label;
+                    color: Tokens.text-muted;
+                    font-size: Tokens.font-small;
+                }
+            }
+            Rectangle { horizontal-stretch: 1; background: transparent; }
+            SegmentedControl {
+                items: ["Month", "Clock"];
+                current <=> root.tab;
+                width: 210px;
+            }
+        }
+
+        Divider {}
+
+        // ------------------------------------------------------- month tab ---
+        if root.tab == 0 : HorizontalLayout {
+            spacing: Tokens.space(4);
+
+            GlassPanel {
+                horizontal-stretch: 1;
+                vertical-stretch: 1;
+                pad: Tokens.space(4);
+
+                VerticalLayout {
+                    spacing: Tokens.space(3);
+
+                    HorizontalLayout {
+                        spacing: Tokens.space(2);
+                        Text {
+                            text: root.month-label;
+                            color: Tokens.text;
+                            font-size: Tokens.font-title;
+                            font-weight: 600;
+                            vertical-alignment: center;
+                        }
+                        Rectangle { horizontal-stretch: 1; background: transparent; }
+                        IconButton {
+                            kind: IconKind.chevron-left;
+                            label: "Previous month";
+                            clicked => { root.prev-month(); }
+                        }
+                        AetherButton {
+                            text: "Today";
+                            clicked => { root.today(); }
+                        }
+                        IconButton {
+                            kind: IconKind.chevron-right;
+                            label: "Next month";
+                            clicked => { root.next-month(); }
+                        }
+                    }
+
+                    // Weekday header: Monday first.
+                    GridLayout {
+                        spacing: 6px;
+                        for name[idx] in ["MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN"] : Text {
+                            row: 0;
+                            col: idx;
+                            text: name;
+                            color: Tokens.text-faint;
+                            font-size: Tokens.font-small;
+                            font-weight: 700;
+                            horizontal-alignment: center;
+                        }
+                    }
+
+                    GridLayout {
+                        spacing: 6px;
+                        vertical-stretch: 1;
+
+                        for cell[idx] in root.days : Rectangle {
+                            row: Math.floor(idx / 7);
+                            col: Math.mod(idx, 7);
+                            vertical-stretch: 1;
+                            border-radius: Tokens.radius-button;
+                            background: cell.selected
+                                ? Tokens.accent-soft
+                                : (cell.today
+                                    ? Tokens.accent-soft.with-alpha(0.45)
+                                    : (ta.has-hover
+                                        ? Tokens.hover
+                                        : (cell.in-month ? Tokens.surface-low.with-alpha(0.7) : Tokens.surface-low.with-alpha(0.22))));
+                            border-width: cell.today ? 1px : 0px;
+                            border-color: Tokens.accent;
+                            accessible-role: button;
+                            accessible-label: cell.iso;
+
+                            VerticalLayout {
+                                x: 0;
+                                y: 0;
+                                width: parent.width;
+                                height: parent.height;
+                                padding: Tokens.space(2);
+                                spacing: 0px;
+                                alignment: start;
+                                Text {
+                                    text: "" + cell.day;
+                                    color: !cell.in-month
+                                        ? Tokens.text-faint
+                                        : (cell.weekend ? Tokens.text-muted : Tokens.text);
+                                    font-size: Tokens.font-body;
+                                    font-weight: cell.today ? 700 : 500;
+                                }
+                            }
+
+                            // Event dot under the day number, so the marker reads
+                            // as belonging to that date instead of floating in
+                            // the far corner of a wide cell.
+                            Rectangle {
+                                visible: cell.has-events;
+                                x: 14px;
+                                y: 34px;
+                                width: 6px;
+                                height: 6px;
+                                border-radius: 3px;
+                                background: cell.selected ? Tokens.accent-strong : Tokens.accent;
+                            }
+
+                            ta := TouchArea {
+                                x: 0;
+                                y: 0;
+                                width: parent.width;
+                                height: parent.height;
+                                clicked => { root.day-selected(cell.iso); }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // ------------------------------------------------- day detail ---
+            GlassPanel {
+                width: 384px;
+                vertical-stretch: 1;
+                pad: Tokens.space(4);
+
+                VerticalLayout {
+                    spacing: Tokens.space(3);
+
+                    HorizontalLayout {
+                        spacing: Tokens.space(2);
+                        Text {
+                            text: root.selected-label;
+                            color: Tokens.text;
+                            font-size: Tokens.font-title;
+                            font-weight: 600;
+                            horizontal-stretch: 1;
+                            overflow: elide;
+                        }
+                        Pill {
+                            text: root.selected-count-label;
+                            tone: Tokens.accent;
+                        }
+                    }
+
+                    Divider {}
+
+                    // Events on the selected day.
+                    VerticalLayout {
+                        spacing: 6px;
+                        for event in root.events : Rectangle {
+                            height: 54px;
+                            border-radius: 10px;
+                            background: Tokens.surface-low;
+
+                            Rectangle {
+                                x: 0;
+                                y: 0;
+                                width: 3px;
+                                height: parent.height;
+                                border-radius: 2px;
+                                background: event.kind == 0 ? Tokens.accent
+                                    : (event.kind == 1 ? Tokens.success
+                                    : (event.kind == 2 ? Tokens.warning
+                                    : (event.kind == 3 ? Tokens.danger : Tokens.text-faint)));
+                            }
+
+                            VerticalLayout {
+                                x: 14px;
+                                width: parent.width - 62px;
+                                y: 8px;
+                                spacing: 2px;
+                                Text {
+                                    text: event.title;
+                                    color: Tokens.text;
+                                    font-size: Tokens.font-body;
+                                    font-weight: 600;
+                                    overflow: elide;
+                                }
+                                Text {
+                                    text: event.multiday
+                                        ? event.day-label + " · " + event.time
+                                        : event.time;
+                                    color: Tokens.text-muted;
+                                    font-size: Tokens.font-small;
+                                    overflow: elide;
+                                }
+                            }
+
+                            IconButton {
+                                kind: IconKind.close;
+                                label: "Remove " + event.title;
+                                button-size: 22px;
+                                icon-size: 12px;
+                                x: parent.width - 30px;
+                                y: 8px;
+                                clicked => { root.remove-event(event.id); }
+                            }
+                        }
+                    }
+
+                    if root.events.length == 0 : Text {
+                        text: "Nothing scheduled — add the first event below.";
+                        color: Tokens.text-faint;
+                        font-size: Tokens.font-small;
+                        wrap: word-wrap;
+                    }
+
+                    Rectangle { vertical-stretch: 1; background: transparent; }
+
+                    Divider {}
+
+                    SectionLabel { label: "NEW EVENT"; }
+                    Field {
+                        label: "Event title";
+                        text <=> root.new-title;
+                    }
+                    HorizontalLayout {
+                        spacing: Tokens.space(2);
+                        Field {
+                            label: "Start time";
+                            text <=> root.new-start;
+                            horizontal-stretch: 1;
+                        }
+                        Field {
+                            label: "End time";
+                            text <=> root.new-end;
+                            horizontal-stretch: 1;
+                        }
+                    }
+                    AetherButton {
+                        text: "Add event";
+                        primary: true;
+                        clicked => { root.add-event(); }
+                    }
+                    if root.form-error != "" : Text {
+                        text: root.form-error;
+                        color: Tokens.danger;
+                        font-size: Tokens.font-small;
+                        wrap: word-wrap;
+                    }
+                }
+            }
+        }
+
+        // ------------------------------------------------------- clock tab ---
+        if root.tab == 1 : HorizontalLayout {
+            spacing: Tokens.space(4);
+
+            GlassPanel {
+                width: 480px;
+                vertical-stretch: 1;
+                pad: Tokens.space(5);
+
+                VerticalLayout {
+                    spacing: Tokens.space(3);
+
+                    Text {
+                        text: root.clock-digital;
+                        color: Tokens.text;
+                        font-size: 42px;
+                        font-weight: 300;
+                        horizontal-alignment: center;
+                    }
+                    Text {
+                        text: root.clock-date;
+                        color: Tokens.text-muted;
+                        font-size: Tokens.font-body;
+                        horizontal-alignment: center;
+                    }
+
+                    Rectangle { vertical-stretch: 1; background: transparent; }
+
+                    HorizontalLayout {
+                        alignment: center;
+                        Rectangle {
+                            width: 260px;
+                            height: 260px;
+                            border-radius: 130px;
+                            background: Tokens.surface-low;
+                            border-width: 1px;
+                            border-color: Tokens.divider;
+
+                            Path {
+                                width: 100%;
+                                height: 100%;
+                                viewbox-width: 200;
+                                viewbox-height: 200;
+                                commands: root.dial-command;
+                                stroke: Tokens.text-muted;
+                                stroke-width: 1.5px;
+                                stroke-line-cap: round;
+                            }
+                            Path {
+                                width: 100%;
+                                height: 100%;
+                                viewbox-width: 200;
+                                viewbox-height: 200;
+                                commands: root.hands-command;
+                                stroke: Tokens.text;
+                                stroke-width: 3px;
+                                stroke-line-cap: round;
+                            }
+                            Path {
+                                width: 100%;
+                                height: 100%;
+                                viewbox-width: 200;
+                                viewbox-height: 200;
+                                commands: root.second-command;
+                                stroke: Tokens.accent;
+                                stroke-width: 1.5px;
+                                stroke-line-cap: round;
+                            }
+                            Rectangle {
+                                width: 8px;
+                                height: 8px;
+                                border-radius: 4px;
+                                background: Tokens.accent;
+                                x: (parent.width - self.width) / 2;
+                                y: (parent.height - self.height) / 2;
+                            }
+                        }
+                    }
+
+                    Rectangle { vertical-stretch: 1; background: transparent; }
+
+                    HorizontalLayout {
+                        alignment: center;
+                        spacing: Tokens.space(3);
+                        Text {
+                            text: "24-hour clock";
+                            color: Tokens.text-muted;
+                            font-size: Tokens.font-body;
+                            vertical-alignment: center;
+                        }
+                        ToggleSwitch {
+                            label: "24-hour clock";
+                            checked <=> root.use-24h;
+                            toggled(value) => { root.toggle-format(value); }
+                        }
+                    }
+                }
+            }
+
+            GlassPanel {
+                horizontal-stretch: 1;
+                vertical-stretch: 1;
+                pad: Tokens.space(4);
+
+                VerticalLayout {
+                    spacing: Tokens.space(3);
+                    SectionLabel { label: "STOPWATCH"; }
+                    Rectangle { vertical-stretch: 1; background: transparent; }
+                    Text {
+                        text: root.stopwatch-text;
+                        color: Tokens.text;
+                        font-size: 44px;
+                        font-weight: 300;
+                        horizontal-alignment: center;
+                    }
+                    HorizontalLayout {
+                        alignment: center;
+                        spacing: Tokens.space(2);
+                        AetherButton {
+                            text: root.stopwatch-running ? "Stop" : "Start";
+                            primary: true;
+                            clicked => { root.stopwatch-toggle(); }
+                        }
+                        AetherButton {
+                            text: "Lap";
+                            enabled: root.stopwatch-running;
+                            clicked => { root.stopwatch-lap(); }
+                        }
+                        AetherButton {
+                            text: "Reset";
+                            clicked => { root.stopwatch-reset(); }
+                        }
+                    }
+                    Rectangle { vertical-stretch: 1; background: transparent; }
+                    Divider {}
+                    if root.laps.length == 0 : Text {
+                        text: "Laps appear here once the stopwatch runs.";
+                        color: Tokens.text-faint;
+                        font-size: Tokens.font-small;
+                    }
+                    VerticalLayout {
+                        spacing: 4px;
+                        for lap[idx] in root.laps : HorizontalLayout {
+                            spacing: Tokens.space(2);
+                            Text {
+                                text: "LAP " + (idx + 1);
+                                color: Tokens.text-faint;
+                                font-size: Tokens.font-small;
+                                font-weight: 700;
+                                horizontal-stretch: 1;
+                            }
+                            Text {
+                                text: lap;
+                                color: Tokens.text;
+                                font-size: Tokens.font-body;
+                                font-family: Tokens.font-family-mono;
+                            }
+                        }
+                    }
+                    Rectangle { vertical-stretch: 1; background: transparent; }
+                }
+            }
+
+            GlassPanel {
+                width: 300px;
+                vertical-stretch: 1;
+                pad: Tokens.space(4);
+
+                VerticalLayout {
+                    spacing: Tokens.space(3);
+                    SectionLabel { label: "TIMER"; }
+                    Rectangle { vertical-stretch: 1; background: transparent; }
+                    Text {
+                        text: root.timer-text;
+                        color: Tokens.text;
+                        font-size: 44px;
+                        font-weight: 300;
+                        horizontal-alignment: center;
+                    }
+                    Rectangle {
+                        height: 4px;
+                        border-radius: 2px;
+                        background: Tokens.surface-high;
+                        Rectangle {
+                            x: 0;
+                            y: 0;
+                            height: parent.height;
+                            width: parent.width * root.timer-progress;
+                            border-radius: 2px;
+                            background: Tokens.accent;
+                        }
+                    }
+                    Rectangle { vertical-stretch: 1; background: transparent; }
+                    HorizontalLayout {
+                        spacing: Tokens.space(2);
+                        AetherButton {
+                            text: root.timer-running ? "Pause" : "Start";
+                            primary: true;
+                            horizontal-stretch: 1;
+                            clicked => { root.timer-toggle(); }
+                        }
+                        AetherButton {
+                            text: "Reset";
+                            horizontal-stretch: 1;
+                            clicked => { root.timer-reset(); }
+                        }
+                    }
+                    AetherButton {
+                        text: "+5 min";
+                        clicked => { root.timer-add(5); }
+                    }
+                }
+            }
+        }
+    }
 }

@@ -1,9 +1,545 @@
-// AetherOS Files — P4 placeholder surface.
-import { Tokens } from "../../../ui/design.slint";
+// AetherOS Files (P4-T08, F1 SHL-12).
+//
+// Presentation only: the folder model, selection, clipboard and history live in
+// Rust (`src/lib.rs` over `src/fsops.rs`). The three views (list, columns,
+// icons) all read the same `rows` model, so switching views never re-reads disk.
+import {
+    Tokens,
+    Icon,
+    IconKind,
+    Divider,
+    AetherButton,
+    IconButton,
+    SegmentedControl,
+    SearchField,
+    Pill,
+    SectionLabel,
+} from "../../../ui/design.slint";
+
+export struct FileRow {
+    name: string,
+    size: string,
+    modified: string,
+    permissions: string,
+    kind_label: string,
+    icon: IconKind,
+    kind: int, // 0 = file, 1 = folder
+    selected: bool,
+}
+
+component SidebarItem inherits Rectangle {
+    in property <string> label: "";
+    in property <IconKind> icon: IconKind.folder;
+    in property <bool> active: false;
+    callback clicked();
+
+    height: 32px;
+    border-radius: Tokens.radius-button;
+    background: root.active ? Tokens.accent-soft : (ta.has-hover ? Tokens.hover : transparent);
+    accessible-role: button;
+    accessible-label: root.label;
+
+    HorizontalLayout {
+        padding-left: Tokens.space(2);
+        padding-right: Tokens.space(2);
+        spacing: Tokens.space(2);
+        Icon {
+            kind: root.icon;
+            size: 15px;
+            tint: root.active ? Tokens.accent-strong : Tokens.text-muted;
+        }
+        Text {
+            text: root.label;
+            color: root.active ? Tokens.text : Tokens.text-muted;
+            font-size: Tokens.font-body;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+    }
+    ta := TouchArea {
+        clicked => { root.clicked(); }
+    }
+}
+
+// One row of the list and column views.
+component FileRowView inherits Rectangle {
+    in property <FileRow> data;
+    in property <int> view: 0;
+    callback activate();
+
+    height: 36px;
+    border-radius: Tokens.radius-button;
+    background: data.selected ? Tokens.accent-soft : (ta.has-hover ? Tokens.hover : transparent);
+    accessible-role: list-item;
+    accessible-label: root.data.name;
+    accessible-checked: root.data.selected;
+
+    HorizontalLayout {
+        padding-left: Tokens.space(2);
+        padding-right: Tokens.space(2);
+        spacing: Tokens.space(2);
+        Icon {
+            kind: root.data.icon;
+            size: 16px;
+            tint: root.data.kind == 1 ? Tokens.accent-strong : Tokens.text-muted;
+        }
+        Text {
+            text: root.data.name;
+            color: Tokens.text;
+            font-size: Tokens.font-body;
+            vertical-alignment: center;
+            overflow: elide;
+            horizontal-stretch: 1;
+        }
+        if root.view == 1 : Text {
+            text: root.data.permissions;
+            width: 104px;
+            color: Tokens.text-faint;
+            font-size: Tokens.font-small;
+            font-family: Tokens.font-family-mono;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+        Text {
+            text: root.data.size;
+            width: 80px;
+            color: Tokens.text-muted;
+            font-size: Tokens.font-small;
+            horizontal-alignment: right;
+            vertical-alignment: center;
+        }
+        Text {
+            text: root.data.modified;
+            width: 132px;
+            color: Tokens.text-muted;
+            font-size: Tokens.font-small;
+            vertical-alignment: center;
+        }
+    }
+    ta := TouchArea {
+        clicked => { root.activate(); }
+    }
+}
 
 export component FilesApp inherits Window {
     title: "Files";
-    width: 800px;
-    height: 600px;
+    width: 1200px;
+    height: 800px;
     background: Tokens.background;
+
+    // --- model, set by Rust ------------------------------------------------
+    in-out property <string> path: "Home";
+    in-out property <string> location: "home";
+    in property <[string]> crumbs: ["Home"];
+    in property <[FileRow]> rows: [];
+    in-out property <int> item_count: 0;
+    in-out property <int> selected_count: 0;
+    in-out property <int> view_mode: 0;
+    in property <string> free_space: "";
+    in property <string> status: "Ready";
+    in property <string> clipboard: "";
+    in property <bool> can_go_back: false;
+    in property <bool> can_go_forward: false;
+    in-out property <string> rename_text: "";
+
+    // --- intents -----------------------------------------------------------
+    callback navigate(string);
+    callback select_row(int);
+    callback go_back();
+    callback go_forward();
+    callback go_up();
+    callback view_changed(int);
+    callback search_edited(string);
+    callback new_folder();
+    callback copy_selected();
+    callback cut_selected();
+    callback paste_here();
+    callback rename_selected(string);
+    callback trash_selected();
+
+    VerticalLayout {
+        spacing: 0;
+
+        // --- toolbar / navigation -----------------------------------------
+        Rectangle {
+            height: 56px;
+            background: Tokens.background-alt;
+            clip: true;
+            HorizontalLayout {
+                padding-left: Tokens.space(4);
+                padding-right: Tokens.space(4);
+                padding-top: Tokens.space(2);
+                padding-bottom: Tokens.space(2);
+                spacing: Tokens.space(2);
+                IconButton {
+                    kind: IconKind.chevron-left;
+                    label: "Back";
+                    enabled: root.can_go_back;
+                    clicked => { root.go_back(); }
+                }
+                IconButton {
+                    kind: IconKind.chevron-right;
+                    label: "Forward";
+                    enabled: root.can_go_forward;
+                    clicked => { root.go_forward(); }
+                }
+                IconButton {
+                    kind: IconKind.chevron-up;
+                    label: "Up";
+                    clicked => { root.go_up(); }
+                }
+                HorizontalLayout {
+                    horizontal-stretch: 1;
+                    spacing: Tokens.space(2);
+                    alignment: start;
+                    Text {
+                        text: "›";
+                        color: Tokens.text-faint;
+                        font-size: Tokens.font-body;
+                        vertical-alignment: center;
+                    }
+                    for crumb[idx] in root.crumbs : Text {
+                        text: crumb;
+                        color: idx + 1 == root.crumbs.length ? Tokens.text : Tokens.text-muted;
+                        font-size: Tokens.font-body;
+                        font-weight: idx + 1 == root.crumbs.length ? 600 : 400;
+                        vertical-alignment: center;
+                        overflow: elide;
+                    }
+                }
+                SearchField {
+                    placeholder: "Search this folder";
+                    width: 220px;
+                    vertical-stretch: 0;
+                    edited(text) => { root.search_edited(text); }
+                }
+                SegmentedControl {
+                    items: ["List", "Columns", "Icons"];
+                    current: root.view_mode;
+                    width: 216px;
+                    vertical-stretch: 0;
+                    selected(index) => { root.view_changed(index); }
+                }
+            }
+        }
+        Divider {}
+
+        // --- body: sidebar + folder ---------------------------------------
+        Rectangle {
+            vertical-stretch: 1;
+            background: Tokens.background;
+            HorizontalLayout {
+                spacing: 0;
+
+                Rectangle {
+                    width: 196px;
+                    background: Tokens.surface-low;
+                    VerticalLayout {
+                        padding: Tokens.space(3);
+                        spacing: Tokens.space(1);
+                        SectionLabel { label: "FAVOURITES"; }
+                        SidebarItem {
+                            label: "Home";
+                            icon: IconKind.folder;
+                            active: root.location == "home";
+                            clicked => { root.navigate("home"); }
+                        }
+                        SidebarItem {
+                            label: "Documents";
+                            icon: IconKind.document;
+                            active: root.location == "documents";
+                            clicked => { root.navigate("documents"); }
+                        }
+                        SidebarItem {
+                            label: "Pictures";
+                            icon: IconKind.image;
+                            active: root.location == "pictures";
+                            clicked => { root.navigate("pictures"); }
+                        }
+                        SidebarItem {
+                            label: "Downloads";
+                            icon: IconKind.download;
+                            active: root.location == "downloads";
+                            clicked => { root.navigate("downloads"); }
+                        }
+                        SidebarItem {
+                            label: "Trash";
+                            icon: IconKind.trash;
+                            active: root.location == "trash";
+                            clicked => { root.navigate("trash"); }
+                        }
+                        Rectangle { vertical-stretch: 1; background: transparent; }
+                        Divider {}
+                        SectionLabel { label: "SANDBOX"; }
+                        Text {
+                            text: root.free_space;
+                            color: Tokens.text-faint;
+                            font-size: Tokens.font-small;
+                            wrap: word-wrap;
+                        }
+                    }
+                }
+                Rectangle { width: 1px; background: Tokens.divider; }
+
+                Rectangle {
+                    horizontal-stretch: 1;
+                    background: Tokens.background;
+                    VerticalLayout {
+                        spacing: 0;
+
+                        // Actions.
+                        Rectangle {
+                            height: 48px;
+                            background: Tokens.background;
+                            HorizontalLayout {
+                                padding-left: Tokens.space(3);
+                                padding-right: Tokens.space(3);
+                                padding-top: Tokens.space(2);
+                                padding-bottom: Tokens.space(2);
+                                spacing: Tokens.space(2);
+                                AetherButton {
+                                    text: "New folder";
+                                    icon: IconKind.plus;
+                                    show-icon: true;
+                                    clicked => { root.new_folder(); }
+                                }
+                                AetherButton {
+                                    text: "Copy";
+                                    clicked => { root.copy_selected(); }
+                                }
+                                AetherButton {
+                                    text: "Move";
+                                    clicked => { root.cut_selected(); }
+                                }
+                                AetherButton {
+                                    text: "Paste";
+                                    clicked => { root.paste_here(); }
+                                }
+                                AetherButton {
+                                    text: "Trash";
+                                    icon: IconKind.trash;
+                                    show-icon: true;
+                                    clicked => { root.trash_selected(); }
+                                }
+                                Rectangle { horizontal-stretch: 1; height: 1px; background: transparent; }
+                                Pill {
+                                    text: root.clipboard;
+                                    tone: Tokens.accent;
+                                    visible: root.clipboard != "";
+                                }
+                                Rectangle {
+                                    width: 168px;
+                                    height: 32px;
+                                    border-radius: Tokens.radius-button;
+                                    background: Tokens.surface-low;
+                                    border-width: 1px;
+                                    border-color: rename-input.has-focus ? Tokens.accent : Tokens.divider;
+                                    accessible-role: text-input;
+                                    accessible-label: "New name";
+                                    accessible-value: root.rename_text;
+                                    Text {
+                                        x: Tokens.space(2);
+                                        width: parent.width - Tokens.space(4);
+                                        height: parent.height;
+                                        text: "New name…";
+                                        color: Tokens.text-faint;
+                                        font-size: Tokens.font-body;
+                                        vertical-alignment: center;
+                                        visible: root.rename_text == "";
+                                    }
+                                    rename-input := TextInput {
+                                        accessible-role: none;
+                                        x: Tokens.space(2);
+                                        width: parent.width - Tokens.space(4);
+                                        height: parent.height;
+                                        color: Tokens.text;
+                                        font-size: Tokens.font-body;
+                                        vertical-alignment: center;
+                                        single-line: true;
+                                        text <=> root.rename_text;
+                                        edited => { root.rename_text = self.text; }
+                                        accepted => { root.rename_selected(root.rename_text); }
+                                    }
+                                }
+                                AetherButton {
+                                    text: "Rename";
+                                    clicked => { root.rename_selected(root.rename_text); }
+                                }
+                            }
+                        }
+                        Divider {}
+
+                        // Column header (list and column views only).
+                        if root.view_mode != 2 : Rectangle {
+                            height: 28px;
+                            background: Tokens.surface-low;
+                            HorizontalLayout {
+                                padding-left: Tokens.space(3);
+                                padding-right: Tokens.space(3);
+                                spacing: Tokens.space(2);
+                                Text {
+                                    text: "Name";
+                                    horizontal-stretch: 1;
+                                    color: Tokens.text-faint;
+                                    font-size: Tokens.font-small;
+                                    font-weight: 600;
+                                    vertical-alignment: center;
+                                }
+                                if root.view_mode == 1 : Text {
+                                    text: "Permissions";
+                                    width: 104px;
+                                    color: Tokens.text-faint;
+                                    font-size: Tokens.font-small;
+                                    font-weight: 600;
+                                    vertical-alignment: center;
+                                }
+                                Text {
+                                    text: "Size";
+                                    width: 80px;
+                                    color: Tokens.text-faint;
+                                    font-size: Tokens.font-small;
+                                    font-weight: 600;
+                                    horizontal-alignment: right;
+                                    vertical-alignment: center;
+                                }
+                                Text {
+                                    text: "Modified";
+                                    width: 132px;
+                                    color: Tokens.text-faint;
+                                    font-size: Tokens.font-small;
+                                    font-weight: 600;
+                                    vertical-alignment: center;
+                                }
+                            }
+                        }
+                        Divider {}
+
+                        // Empty state.
+                        if root.rows.length == 0 : Rectangle {
+                            vertical-stretch: 1;
+                            background: Tokens.background;
+                            VerticalLayout {
+                                alignment: center;
+                                spacing: Tokens.space(2);
+                                HorizontalLayout {
+                                    alignment: center;
+                                    Icon { kind: IconKind.folder; size: 28px; tint: Tokens.text-faint; }
+                                }
+                                Text {
+                                    text: "This folder is empty";
+                                    color: Tokens.text-muted;
+                                    font-size: Tokens.font-title;
+                                    horizontal-alignment: center;
+                                }
+                                Text {
+                                    text: "Copy something here, or create a new folder.";
+                                    color: Tokens.text-faint;
+                                    font-size: Tokens.font-small;
+                                    horizontal-alignment: center;
+                                }
+                            }
+                        }
+
+                        // List and column views.
+                        if root.rows.length > 0 && root.view_mode != 2 : Flickable {
+                            vertical-stretch: 1;
+                            content-width: self.width;
+                            content-height: list-content.preferred-height;
+                            list-content := VerticalLayout {
+                                padding-top: Tokens.space(2);
+                                padding-bottom: Tokens.space(2);
+                                padding-left: Tokens.space(2);
+                                padding-right: Tokens.space(2);
+                                spacing: 1px;
+                                alignment: start;
+                                for entry[idx] in root.rows : FileRowView {
+                                    data: entry;
+                                    view: root.view_mode;
+                                    activate => { root.select_row(idx); }
+                                }
+                            }
+                        }
+
+                        // Icon view.
+                        if root.rows.length > 0 && root.view_mode == 2 : Flickable {
+                            vertical-stretch: 1;
+                            content-width: self.width;
+                            content-height: grid-content.preferred-height;
+                            grid-content := VerticalLayout {
+                                padding: Tokens.space(3);
+                                alignment: start;
+                                GridLayout {
+                                spacing: Tokens.space(2);
+                                for entry[idx] in root.rows : Rectangle {
+                                    row: Math.floor(idx / 5);
+                                    col: Math.mod(idx, 5);
+                                    height: 96px;
+                                    border-radius: Tokens.radius-button;
+                                    background: entry.selected ? Tokens.accent-soft : (tile.has-hover ? Tokens.hover : transparent);
+                                    accessible-role: list-item;
+                                    accessible-label: entry.name;
+                                    accessible-checked: entry.selected;
+                                    VerticalLayout {
+                                        alignment: center;
+                                        spacing: Tokens.space(1);
+                                        HorizontalLayout {
+                                            alignment: center;
+                                            Icon {
+                                                kind: entry.icon;
+                                                size: 26px;
+                                                tint: entry.kind == 1 ? Tokens.accent-strong : Tokens.text-muted;
+                                            }
+                                        }
+                                        Text {
+                                            text: entry.name;
+                                            color: Tokens.text;
+                                            font-size: Tokens.font-small;
+                                            horizontal-alignment: center;
+                                            overflow: elide;
+                                        }
+                                    }
+                                    tile := TouchArea {
+                                        clicked => { root.select_row(idx); }
+                                    }
+                                }
+                                }
+                            }
+                        }
+
+                        Divider {}
+                        // Status.
+                        Rectangle {
+                            height: 30px;
+                            background: Tokens.surface-low;
+                            HorizontalLayout {
+                                padding-left: Tokens.space(3);
+                                padding-right: Tokens.space(3);
+                                spacing: Tokens.space(3);
+                                Text {
+                                    text: root.status;
+                                    color: Tokens.text-muted;
+                                    font-size: Tokens.font-small;
+                                    vertical-alignment: center;
+                                    overflow: elide;
+                                    horizontal-stretch: 1;
+                                }
+                                Text {
+                                    text: root.item_count + " items · " + root.selected_count + " selected";
+                                    color: Tokens.text-muted;
+                                    font-size: Tokens.font-small;
+                                    vertical-alignment: center;
+                                }
+                                Text {
+                                    text: root.free_space;
+                                    color: Tokens.text-faint;
+                                    font-size: Tokens.font-small;
+                                    vertical-alignment: center;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
 }

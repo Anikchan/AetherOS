@@ -1,9 +1,421 @@
-// AetherOS Documents — P4 placeholder surface.
-import { Tokens } from "../../../ui/design.slint";
+// AetherOS Documents — Markdown/PDF viewer (P4-T13, DA-AC-05).
+//
+// Presentation only: parsing, pagination, zoom, search and the PDF adapter live
+// in Rust (`src/markdown.rs`, `src/document.rs`, `src/pdf.rs`) and are applied
+// by `DocumentsController` (`src/app.rs`).
+
+import {
+    Tokens, Icon, IconKind, GlassPanel, AetherButton, IconButton,
+    Divider, SectionLabel, ListRow, Pill,
+} from "../../../ui/design.slint";
+
+export struct DocEntry {
+    title: string,
+    subtitle: string,
+    page: int,
+    path: string,
+}
+
+export struct BlockView {
+    kind: string,
+    text: string,
+    level: int,
+    marker: string,
+}
+
+export struct HitView {
+    label: string,
+    preview: string,
+    page: int,
+}
+
+// Search field with a labelled inner TextInput, so headless tests (and screen
+// readers) address the text box instead of the surrounding rectangle.
+component FindField inherits Rectangle {
+    in property <string> placeholder: "Find in document";
+    in-out property <string> text;
+    callback edited(string);
+    callback accepted();
+
+    height: 40px;
+    background: Tokens.surface-low;
+    border-radius: Tokens.radius-button;
+    border-width: 1px;
+    border-color: input.has-focus ? Tokens.accent : Tokens.divider;
+
+    HorizontalLayout {
+        padding-left: 12px;
+        padding-right: 12px;
+        spacing: 8px;
+        Icon { kind: IconKind.search; size: 15px; tint: Tokens.text-faint; }
+        input := TextInput {
+            text <=> root.text;
+            color: Tokens.text;
+            font-size: Tokens.font-body;
+            vertical-alignment: center;
+            single-line: true;
+            accessible-label: root.placeholder;
+            edited => { root.edited(self.text); }
+            accepted => { root.accepted(); }
+        }
+    }
+}
 
 export component DocumentsApp inherits Window {
     title: "Documents";
-    width: 800px;
-    height: 600px;
+    width: 1200px;
+    height: 800px;
     background: Tokens.background;
+
+    in property <string> doc-title: "";
+    in property <string> doc-path: "";
+    in property <string> page-label: "";
+    in property <string> zoom-label: "100%";
+    in property <float> font-scale: 1.0;
+    in property <string> status: "";
+    in property <string> pdf-status: "";
+    in property <bool> pdf-available: false;
+
+    in-out property <int> page-index: 0;
+    in property <int> page-count: 0;
+    in-out property <[BlockView]> blocks: [];
+    in-out property <[DocEntry]> pages: [];
+    in-out property <[DocEntry]> recents: [];
+
+    in-out property <string> find-text: "";
+    in property <string> find-label: "";
+    in-out property <[HitView]> hits: [];
+
+    callback prev-page();
+    callback next-page();
+    callback goto-page(int);
+    callback zoom-in();
+    callback zoom-out();
+    callback find();
+    callback find-edited(string);
+    callback open-document(string);
+
+    VerticalLayout {
+        padding: Tokens.space(5);
+        spacing: Tokens.space(4);
+
+        // ---------------------------------------------------------- header ---
+        HorizontalLayout {
+            spacing: Tokens.space(3);
+            Icon { kind: IconKind.document; size: 22px; tint: Tokens.accent; }
+            VerticalLayout {
+                spacing: 1px;
+                Text {
+                    text: root.doc-title;
+                    color: Tokens.text;
+                    font-size: Tokens.font-large;
+                    font-weight: 700;
+                    overflow: elide;
+                }
+                Text {
+                    text: root.doc-path;
+                    color: Tokens.text-faint;
+                    font-size: Tokens.font-small;
+                    overflow: elide;
+                }
+            }
+            Rectangle { horizontal-stretch: 1; background: transparent; }
+
+            // Toolbar: page navigation, zoom and find.
+            IconButton {
+                kind: IconKind.chevron-left;
+                label: "Previous page";
+                clicked => { root.prev-page(); }
+            }
+            Text {
+                text: root.page-label;
+                color: Tokens.text;
+                font-size: Tokens.font-body;
+                font-weight: 600;
+                horizontal-alignment: center;
+                width: 110px;
+                vertical-alignment: center;
+            }
+            IconButton {
+                kind: IconKind.chevron-right;
+                label: "Next page";
+                clicked => { root.next-page(); }
+            }
+            Rectangle { width: 1px; height: 20px; background: Tokens.divider; }
+            IconButton {
+                kind: IconKind.minus;
+                label: "Zoom out";
+                clicked => { root.zoom-out(); }
+            }
+            Text {
+                text: root.zoom-label;
+                color: Tokens.text-muted;
+                font-size: Tokens.font-small;
+                horizontal-alignment: center;
+                width: 42px;
+                vertical-alignment: center;
+            }
+            IconButton {
+                kind: IconKind.plus;
+                label: "Zoom in";
+                clicked => { root.zoom-in(); }
+            }
+            Rectangle { width: 1px; height: 20px; background: Tokens.divider; }
+            FindField {
+                width: 220px;
+                placeholder: "Find in document";
+                text <=> root.find-text;
+                edited(text) => { root.find-edited(text); }
+                accepted => { root.find(); }
+            }
+            AetherButton {
+                text: "Find";
+                clicked => { root.find(); }
+            }
+        }
+
+        Divider {}
+
+        if root.status != "" : Text {
+            text: root.status;
+            color: Tokens.danger;
+            font-size: Tokens.font-small;
+        }
+
+        // ------------------------------------------------------------ body ---
+        HorizontalLayout {
+            spacing: Tokens.space(4);
+
+            // --------------------------------------------------- sidebar ---
+            GlassPanel {
+                width: 288px;
+                vertical-stretch: 1;
+                pad: Tokens.space(3);
+
+                VerticalLayout {
+                    spacing: 2px;
+                    SectionLabel { label: "RECENT"; }
+                    for entry in root.recents : ListRow {
+                        title: entry.title;
+                        subtitle: entry.subtitle;
+                        icon: IconKind.document;
+                        show-icon: true;
+                        clicked => { root.open-document(entry.path); }
+                    }
+
+                    Rectangle { height: Tokens.space(2); background: transparent; }
+                    SectionLabel { label: "PAGES"; }
+                    VerticalLayout {
+                        spacing: 2px;
+                        for entry in root.pages : ListRow {
+                            title: entry.title;
+                            subtitle: entry.subtitle;
+                            selected: entry.page == root.page-index;
+                            clicked => { root.goto-page(entry.page); }
+                        }
+                    }
+
+                    Rectangle { vertical-stretch: 1; background: transparent; }
+                    Divider {}
+                    HorizontalLayout {
+                        spacing: Tokens.space(2);
+                        Text {
+                            text: "PDF preview";
+                            color: Tokens.text-muted;
+                            font-size: Tokens.font-small;
+                            vertical-alignment: center;
+                            horizontal-stretch: 1;
+                        }
+                        Pill {
+                            text: root.pdf-status;
+                            tone: root.pdf-available ? Tokens.success : Tokens.warning;
+                        }
+                    }
+                }
+            }
+
+            // --------------------------------------------------- content ---
+            GlassPanel {
+                horizontal-stretch: 1;
+                vertical-stretch: 1;
+                pad: Tokens.space(5);
+
+                VerticalLayout {
+                    spacing: Tokens.space(3);
+
+                    Rectangle {
+                        horizontal-stretch: 1;
+                        vertical-stretch: 1;
+                        clip: true;
+
+                        VerticalLayout {
+                            x: 0;
+                            y: 0;
+                            width: parent.width;
+                            spacing: 0px;
+
+                            for block in root.blocks : VerticalLayout {
+                                vertical-stretch: 0;
+                                padding-top: block.kind == "heading" ? 6px : 0px;
+                                padding-bottom: block.kind == "heading" ? 14px : (block.kind == "code" ? 12px : 8px);
+                                spacing: 2px;
+
+                                if block.kind == "heading" && block.level == 1 : Text {
+                                    text: block.text;
+                                    color: Tokens.text;
+                                    font-size: 27px * root.font-scale;
+                                    font-weight: 700;
+                                    wrap: word-wrap;
+                                }
+                                if block.kind == "heading" && block.level == 2 : Text {
+                                    text: block.text;
+                                    color: Tokens.text;
+                                    font-size: 20px * root.font-scale;
+                                    font-weight: 700;
+                                    wrap: word-wrap;
+                                }
+                                if block.kind == "heading" && block.level >= 3 : Text {
+                                    text: block.text;
+                                    color: Tokens.text;
+                                    font-size: 16px * root.font-scale;
+                                    font-weight: 600;
+                                    wrap: word-wrap;
+                                }
+                                if block.kind == "paragraph" : Text {
+                                    text: block.text;
+                                    color: Tokens.text-muted;
+                                    font-size: 13.5px * root.font-scale;
+                                    wrap: word-wrap;
+                                }
+                                if block.kind == "bullet" : HorizontalLayout {
+                                    spacing: 8px;
+                                    Text {
+                                        text: "•";
+                                        color: Tokens.accent;
+                                        font-size: 13.5px * root.font-scale;
+                                    }
+                                    Text {
+                                        text: block.text;
+                                        color: Tokens.text-muted;
+                                        font-size: 13.5px * root.font-scale;
+                                        wrap: word-wrap;
+                                        horizontal-stretch: 1;
+                                    }
+                                }
+                                if block.kind == "numbered" : HorizontalLayout {
+                                    spacing: 8px;
+                                    Text {
+                                        text: block.marker;
+                                        color: Tokens.accent;
+                                        font-size: 13.5px * root.font-scale;
+                                        width: 18px;
+                                    }
+                                    Text {
+                                        text: block.text;
+                                        color: Tokens.text-muted;
+                                        font-size: 13.5px * root.font-scale;
+                                        wrap: word-wrap;
+                                        horizontal-stretch: 1;
+                                    }
+                                }
+                                if block.kind == "code" : Rectangle {
+                                    background: Tokens.surface-low;
+                                    border-radius: Tokens.radius-button;
+                                    border-width: 1px;
+                                    border-color: Tokens.divider;
+                                    HorizontalLayout {
+                                        padding: Tokens.space(3);
+                                        Text {
+                                            text: block.text;
+                                            color: Tokens.text-muted;
+                                            font-family: Tokens.font-family-mono;
+                                            font-size: 12.5px * root.font-scale;
+                                            wrap: word-wrap;
+                                            horizontal-stretch: 1;
+                                        }
+                                    }
+                                }
+                                if block.kind == "quote" : HorizontalLayout {
+                                    spacing: 10px;
+                                    Rectangle {
+                                        width: 3px;
+                                        background: Tokens.accent;
+                                        border-radius: 2px;
+                                    }
+                                    Text {
+                                        text: block.text;
+                                        color: Tokens.text;
+                                        font-size: 13.5px * root.font-scale;
+                                        font-italic: true;
+                                        wrap: word-wrap;
+                                        horizontal-stretch: 1;
+                                    }
+                                }
+                                if block.kind == "divider" : Rectangle {
+                                    height: 1px;
+                                    background: Tokens.divider;
+                                }
+                            }
+
+                            // Absorbs leftover height so blocks keep their
+                            // intrinsic spacing instead of drifting apart.
+                            Rectangle { vertical-stretch: 1; background: transparent; }
+                        }
+                    }
+
+                    // ----------------------------------- search results bar ---
+                    if root.hits.length > 0 : Rectangle {
+                        height: 52px;
+                        background: Tokens.surface-low;
+                        border-radius: Tokens.radius-button;
+                        HorizontalLayout {
+                            padding-left: Tokens.space(3);
+                            padding-right: Tokens.space(3);
+                            spacing: Tokens.space(2);
+                            Text {
+                                text: root.find-label;
+                                color: Tokens.accent;
+                                font-size: Tokens.font-small;
+                                font-weight: 700;
+                                vertical-alignment: center;
+                            }
+                            for hit in root.hits : Rectangle {
+                                width: 56px;
+                                height: 28px;
+                                border-radius: 6px;
+                                background: hit-ta.has-hover ? Tokens.hover : Tokens.surface-high;
+                                accessible-role: button;
+                                accessible-label: "Match on page " + hit.label;
+                                Text {
+                                    text: hit.label;
+                                    color: Tokens.text;
+                                    font-size: Tokens.font-small;
+                                    horizontal-alignment: center;
+                                    vertical-alignment: center;
+                                }
+                                hit-ta := TouchArea {
+                                    clicked => { root.goto-page(hit.page); }
+                                }
+                            }
+                            Rectangle { horizontal-stretch: 1; background: transparent; }
+                            Text {
+                                text: "Click a match to jump to its page";
+                                color: Tokens.text-faint;
+                                font-size: Tokens.font-small;
+                                vertical-alignment: center;
+                                overflow: elide;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Footer hint keeps the empty-search state explicit.
+        if root.hits.length == 0 && root.find-text != "" : Text {
+            text: "No matches for the current search.";
+            color: Tokens.text-faint;
+            font-size: Tokens.font-small;
+        }
+    }
 }

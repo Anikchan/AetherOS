@@ -1,9 +1,348 @@
-// AetherOS Player — P4 placeholder surface.
-import { Tokens } from "../../../ui/design.slint";
+// AetherOS Player — now playing, transport and queue (P4-T14, DA-AC-06).
+//
+// Presentation only: playlist order, shuffle/repeat rules, transport state and
+// the GStreamer adapter live in Rust (`src/playlist.rs`, `src/transport.rs`,
+// `src/engine.rs`) and are applied by `PlayerController` (`src/app.rs`).
+
+import {
+    Tokens, Icon, IconKind, GlassPanel, AetherButton, IconButton, AetherSlider,
+    Divider, SectionLabel, Pill,
+} from "../../../ui/design.slint";
+
+export struct TrackView {
+    id: string,
+    index: int,
+    title: string,
+    subtitle: string,
+    duration: string,
+    active: bool,
+}
 
 export component PlayerApp inherits Window {
     title: "Player";
-    width: 800px;
-    height: 600px;
+    width: 1200px;
+    height: 800px;
     background: Tokens.background;
+
+    // Now playing.
+    in property <string> now-title: "";
+    in property <string> now-artist: "";
+    in property <string> now-album: "";
+    in property <string> now-elapsed: "0:00";
+    in property <string> now-total: "0:00";
+    in-out property <float> progress: 0.0;
+    in-out property <bool> playing: false;
+
+    // Transport settings.
+    in property <bool> shuffle: false;
+    in property <int> repeat-code: 0;
+    in property <string> repeat-label: "Repeat off";
+    in-out property <float> volume: 0.7;
+    in property <bool> muted: false;
+    in property <string> engine-status: "";
+
+    // Queue.
+    in property <string> queue-label: "";
+    in-out property <[TrackView]> tracks: [];
+
+    callback play-pause();
+    callback next();
+    callback previous();
+    callback shuffle-toggled();
+    callback repeat-cycled();
+    callback mute-toggled();
+    callback seek(float);
+    callback volume-changed(float);
+    callback select-track(string);
+
+    VerticalLayout {
+        padding: Tokens.space(5);
+        spacing: Tokens.space(4);
+
+        // ---------------------------------------------------------- header ---
+        HorizontalLayout {
+            spacing: Tokens.space(3);
+            Icon { kind: IconKind.play; size: 20px; tint: Tokens.accent; }
+            VerticalLayout {
+                spacing: 1px;
+                Text {
+                    text: "Player";
+                    color: Tokens.text;
+                    font-size: Tokens.font-large;
+                    font-weight: 700;
+                }
+                Text {
+                    text: "AetherOS audio";
+                    color: Tokens.text-muted;
+                    font-size: Tokens.font-small;
+                }
+            }
+            Rectangle { horizontal-stretch: 1; background: transparent; }
+            Pill {
+                text: root.engine-status;
+                tone: root.playing ? Tokens.success : Tokens.text-muted;
+            }
+            Pill {
+                text: root.repeat-label;
+                tone: Tokens.accent;
+            }
+        }
+
+        Divider {}
+
+        HorizontalLayout {
+            spacing: Tokens.space(4);
+
+            // ------------------------------------------------ now playing ---
+            GlassPanel {
+                width: 448px;
+                vertical-stretch: 1;
+                pad: Tokens.space(5);
+
+                VerticalLayout {
+                    spacing: Tokens.space(3);
+
+                    HorizontalLayout {
+                        alignment: center;
+                        Rectangle {
+                            width: 224px;
+                            height: 224px;
+                            border-radius: 18px;
+                            border-width: 1px;
+                            border-color: Tokens.glass-edge-soft;
+                            background: @linear-gradient(150deg, Tokens.surface-high 0%, Tokens.accent-soft 55%, Tokens.accent 145%);
+
+                            Rectangle {
+                                width: 104px;
+                                height: 104px;
+                                border-radius: 52px;
+                                background: Tokens.background.with-alpha(0.35);
+                                border-width: 2px;
+                                border-color: Tokens.text.with-alpha(0.28);
+                                x: (parent.width - self.width) / 2;
+                                y: (parent.height - self.height) / 2;
+                            }
+                            Icon {
+                                kind: IconKind.play;
+                                size: 40px;
+                                tint: Tokens.text.with-alpha(0.72);
+                                x: (parent.width - self.width) / 2;
+                                y: (parent.height - self.height) / 2;
+                            }
+                        }
+                    }
+
+                    Text {
+                        text: root.now-title;
+                        color: Tokens.text;
+                        font-size: 22px;
+                        font-weight: 700;
+                        horizontal-alignment: center;
+                        overflow: elide;
+                    }
+                    Text {
+                        text: root.now-artist;
+                        color: Tokens.text-muted;
+                        font-size: Tokens.font-body;
+                        horizontal-alignment: center;
+                        overflow: elide;
+                    }
+                    Text {
+                        text: root.now-album;
+                        color: Tokens.text-faint;
+                        font-size: Tokens.font-small;
+                        horizontal-alignment: center;
+                        overflow: elide;
+                    }
+
+                    // Absorbs the leftover height: art and titles stay at the
+                    // top, the transport controls sit on the bottom edge.
+                    Rectangle { vertical-stretch: 1; background: transparent; }
+                    Rectangle { height: Tokens.space(1); background: transparent; }
+
+                    AetherSlider {
+                        label: "Progress";
+                        value <=> root.progress;
+                        changed(value) => { root.seek(value); }
+                    }
+                    HorizontalLayout {
+                        Text {
+                            text: root.now-elapsed;
+                            color: Tokens.text-muted;
+                            font-size: Tokens.font-small;
+                            horizontal-stretch: 1;
+                        }
+                        Text {
+                            text: root.now-total;
+                            color: Tokens.text-faint;
+                            font-size: Tokens.font-small;
+                        }
+                    }
+
+                    HorizontalLayout {
+                        alignment: center;
+                        spacing: Tokens.space(2);
+                        IconButton {
+                            kind: IconKind.refresh;
+                            label: "Shuffle";
+                            toggled: root.shuffle;
+                            button-size: 32px;
+                            icon-size: 16px;
+                            clicked => { root.shuffle-toggled(); }
+                        }
+                        IconButton {
+                            kind: IconKind.skip-back;
+                            label: "Previous";
+                            button-size: 36px;
+                            icon-size: 18px;
+                            clicked => { root.previous(); }
+                        }
+                        AetherButton {
+                            text: root.playing ? "Pause" : "Play";
+                            primary: true;
+                            width: 96px;
+                            clicked => { root.play-pause(); }
+                        }
+                        IconButton {
+                            kind: IconKind.skip-forward;
+                            label: "Next";
+                            button-size: 36px;
+                            icon-size: 18px;
+                            clicked => { root.next(); }
+                        }
+                        IconButton {
+                            kind: IconKind.history;
+                            label: "Repeat";
+                            toggled: root.repeat-code != 0;
+                            button-size: 32px;
+                            icon-size: 16px;
+                            clicked => { root.repeat-cycled(); }
+                        }
+                    }
+
+                    Divider {}
+
+                    HorizontalLayout {
+                        spacing: Tokens.space(2);
+                        IconButton {
+                            kind: root.muted ? IconKind.volume-muted : IconKind.volume;
+                            label: "Mute";
+                            toggled: root.muted;
+                            clicked => { root.mute-toggled(); }
+                        }
+                        AetherSlider {
+                            label: "Volume";
+                            value <=> root.volume;
+                            horizontal-stretch: 1;
+                            changed(value) => { root.volume-changed(value); }
+                        }
+                    }
+                }
+            }
+
+            // ------------------------------------------------------ queue ---
+            GlassPanel {
+                horizontal-stretch: 1;
+                vertical-stretch: 1;
+                pad: Tokens.space(4);
+
+                VerticalLayout {
+                    spacing: Tokens.space(3);
+
+                    HorizontalLayout {
+                        SectionLabel { label: "QUEUE"; }
+                        Rectangle { horizontal-stretch: 1; background: transparent; }
+                        Text {
+                            text: root.queue-label;
+                            color: Tokens.text-faint;
+                            font-size: Tokens.font-small;
+                            vertical-alignment: center;
+                        }
+                    }
+
+                    VerticalLayout {
+                        spacing: 2px;
+                        for track in root.tracks : Rectangle {
+                            height: 58px;
+                            border-radius: Tokens.radius-button;
+                            background: track.active
+                                ? Tokens.accent-soft
+                                : (row-ta.has-hover ? Tokens.hover : transparent);
+                            accessible-role: button;
+                            accessible-label: track.title;
+
+                            // Playing track marker.
+                            if track.active : Rectangle {
+                                x: 0;
+                                y: 0;
+                                width: 3px;
+                                height: parent.height;
+                                border-radius: 2px;
+                                background: Tokens.accent;
+                            }
+
+                            Text {
+                                x: 14px;
+                                y: (parent.height - self.height) / 2;
+                                width: 22px;
+                                text: "" + track.index;
+                                color: track.active ? Tokens.accent : Tokens.text-faint;
+                                font-size: Tokens.font-small;
+                                font-weight: 700;
+                                horizontal-alignment: center;
+                            }
+
+                            VerticalLayout {
+                                x: 44px;
+                                y: 10px;
+                                width: parent.width - 140px;
+                                spacing: 2px;
+                                Text {
+                                    text: track.title;
+                                    color: track.active ? Tokens.text : Tokens.text;
+                                    font-size: Tokens.font-body;
+                                    font-weight: track.active ? 700 : 500;
+                                    overflow: elide;
+                                }
+                                Text {
+                                    text: track.subtitle;
+                                    color: Tokens.text-muted;
+                                    font-size: Tokens.font-small;
+                                    overflow: elide;
+                                }
+                            }
+
+                            Text {
+                                x: parent.width - 84px;
+                                y: (parent.height - self.height) / 2;
+                                width: 70px;
+                                text: track.duration;
+                                color: Tokens.text-faint;
+                                font-size: Tokens.font-small;
+                                font-family: Tokens.font-family-mono;
+                                horizontal-alignment: right;
+                            }
+
+                            row-ta := TouchArea {
+                                x: 0;
+                                y: 0;
+                                width: parent.width;
+                                height: parent.height;
+                                clicked => { root.select-track(track.id); }
+                            }
+                        }
+                    }
+
+                    Rectangle { vertical-stretch: 1; background: transparent; }
+                    Divider {}
+                    Text {
+                        text: "GStreamer plays what the system provides. H.264/AAC stay out of the base image (P0-T03).";
+                        color: Tokens.text-faint;
+                        font-size: Tokens.font-small;
+                        wrap: word-wrap;
+                    }
+                }
+            }
+        }
+    }
 }

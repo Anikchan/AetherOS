@@ -1,9 +1,386 @@
-// AetherOS Images — P4 placeholder surface.
-import { Tokens } from "../../../ui/design.slint";
+// AetherOS Images (P4-T12, DA-AC-04).
+//
+// Presentation only: decoding, rotation, flipping, zoom math, folder ordering
+// and the thumbnail cache live in Rust (`src/lib.rs` over `src/viewer.rs`).
+import {
+    Tokens,
+    Icon,
+    IconKind,
+    Divider,
+    AetherButton,
+    IconButton,
+    Pill,
+    SectionLabel,
+} from "../../../ui/design.slint";
+
+export struct ImageThumb {
+    name: string,
+    picture: image,
+    selected: bool,
+}
+
+component InfoRow inherits Rectangle {
+    in property <string> label: "";
+    in property <string> value: "";
+    height: 20px;
+
+    HorizontalLayout {
+        spacing: Tokens.space(2);
+        Text {
+            text: root.label;
+            width: 84px;
+            color: Tokens.text-faint;
+            font-size: Tokens.font-small;
+            vertical-alignment: center;
+        }
+        Text {
+            text: root.value;
+            color: Tokens.text;
+            font-size: Tokens.font-small;
+            vertical-alignment: center;
+            overflow: elide;
+            horizontal-stretch: 1;
+        }
+    }
+}
 
 export component ImagesApp inherits Window {
     title: "Images";
-    width: 800px;
-    height: 600px;
+    width: 1200px;
+    height: 800px;
     background: Tokens.background;
+
+    // --- model, set by Rust ------------------------------------------------
+    in property <image> picture;
+    in property <bool> has_image: false;
+    in property <int> image_width: 0;
+    in property <int> image_height: 0;
+    in-out property <float> zoom: 1.0;
+    in-out property <length> canvas_width: 0px;
+    in-out property <length> canvas_height: 0px;
+    in property <string> file_name: "";
+    in property <string> dimensions: "—";
+    in property <string> format_label: "—";
+    in property <string> file_size: "—";
+    in property <string> modified: "—";
+    in property <string> folder: "";
+    in property <string> status: "Open an image to begin";
+    in property <string> error: "";
+    in property <[ImageThumb]> thumbs: [];
+    in-out property <int> current_index: 0;
+    in property <int> total_images: 0;
+    in property <bool> flipped_h: false;
+    in property <bool> flipped_v: false;
+    in-out property <string> folder_path: "";
+
+    // --- intents -----------------------------------------------------------
+    callback previous();
+    callback next();
+    callback zoom_in();
+    callback zoom_out();
+    callback fit();
+    callback actual_size();
+    callback rotate_cw();
+    callback flip_h();
+    callback flip_v();
+    callback select_thumb(int);
+    callback open_folder(string);
+    callback canvas_resized();
+
+    VerticalLayout {
+        spacing: 0;
+
+        // --- title bar -----------------------------------------------------
+        Rectangle {
+            height: 56px;
+            background: Tokens.background-alt;
+            HorizontalLayout {
+                padding-left: Tokens.space(4);
+                padding-right: Tokens.space(4);
+                padding-top: Tokens.space(3);
+                padding-bottom: Tokens.space(3);
+                spacing: Tokens.space(3);
+                Icon { kind: IconKind.image; size: 18px; tint: Tokens.accent-strong; }
+                Text {
+                    text: root.file_name == "" ? "Images" : root.file_name;
+                    color: Tokens.text;
+                    font-size: Tokens.font-title;
+                    font-weight: 600;
+                    vertical-alignment: center;
+                    overflow: elide;
+                    horizontal-stretch: 1;
+                }
+                Rectangle {
+                    width: 380px;
+                    height: 32px;
+                    border-radius: Tokens.radius-button;
+                    background: Tokens.surface-low;
+                    border-width: 1px;
+                    border-color: folder-input.has-focus ? Tokens.accent : Tokens.divider;
+                    accessible-role: text-input;
+                    accessible-label: "Image folder";
+                    accessible-value: root.folder_path;
+                    folder-input := TextInput {
+                        accessible-role: none;
+                        x: Tokens.space(2);
+                        width: parent.width - Tokens.space(4);
+                        height: parent.height;
+                        color: Tokens.text;
+                        font-size: Tokens.font-body;
+                        vertical-alignment: center;
+                        single-line: true;
+                        text <=> root.folder_path;
+                        edited => { root.folder_path = self.text; }
+                        accepted => { root.open_folder(root.folder_path); }
+                    }
+                }
+                AetherButton {
+                    text: "Open folder";
+                    primary: true;
+                    icon: IconKind.folder;
+                    show-icon: true;
+                    clicked => { root.open_folder(root.folder_path); }
+                }
+            }
+        }
+        Divider {}
+
+        // --- canvas + info -------------------------------------------------
+        HorizontalLayout {
+            vertical-stretch: 1;
+            spacing: 0;
+
+            Rectangle {
+                horizontal-stretch: 1;
+                background: Tokens.background-alt;
+                clip: true;
+
+                // Keep Rust informed of the canvas size so Fit can compute a
+                // real scale for the decoded pixel dimensions.
+                changed width => {
+                    root.canvas_width = self.width;
+                    root.canvas_resized();
+                }
+                changed height => {
+                    root.canvas_height = self.height;
+                    root.canvas_resized();
+                }
+
+                if root.has_image : Image {
+                    source: root.picture;
+                    width: Math.max(1.0, root.image_width * root.zoom) * 1px;
+                    height: Math.max(1.0, root.image_height * root.zoom) * 1px;
+                    x: (parent.width - self.width) / 2;
+                    y: (parent.height - self.height) / 2;
+                    image-fit: fill;
+                }
+
+                if !root.has_image : VerticalLayout {
+                    alignment: center;
+                    spacing: Tokens.space(2);
+                    HorizontalLayout {
+                        alignment: center;
+                        Icon { kind: IconKind.image; size: 34px; tint: Tokens.text-faint; }
+                    }
+                    Text {
+                        text: root.error == "" ? "No image open" : root.error;
+                        color: root.error == "" ? Tokens.text-muted : Tokens.danger;
+                        font-size: Tokens.font-title;
+                        horizontal-alignment: center;
+                    }
+                    Text {
+                        text: "Type a folder path above and press Open folder.";
+                        color: Tokens.text-faint;
+                        font-size: Tokens.font-small;
+                        horizontal-alignment: center;
+                    }
+                }
+
+
+            }
+
+            Rectangle { width: 1px; background: Tokens.divider; }
+
+            // --- info panel -------------------------------------------------
+            Rectangle {
+                width: 244px;
+                background: Tokens.surface-low;
+                VerticalLayout {
+                    padding: Tokens.space(3);
+                    spacing: Tokens.space(1);
+                    SectionLabel { label: "IMAGE"; }
+                    Text {
+                        text: root.file_name == "" ? "—" : root.file_name;
+                        color: Tokens.text;
+                        font-size: Tokens.font-body;
+                        font-weight: 600;
+                        wrap: word-wrap;
+                    }
+                    Rectangle { height: Tokens.space(2); background: transparent; }
+                    InfoRow { label: "Dimensions"; value: root.dimensions; }
+                    InfoRow { label: "Format"; value: root.format_label; }
+                    InfoRow { label: "Size"; value: root.file_size; }
+                    InfoRow { label: "Modified"; value: root.modified; }
+                    InfoRow { label: "Zoom"; value: Math.round(root.zoom * 100) + "%"; }
+                    InfoRow { label: "Position"; value: (root.current_index + 1) + " of " + root.total_images; }
+                    InfoRow { label: "Flip"; value: root.flipped_h && root.flipped_v ? "both" : (root.flipped_h ? "horizontal" : (root.flipped_v ? "vertical" : "none")); }
+                    Divider {}
+                    SectionLabel { label: "FOLDER"; }
+                    Text {
+                        text: root.folder == "" ? "—" : root.folder;
+                        color: Tokens.text-muted;
+                        font-size: Tokens.font-small;
+                        wrap: word-wrap;
+                    }
+                    Rectangle { vertical-stretch: 1; background: transparent; }
+                    Divider {}
+                    Text {
+                        text: "Drag to pan · pinch or toolbar to zoom.";
+                        color: Tokens.text-muted;
+                        font-size: Tokens.font-small;
+                        wrap: word-wrap;
+                    }
+                    Text {
+                        text: "Decoded locally with the image crate. Rotations are lossless 90° steps.";
+                        color: Tokens.text-faint;
+                        font-size: Tokens.font-small;
+                        wrap: word-wrap;
+                    }
+                }
+            }
+        }
+        Divider {}
+
+        // --- toolbar -------------------------------------------------------
+        Rectangle {
+            height: 48px;
+            background: Tokens.background;
+            HorizontalLayout {
+                padding-left: Tokens.space(3);
+                padding-right: Tokens.space(3);
+                padding-top: Tokens.space(2);
+                padding-bottom: Tokens.space(2);
+                spacing: Tokens.space(2);
+                IconButton {
+                    kind: IconKind.chevron-left;
+                    label: "Previous";
+                    clicked => { root.previous(); }
+                }
+                IconButton {
+                    kind: IconKind.chevron-right;
+                    label: "Next";
+                    clicked => { root.next(); }
+                }
+                Text {
+                    text: (root.current_index + 1) + " / " + root.total_images;
+                    color: Tokens.text-muted;
+                    font-size: Tokens.font-small;
+                    width: 56px;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+                Rectangle { width: 1px; height: 20px; background: Tokens.divider; }
+                AetherButton {
+                    text: "Zoom out";
+                    icon: IconKind.minus;
+                    show-icon: true;
+                    clicked => { root.zoom_out(); }
+                }
+                Pill { text: Math.round(root.zoom * 100) + "%"; tone: Tokens.accent; }
+                AetherButton {
+                    text: "Zoom in";
+                    icon: IconKind.plus;
+                    show-icon: true;
+                    clicked => { root.zoom_in(); }
+                }
+                Rectangle { width: 1px; height: 20px; background: Tokens.divider; }
+                AetherButton {
+                    text: "Rotate";
+                    clicked => { root.rotate_cw(); }
+                }
+                AetherButton {
+                    text: "Flip H";
+                    clicked => { root.flip_h(); }
+                }
+                AetherButton {
+                    text: "Flip V";
+                    clicked => { root.flip_v(); }
+                }
+                Rectangle { horizontal-stretch: 1; height: 1px; background: transparent; }
+                AetherButton {
+                    text: "Actual size";
+                    clicked => { root.actual_size(); }
+                }
+                AetherButton {
+                    text: "Fit";
+                    primary: true;
+                    clicked => { root.fit(); }
+                }
+            }
+        }
+        Divider {}
+
+        // --- thumbnail strip ----------------------------------------------
+        Rectangle {
+            height: 104px;
+            background: Tokens.surface-low;
+            Flickable {
+                content-width: thumb-row.preferred-width;
+                content-height: self.height;
+                thumb-row := HorizontalLayout {
+                    padding: Tokens.space(2);
+                    spacing: Tokens.space(2);
+                    alignment: start;
+                    for thumb[idx] in root.thumbs : Rectangle {
+                        width: 84px;
+                        height: 84px;
+                        border-radius: Tokens.radius-button;
+                        background: thumb.selected ? Tokens.accent-soft : Tokens.surface;
+                        border-width: 1px;
+                        border-color: thumb.selected ? Tokens.accent : Tokens.divider;
+                        accessible-role: tab;
+                        accessible-label: thumb.name;
+                        accessible-checked: thumb.selected;
+                        Image {
+                            source: thumb.picture;
+                            x: Tokens.space(1);
+                            y: Tokens.space(1);
+                            width: parent.width - Tokens.space(2);
+                            height: parent.height - Tokens.space(2);
+                            image-fit: contain;
+                        }
+                        ta := TouchArea {
+                            clicked => { root.select_thumb(idx); }
+                        }
+                    }
+                }
+            }
+        }
+        Divider {}
+
+        // --- status --------------------------------------------------------
+        Rectangle {
+            height: 30px;
+            background: Tokens.surface;
+            HorizontalLayout {
+                padding-left: Tokens.space(3);
+                padding-right: Tokens.space(3);
+                spacing: Tokens.space(3);
+                Text {
+                    text: root.status;
+                    color: Tokens.text-muted;
+                    font-size: Tokens.font-small;
+                    vertical-alignment: center;
+                    overflow: elide;
+                    horizontal-stretch: 1;
+                }
+                Text {
+                    text: root.dimensions + " · " + root.format_label;
+                    color: Tokens.text-faint;
+                    font-size: Tokens.font-small;
+                    vertical-alignment: center;
+                }
+            }
+        }
+    }
 }

@@ -1,9 +1,414 @@
-// AetherOS Archive — P4 placeholder surface.
-import { Tokens } from "../../../ui/design.slint";
+// AetherOS Archive (P4-T17, DA-AC-08).
+//
+// Presentation only: format detection, listing, extraction, creation and
+// rebuild-based deletion live in Rust (`src/lib.rs` over `src/archive.rs`).
+import {
+    Tokens,
+    Icon,
+    IconKind,
+    Divider,
+    AetherButton,
+    IconButton,
+    Pill,
+    SectionLabel,
+} from "../../../ui/design.slint";
+
+export struct ArchiveRow {
+    name: string,
+    size: string,
+    kind: string,
+    modified: string,
+    is_dir: bool,
+    selected: bool,
+}
+
+component ArchiveEntryView inherits Rectangle {
+    in property <ArchiveRow> data;
+    callback activate();
+
+    height: 34px;
+    border-radius: Tokens.radius-button;
+    background: data.selected ? Tokens.accent-soft : (ta.has-hover ? Tokens.hover : transparent);
+    accessible-role: list-item;
+    accessible-label: root.data.name;
+    accessible-checked: root.data.selected;
+
+    HorizontalLayout {
+        padding-left: Tokens.space(2);
+        padding-right: Tokens.space(2);
+        spacing: Tokens.space(2);
+        Icon {
+            kind: root.data.is_dir ? IconKind.folder : IconKind.file;
+            size: 15px;
+            tint: root.data.is_dir ? Tokens.accent-strong : Tokens.text-muted;
+        }
+        Text {
+            text: root.data.name;
+            color: Tokens.text;
+            font-size: Tokens.font-body;
+            vertical-alignment: center;
+            overflow: elide;
+            horizontal-stretch: 1;
+        }
+        Text {
+            text: root.data.size;
+            width: 80px;
+            color: Tokens.text-muted;
+            font-size: Tokens.font-small;
+            horizontal-alignment: right;
+            vertical-alignment: center;
+        }
+        Text {
+            text: root.data.kind;
+            width: 72px;
+            color: Tokens.text-faint;
+            font-size: Tokens.font-small;
+            vertical-alignment: center;
+        }
+        Text {
+            text: root.data.modified;
+            width: 132px;
+            color: Tokens.text-muted;
+            font-size: Tokens.font-small;
+            vertical-alignment: center;
+        }
+    }
+    ta := TouchArea {
+        clicked => { root.activate(); }
+    }
+}
 
 export component ArchiveApp inherits Window {
     title: "Archive";
-    width: 800px;
-    height: 600px;
+    width: 1200px;
+    height: 800px;
     background: Tokens.background;
+
+    // --- model, set by Rust ------------------------------------------------
+    in-out property <string> archive_path: "";
+    in-out property <string> open_path: "";
+    in property <string> format_label: "—";
+    in property <[ArchiveRow]> entries: [];
+    in-out property <int> entry_count: 0;
+    in-out property <int> selected_count: 0;
+    in property <string> status: "Open an archive to begin";
+    in-out property <string> error: "";
+    in property <float> progress: 0.0;
+    in property <string> progress_text: "Idle";
+    in-out property <string> folder_path: "";
+
+    // --- intents -----------------------------------------------------------
+    callback open_archive(string);
+    callback select_entry(int);
+    callback extract_all_here();
+    callback extract_selected_here();
+    callback delete_selected();
+    callback create_archive(string);
+
+    VerticalLayout {
+        spacing: 0;
+
+        // --- archive bar ---------------------------------------------------
+        Rectangle {
+            height: 56px;
+            background: Tokens.background-alt;
+            HorizontalLayout {
+                padding-left: Tokens.space(4);
+                padding-right: Tokens.space(4);
+                padding-top: Tokens.space(3);
+                padding-bottom: Tokens.space(3);
+                spacing: Tokens.space(3);
+                Icon { kind: IconKind.archive; size: 18px; tint: Tokens.accent-strong; }
+                Text {
+                    text: "Archive";
+                    color: Tokens.text;
+                    font-size: Tokens.font-title;
+                    font-weight: 600;
+                    vertical-alignment: center;
+                }
+                Pill { text: root.format_label; tone: Tokens.accent; }
+                Rectangle {
+                    horizontal-stretch: 1;
+                    height: 32px;
+                    clip: true;
+                    border-radius: Tokens.radius-button;
+                    background: Tokens.surface-low;
+                    border-width: 1px;
+                    border-color: path-input.has-focus ? Tokens.accent : Tokens.divider;
+                    accessible-role: text-input;
+                    accessible-label: "Archive path";
+                    accessible-value: root.open_path;
+                    path-input := TextInput {
+                        accessible-role: none;
+                        x: Tokens.space(2);
+                        width: parent.width - Tokens.space(4);
+                        height: parent.height;
+                        color: Tokens.text;
+                        font-size: Tokens.font-body;
+                        font-family: Tokens.font-family-mono;
+                        vertical-alignment: center;
+                        single-line: true;
+                        text <=> root.open_path;
+                        edited => { root.open_path = self.text; }
+                        accepted => { root.open_archive(root.open_path); }
+                    }
+                }
+                AetherButton {
+                    text: "Open";
+                    primary: true;
+                    icon: IconKind.folder;
+                    show-icon: true;
+                    clicked => { root.open_archive(root.open_path); }
+                }
+            }
+        }
+
+        // --- error banner --------------------------------------------------
+        if root.error != "" : Rectangle {
+            height: 36px;
+            background: Tokens.danger.with-alpha(0.12);
+            HorizontalLayout {
+                padding-left: Tokens.space(4);
+                padding-right: Tokens.space(2);
+                spacing: Tokens.space(2);
+                Icon { kind: IconKind.info; size: 15px; tint: Tokens.danger; }
+                Text {
+                    text: root.error;
+                    color: Tokens.danger;
+                    font-size: Tokens.font-small;
+                    vertical-alignment: center;
+                    overflow: elide;
+                    horizontal-stretch: 1;
+                }
+                IconButton {
+                    kind: IconKind.close;
+                    label: "Dismiss error";
+                    clicked => { root.error = ""; }
+                }
+            }
+        }
+        Divider {}
+
+        // --- actions -------------------------------------------------------
+        Rectangle {
+            height: 48px;
+            background: Tokens.background;
+            HorizontalLayout {
+                padding-left: Tokens.space(3);
+                padding-right: Tokens.space(3);
+                padding-top: Tokens.space(2);
+                padding-bottom: Tokens.space(2);
+                spacing: Tokens.space(2);
+                AetherButton {
+                    text: "Extract all";
+                    primary: true;
+                    icon: IconKind.download;
+                    show-icon: true;
+                    clicked => { root.extract_all_here(); }
+                }
+                AetherButton {
+                    text: "Extract selected";
+                    clicked => { root.extract_selected_here(); }
+                }
+                AetherButton {
+                    text: "Delete selected";
+                    icon: IconKind.trash;
+                    show-icon: true;
+                    clicked => { root.delete_selected(); }
+                }
+                Rectangle { horizontal-stretch: 1; height: 1px; background: transparent; }
+                Text {
+                    text: "New from folder";
+                    color: Tokens.text-muted;
+                    font-size: Tokens.font-small;
+                    vertical-alignment: center;
+                }
+                Rectangle {
+                    width: 180px;
+                    height: 32px;
+                    clip: true;
+                    border-radius: Tokens.radius-button;
+                    background: Tokens.surface-low;
+                    border-width: 1px;
+                    border-color: folder-input.has-focus ? Tokens.accent : Tokens.divider;
+                    accessible-role: text-input;
+                    accessible-label: "Folder to archive";
+                    accessible-value: root.folder_path;
+                    folder-input := TextInput {
+                        accessible-role: none;
+                        x: Tokens.space(2);
+                        width: parent.width - Tokens.space(4);
+                        height: parent.height;
+                        color: Tokens.text;
+                        font-size: Tokens.font-body;
+                        vertical-alignment: center;
+                        single-line: true;
+                        text <=> root.folder_path;
+                        edited => { root.folder_path = self.text; }
+                        accepted => { root.create_archive(root.folder_path); }
+                    }
+                }
+                AetherButton {
+                    text: "Create .tar.gz";
+                    clicked => { root.create_archive(root.folder_path); }
+                }
+            }
+        }
+        Divider {}
+
+        // --- table header --------------------------------------------------
+        Rectangle {
+            height: 28px;
+            background: Tokens.surface-low;
+            HorizontalLayout {
+                padding-left: Tokens.space(3);
+                padding-right: Tokens.space(3);
+                spacing: Tokens.space(2);
+                Text {
+                    text: "Entry";
+                    horizontal-stretch: 1;
+                    color: Tokens.text-faint;
+                    font-size: Tokens.font-small;
+                    font-weight: 600;
+                    vertical-alignment: center;
+                }
+                Text {
+                    text: "Size";
+                    width: 80px;
+                    color: Tokens.text-faint;
+                    font-size: Tokens.font-small;
+                    font-weight: 600;
+                    horizontal-alignment: right;
+                    vertical-alignment: center;
+                }
+                Text {
+                    text: "Kind";
+                    width: 72px;
+                    color: Tokens.text-faint;
+                    font-size: Tokens.font-small;
+                    font-weight: 600;
+                    vertical-alignment: center;
+                }
+                Text {
+                    text: "Modified";
+                    width: 132px;
+                    color: Tokens.text-faint;
+                    font-size: Tokens.font-small;
+                    font-weight: 600;
+                    vertical-alignment: center;
+                }
+            }
+        }
+        Divider {}
+
+        // --- entries -------------------------------------------------------
+        if root.entries.length == 0 : Rectangle {
+            vertical-stretch: 1;
+            background: Tokens.background;
+            VerticalLayout {
+                alignment: center;
+                spacing: Tokens.space(2);
+                HorizontalLayout {
+                    alignment: center;
+                    Icon { kind: IconKind.archive; size: 30px; tint: Tokens.text-faint; }
+                }
+                Text {
+                    text: "No archive open";
+                    color: Tokens.text-muted;
+                    font-size: Tokens.font-title;
+                    horizontal-alignment: center;
+                }
+                Text {
+                    text: "Paste a .tar, .tar.gz, .tgz or .zip path above and press Open.";
+                    color: Tokens.text-faint;
+                    font-size: Tokens.font-small;
+                    horizontal-alignment: center;
+                }
+            }
+        }
+        if root.entries.length > 0 : Flickable {
+            vertical-stretch: 1;
+            content-width: self.width;
+            content-height: entry-list.preferred-height;
+            entry-list := VerticalLayout {
+                padding-top: Tokens.space(2);
+                padding-bottom: Tokens.space(2);
+                padding-left: Tokens.space(2);
+                padding-right: Tokens.space(2);
+                spacing: 1px;
+                alignment: start;
+                for entry[idx] in root.entries : ArchiveEntryView {
+                    data: entry;
+                    activate => { root.select_entry(idx); }
+                }
+            }
+        }
+
+        Divider {}
+        // --- progress ------------------------------------------------------
+        Rectangle {
+            height: 40px;
+            background: Tokens.background;
+            HorizontalLayout {
+                padding-left: Tokens.space(4);
+                padding-right: Tokens.space(4);
+                padding-top: Tokens.space(2);
+                padding-bottom: Tokens.space(2);
+                spacing: Tokens.space(3);
+                Text {
+                    text: root.progress_text;
+                    color: Tokens.text-muted;
+                    font-size: Tokens.font-small;
+                    vertical-alignment: center;
+                    width: 320px;
+                }
+                Rectangle {
+                    horizontal-stretch: 1;
+                    height: 6px;
+                    border-radius: 3px;
+                    background: Tokens.surface-high;
+                    accessible-role: progress-indicator;
+                    accessible-label: "Archive progress";
+                    accessible-value: root.progress * 100;
+                    Rectangle {
+                        width: parent.width * root.progress;
+                        height: 6px;
+                        border-radius: 3px;
+                        background: Tokens.accent;
+                    }
+                }
+                Pill {
+                    text: Math.round(root.progress * 100) + "%";
+                    tone: root.progress >= 1.0 ? Tokens.success : Tokens.accent;
+                }
+            }
+        }
+        Divider {}
+
+        // --- status --------------------------------------------------------
+        Rectangle {
+            height: 30px;
+            background: Tokens.surface-low;
+            HorizontalLayout {
+                padding-left: Tokens.space(3);
+                padding-right: Tokens.space(3);
+                spacing: Tokens.space(3);
+                SectionLabel { label: "ARCHIVE"; }
+                Text {
+                    text: root.status;
+                    color: Tokens.text-muted;
+                    font-size: Tokens.font-small;
+                    vertical-alignment: center;
+                    overflow: elide;
+                    horizontal-stretch: 1;
+                }
+                Text {
+                    text: root.entry_count + " entries · " + root.selected_count + " selected";
+                    color: Tokens.text-faint;
+                    font-size: Tokens.font-small;
+                    vertical-alignment: center;
+                }
+            }
+        }
+    }
 }
