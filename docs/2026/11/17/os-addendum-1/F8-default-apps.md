@@ -97,7 +97,7 @@ The reference operating systems commonly ship these; decide scope before M3:
 
 | ID | Criterion | Result |
 | --- | --- | --- |
-| DA-AC-01 | Text opens and saves a UTF-16 file and a Windows-1252 file without losing characters | Partial (2026-11-23) — UTF-8 open/save, undo/redo, counts and find/replace are implemented and tested; UTF-16 and CP-1252 decoding are not implemented yet |
+| DA-AC-01 | Text opens and saves a UTF-16 file and a Windows-1252 file without losing characters | **Pass (headless, 2026-11-23)** — encoding detection (UTF-8, UTF-8 BOM, UTF-16 LE/BE, Windows-1252 fallback), round-trip tests keep the file's encoding and bytes; characters outside Windows-1252 promote the file to UTF-8 instead of being lost |
 | DA-AC-02 | Text find and replace works across a 10 MB file with no UI freeze over 1 s | Partial — find/replace (next/all, case toggle, unicode) is implemented and unit-tested; the 10 MB / 1 s performance run needs the device |
 | DA-AC-03 | Calculator produces correct results for a 50-case test set | **Pass (2026-11-23)** — 50-case set in `apps/calculator/tests/acceptance.rs`, all green, plus documented error cases |
 | DA-AC-04 | Images opens each listed format and rotates without losing quality | Pass (headless, 2026-11-23) — png/jpeg/gif/bmp decode tested with generated fixtures; 90° rotation/flip are lossless pixel operations |

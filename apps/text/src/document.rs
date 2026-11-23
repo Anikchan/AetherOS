@@ -57,6 +57,143 @@ impl std::fmt::Display for DocumentError {
 
 impl std::error::Error for DocumentError {}
 
+/// Text file encodings AetherPad reads and writes (DA-AC-01).
+///
+/// Detection order: UTF-8 BOM, UTF-16 BOM, a UTF-16 NUL-byte heuristic, valid
+/// UTF-8, and finally Windows-1252 (the common "ANSI" fallback). Saving writes
+/// back in the encoding the file was opened with, so a round trip does not
+/// change the file's bytes for any character the encoding can represent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Encoding {
+    Utf8,
+    Utf8Bom,
+    Utf16Le,
+    Utf16Be,
+    Windows1252,
+}
+
+impl Encoding {
+    pub fn label(self) -> &'static str {
+        match self {
+            Encoding::Utf8 => "UTF-8",
+            Encoding::Utf8Bom => "UTF-8 BOM",
+            Encoding::Utf16Le => "UTF-16 LE",
+            Encoding::Utf16Be => "UTF-16 BE",
+            Encoding::Windows1252 => "Windows-1252",
+        }
+    }
+
+    /// Pick the encoding for a byte sequence.
+    pub fn detect(bytes: &[u8]) -> Encoding {
+        if bytes.starts_with(&[0xEF, 0xBB, 0xBF]) {
+            return Encoding::Utf8Bom;
+        }
+        if bytes.starts_with(&[0xFF, 0xFE]) {
+            return Encoding::Utf16Le;
+        }
+        if bytes.starts_with(&[0xFE, 0xFF]) {
+            return Encoding::Utf16Be;
+        }
+        // UTF-16 without a BOM: ASCII text produces a NUL in every other byte.
+        if bytes.len() >= 4 && bytes.len() % 2 == 0 {
+            let even_nuls = bytes.iter().step_by(2).filter(|b| **b == 0).count();
+            let odd_nuls = bytes.iter().skip(1).step_by(2).filter(|b| **b == 0).count();
+            let pairs = bytes.len() / 2;
+            if odd_nuls * 4 >= pairs * 3 && even_nuls == 0 {
+                return Encoding::Utf16Le;
+            }
+            if even_nuls * 4 >= pairs * 3 && odd_nuls == 0 {
+                return Encoding::Utf16Be;
+            }
+        }
+        if std::str::from_utf8(bytes).is_ok() {
+            return Encoding::Utf8;
+        }
+        Encoding::Windows1252
+    }
+
+    /// Decode bytes with this encoding (the BOM is removed when present).
+    pub fn decode(self, bytes: &[u8]) -> Result<String, DocumentError> {
+        match self {
+            Encoding::Utf8 => std::str::from_utf8(bytes)
+                .map(ToString::to_string)
+                .map_err(|error| DocumentError::InvalidUtf8(error.to_string())),
+            Encoding::Utf8Bom => {
+                let rest = bytes.strip_prefix(&[0xEF, 0xBB, 0xBF]).unwrap_or(bytes);
+                std::str::from_utf8(rest)
+                    .map(ToString::to_string)
+                    .map_err(|error| DocumentError::InvalidUtf8(error.to_string()))
+            }
+            Encoding::Utf16Le | Encoding::Utf16Be => {
+                let little = self == Encoding::Utf16Le;
+                let mut rest = bytes;
+                if little {
+                    rest = rest.strip_prefix(&[0xFF, 0xFE]).unwrap_or(rest);
+                } else {
+                    rest = rest.strip_prefix(&[0xFE, 0xFF]).unwrap_or(rest);
+                }
+                if rest.len() % 2 != 0 {
+                    return Err(DocumentError::InvalidUtf8(
+                        "truncated UTF-16 sequence".to_string(),
+                    ));
+                }
+                let units: Vec<u16> = rest
+                    .chunks_exact(2)
+                    .map(|pair| {
+                        if little {
+                            u16::from_le_bytes([pair[0], pair[1]])
+                        } else {
+                            u16::from_be_bytes([pair[0], pair[1]])
+                        }
+                    })
+                    .collect();
+                String::from_utf16(&units).map_err(|error| {
+                    DocumentError::InvalidUtf8(format!("invalid UTF-16: {error}"))
+                })
+            }
+            Encoding::Windows1252 => {
+                let (text, _, _) = encoding_rs::WINDOWS_1252.decode(bytes);
+                Ok(text.into_owned())
+            }
+        }
+    }
+
+    /// Encode text for writing. Windows-1252 falls back to UTF-8 when a
+    /// character is not representable, so saving never loses data.
+    pub fn encode(self, text: &str) -> (Vec<u8>, Encoding) {
+        match self {
+            Encoding::Utf8 => (text.as_bytes().to_vec(), Encoding::Utf8),
+            Encoding::Utf8Bom => {
+                let mut bytes = vec![0xEF, 0xBB, 0xBF];
+                bytes.extend_from_slice(text.as_bytes());
+                (bytes, Encoding::Utf8Bom)
+            }
+            Encoding::Utf16Le => {
+                let mut bytes = vec![0xFF, 0xFE];
+                for unit in text.encode_utf16() {
+                    bytes.extend_from_slice(&unit.to_le_bytes());
+                }
+                (bytes, Encoding::Utf16Le)
+            }
+            Encoding::Utf16Be => {
+                let mut bytes = vec![0xFE, 0xFF];
+                for unit in text.encode_utf16() {
+                    bytes.extend_from_slice(&unit.to_be_bytes());
+                }
+                (bytes, Encoding::Utf16Be)
+            }
+            Encoding::Windows1252 => {
+                let (bytes, _, had_errors) = encoding_rs::WINDOWS_1252.encode(text);
+                if had_errors {
+                    (text.as_bytes().to_vec(), Encoding::Utf8)
+                } else {
+                    (bytes.into_owned(), Encoding::Windows1252)
+                }
+            }
+        }
+    }
+}
+
 /// A text buffer with bounded undo/redo history and a saved-state marker.
 #[derive(Debug, Clone)]
 pub struct Document {
@@ -69,6 +206,8 @@ pub struct Document {
     history_limit: usize,
     history_bytes: usize,
     undo_bytes: usize,
+    /// Encoding used the last time this document was read or written.
+    encoding: Encoding,
 }
 
 impl Default for Document {
@@ -89,6 +228,7 @@ impl Document {
             history_limit: DEFAULT_HISTORY_LIMIT,
             history_bytes: DEFAULT_HISTORY_BYTES,
             undo_bytes: 0,
+            encoding: Encoding::Utf8,
         }
     }
 
@@ -418,7 +558,8 @@ impl Document {
 
     // --- persistence ------------------------------------------------------
 
-    /// Read a UTF-8 file (a leading BOM is dropped) into a clean document.
+    /// Read a text file, detecting UTF-8, UTF-16 (LE/BE) or Windows-1252
+    /// (DA-AC-01). The detected encoding is remembered for saving.
     pub fn load(path: impl AsRef<Path>) -> Result<Document, DocumentError> {
         let path = path.as_ref();
         let bytes = fs::read(path).map_err(|error| {
@@ -429,18 +570,29 @@ impl Document {
                 limit: MAX_DOCUMENT_BYTES,
             });
         }
-        let text = String::from_utf8(bytes).map_err(|error| {
-            DocumentError::InvalidUtf8(format!("{} is not valid UTF-8: {error}", path.display()))
+        let encoding = Encoding::detect(&bytes);
+        let text = encoding.decode(&bytes).map_err(|error| match error {
+            DocumentError::InvalidUtf8(message) => DocumentError::InvalidUtf8(format!(
+                "{} cannot be decoded as {}: {message}",
+                path.display(),
+                encoding.label()
+            )),
+            other => other,
         })?;
-        let text = text.strip_prefix('\u{feff}').unwrap_or(&text).to_string();
         let mut doc = Document {
             text: text.clone(),
             path: Some(path.to_path_buf()),
             saved: text,
+            encoding,
             ..Document::new()
         };
         doc.clear_history();
         Ok(doc)
+    }
+
+    /// Encoding this document will be written with.
+    pub fn encoding(&self) -> Encoding {
+        self.encoding
     }
 
     /// Write the current buffer to the document path.
@@ -462,9 +614,11 @@ impl Document {
                 })?;
             }
         }
-        fs::write(&path, self.text.as_bytes()).map_err(|error| {
+        let (bytes, encoding) = self.encoding.encode(&self.text);
+        fs::write(&path, bytes).map_err(|error| {
             DocumentError::Io(format!("cannot write {}: {error}", path.display()))
         })?;
+        self.encoding = encoding;
         self.path = Some(path.clone());
         self.saved = self.text.clone();
         Ok(path)
@@ -818,6 +972,120 @@ mod tests {
         // The whole replace-all is one undo step.
         assert!(doc.undo());
         assert_eq!(doc.text(), "dog Cat catalog");
+    }
+
+    fn temp_file(tag: &str, extension: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "aether-text-encoding-{tag}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        dir.join(format!("sample.{extension}"))
+    }
+
+    #[test]
+    fn detects_supported_encodings() {
+        assert_eq!(Encoding::detect(b"plain ascii"), Encoding::Utf8);
+        assert_eq!(Encoding::detect(&[0xEF, 0xBB, 0xBF, b'h']), Encoding::Utf8Bom);
+        assert_eq!(Encoding::detect(&[0xFF, 0xFE, b'h', 0]), Encoding::Utf16Le);
+        assert_eq!(Encoding::detect(&[0xFE, 0xFF, 0, b'h']), Encoding::Utf16Be);
+        // UTF-16LE without a BOM: ASCII letters with a NUL in every high byte.
+        assert_eq!(Encoding::detect(b"h\0e\0l\0l\0o\0"), Encoding::Utf16Le);
+        // 0xE9 is "é" in Windows-1252 and invalid on its own in UTF-8.
+        assert_eq!(Encoding::detect(&[b'c', b'a', b'f', 0xE9]), Encoding::Windows1252);
+    }
+
+    #[test]
+    fn utf16_le_round_trip_preserves_characters() {
+        // DA-AC-01: open a UTF-16 file without losing characters.
+        let path = temp_file("utf16le", "txt");
+        let original = "Café — naïve \u{1F600} ok\n";
+        let mut bytes = vec![0xFF, 0xFE];
+        for unit in original.encode_utf16() {
+            bytes.extend_from_slice(&unit.to_le_bytes());
+        }
+        fs::write(&path, &bytes).unwrap();
+
+        let mut doc = Document::load(&path).unwrap();
+        assert_eq!(doc.text(), original);
+        assert_eq!(doc.encoding(), Encoding::Utf16Le);
+
+        doc.insert(0, "X").unwrap();
+        doc.save().unwrap();
+        let reloaded = Document::load(&path).unwrap();
+        assert_eq!(reloaded.text(), format!("X{original}"));
+        assert_eq!(reloaded.encoding(), Encoding::Utf16Le, "encoding is preserved");
+        let _ = fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
+    fn utf16_be_round_trip_preserves_characters() {
+        let path = temp_file("utf16be", "txt");
+        let original = "Grüße €5";
+        let mut bytes = vec![0xFE, 0xFF];
+        for unit in original.encode_utf16() {
+            bytes.extend_from_slice(&unit.to_be_bytes());
+        }
+        fs::write(&path, &bytes).unwrap();
+        let mut doc = Document::load(&path).unwrap();
+        assert_eq!(doc.text(), original);
+        let end = doc.char_count();
+        doc.insert(end, "!").unwrap();
+        doc.save().unwrap();
+        assert_eq!(Document::load(&path).unwrap().text(), "Grüße €5!");
+        assert_eq!(Document::load(&path).unwrap().encoding(), Encoding::Utf16Be);
+        let _ = fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
+    fn windows1252_round_trip_keeps_the_same_bytes() {
+        // DA-AC-01: the classic Windows "ANSI" file.
+        let path = temp_file("cp1252", "txt");
+        let bytes = b"caf\xE9 \x80 5\r\n".to_vec(); // "café € 5"
+        fs::write(&path, &bytes).unwrap();
+        let mut doc = Document::load(&path).unwrap();
+        assert_eq!(doc.text(), "café € 5\r\n");
+        assert_eq!(doc.encoding(), Encoding::Windows1252);
+        doc.replace_all("5", "6", true);
+        doc.save().unwrap();
+        assert_eq!(
+            fs::read(&path).unwrap(),
+            b"caf\xE9 \x80 6\r\n".to_vec(),
+            "saving keeps Windows-1252 bytes"
+        );
+        let _ = fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
+    fn unrepresentable_characters_fall_back_to_utf8_instead_of_being_lost() {
+        let path = temp_file("fallback", "txt");
+        fs::write(&path, b"caf\xE9").unwrap();
+        let mut doc = Document::load(&path).unwrap();
+        let end = doc.char_count();
+        doc.insert(end, " 日本語").unwrap();
+        doc.save().unwrap();
+        let reloaded = Document::load(&path).unwrap();
+        assert_eq!(reloaded.text(), "café 日本語");
+        assert_eq!(
+            reloaded.encoding(),
+            Encoding::Utf8,
+            "a non-representable character promotes the file to UTF-8"
+        );
+        let _ = fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
+    fn utf8_bom_is_remembered_and_written_back() {
+        let path = temp_file("bom", "txt");
+        fs::write(&path, [0xEF, 0xBB, 0xBF, b'h', b'i']).unwrap();
+        let doc = Document::load(&path).unwrap();
+        assert_eq!(doc.text(), "hi", "BOM is not part of the text");
+        assert_eq!(doc.encoding(), Encoding::Utf8Bom);
+        let _ = fs::remove_dir_all(path.parent().unwrap());
     }
 
     #[test]

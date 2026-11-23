@@ -476,6 +476,7 @@ impl TextController {
         ui.set_doc_name(SharedString::from(state.doc.name()));
         ui.set_doc_path(SharedString::from(state.doc.display_path()));
         ui.set_status_note(SharedString::from(state.note.clone()));
+        ui.set_encoding_label(SharedString::from(state.doc.encoding().label()));
         ui.set_can_undo(state.doc.can_undo());
         ui.set_can_redo(state.doc.can_redo());
         ui.set_match_count(state.doc.count_matches(&state.find, state.case_sensitive) as i32);

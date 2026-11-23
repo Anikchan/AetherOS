@@ -80,6 +80,7 @@ export component TextApp inherits Window {
     in property <string> doc-name: "Untitled";
     in property <string> doc-path: "Not saved yet";
     in property <string> status-note: "Ready";
+    in property <string> encoding-label: "UTF-8";
     in property <[RecentEntry]> recent: [];
     in property <int> selected-recent: -1;
     in property <bool> can-undo: false;
@@ -285,7 +286,7 @@ export component TextApp inherits Window {
                     }
 
                     Text {
-                        text: "UTF-8 · LF · undo history on";
+                        text: root.encoding-label + " · LF · undo history on";
                         color: Tokens.text-faint;
                         font-size: Tokens.font-small;
                     }

@@ -46,7 +46,7 @@ the window, and a `--render` entry point for evidence screenshots.
 | Task | Crate | Core (tested) | Unit tests | UI test | Screenshot |
 | --- | --- | --- | --- | --- | --- |
 | P4-T08 | `apps/files` | Sandboxed listing, navigation, sorting, search, multi-select, copy/cut/paste, rename, trash, traversal + symlink escape guards | 11 | yes | `app-files.png` |
-| P4-T10 | `apps/text` | Char-indexed buffer, bounded undo/redo, unicode counts, find/replace, UTF-8 load/save, autosave, recent files | 10 | yes | `app-text.png` |
+| P4-T10 | `apps/text` | Char-indexed buffer, bounded undo/redo, unicode counts, find/replace, encoding detection (UTF-8/BOM/UTF-16/CP-1252) with encoding-preserving saves, autosave, recent files | 16 | yes | `app-text.png` |
 | P4-T11 | `apps/calculator` | Recursive-descent evaluator (precedence, right-assoc `^`, functions, typed errors), history, memory | 11 | yes | `app-calculator.png` |
 | P4-T12 | `apps/images` | Decode png/jpeg/gif/bmp, metadata, fit/zoom clamp, lossless rotate/flip, folder order, thumbnail cache | 9 | yes | `app-images.png` |
 | P4-T13 | `apps/documents` | Markdown block+inline parser, line-budget pagination, zoom, search with page mapping, poppler adapter (detect/commands, NotAvailable when absent) | 15 | yes | `app-documents.png`, `app-documents-page2.png` |
@@ -122,7 +122,7 @@ All rendered headlessly with the software renderer (`aether-ui::render`):
 | P4-T06 lock screen | Implemented, headless-verified | greetd/PAM integration is the remaining on-device step |
 | P4-T07 settings | Implemented + verified | "Every setting maps to a file key" shown in the UI and asserted by tests |
 | P4-T08 files | Implemented, verified | Sandbox escape + symlink tests; copy/move/rename/trash on temp trees |
-| P4-T10 AetherPad | Implemented, verified (UTF-8 scope) | Undo/redo, counts, find/replace, save/load round trip; DA-AC-01 UTF-16/CP-1252 and DA-AC-02 10 MB perf remain open |
+| P4-T10 AetherPad | Implemented, verified | **DA-AC-01 Pass**: UTF-16 LE/BE + Windows-1252 detection and round trips preserve characters and bytes; undo/redo, counts, find/replace tested. DA-AC-02's 10 MB / 1 s perf run remains device-gated |
 | P4-T11 Calculator | Implemented, verified | **DA-AC-03 Pass**: 50-case acceptance set; precedence, `^` associativity, domain errors, history cap, memory |
 | P4-T12 Images | Implemented, verified | Decode/metadata/rotate/zoom on generated fixtures |
 | P4-T13 Documents | Implemented, verified (PDF env-gated) | Markdown + pagination + search tested; poppler adapter reports NotAvailable when absent |
