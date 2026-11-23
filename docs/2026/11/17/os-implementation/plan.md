@@ -300,3 +300,16 @@ resume without duplication.
   results recorded in `docs/2026/11/23/results/p4-shell-and-apps.md` when the
   batch work is integrated.
   Evidence: `docs/2026/11/23/results/screenshots/`.
+- 2026-11-23: **S4** P7 + P8 core: `config/` implements the F4 25-key schema
+  with defaults→system→user layering, comment-preserving set, reset (key/file/
+  all), theme token reload with last-valid semantics, keybinding normalization
+  and conflict detection, Lua hooks (200 ms limit, auto-disable, real `lua`
+  run and timeout verified), F15 feature packs with cost preview and idle
+  budget, and `aetherctl` (config/theme/keybindings/hooks/features/apps/
+  version). `installer/` implements lsblk/hardware detection, F5 pre-checks,
+  alongside/erase dry-run planning (free space, NTFS shrink, swap, boot menu),
+  systemd-boot entries and uninstall planning. Verified: 57 tests pass.
+  lifecycled processes `aetherctl apps suspend|quit` control commands.
+  P7-T05 is deferred by the roadmap; P8-T01 (live image) and P8-T05 (Secure
+  Boot) remain pending. Evidence:
+  `docs/2026/11/23/results/p7-p8-config-installer.md`.

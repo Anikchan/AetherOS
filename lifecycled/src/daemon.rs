@@ -202,6 +202,7 @@ pub struct Daemon {
     log: Vec<LogEntry>,
     kills: Vec<KillRecord>,
     now: Instant,
+    control_offset: u64,
 }
 
 impl Daemon {
@@ -221,6 +222,7 @@ impl Daemon {
             log: Vec::new(),
             kills: Vec::new(),
             now: Instant::now(),
+            control_offset: 0,
         }
     }
 
@@ -520,6 +522,87 @@ impl Daemon {
 
     pub fn policy_mut(&mut self) -> &mut LifecyclePolicy {
         &mut self.policy
+    }
+
+    /// Apply the background policy written by `aether-powerd`.
+    pub fn apply_background_policy(
+        &mut self,
+        grace: Duration,
+        hibernate_after: Duration,
+        source: PowerSourceKind,
+    ) {
+        self.policy.set_source(source);
+        self.policy.set_background_policy(grace, hibernate_after);
+        self.push_log(
+            None,
+            format!(
+                "background policy applied: grace={:?} hibernate={:?} source={source:?}",
+                grace, hibernate_after
+            ),
+        );
+    }
+
+    /// User-requested suspend (`aetherctl apps suspend`).
+    pub fn suspend_app(&mut self, id: &AppId, now: Instant) -> bool {
+        self.now = now;
+        let Some(state) = self.state_of(id) else {
+            return false;
+        };
+        if !state.is_alive() {
+            return false;
+        }
+        if state.is_on_screen() {
+            self.set_state(id, AppState::Background, StateReason::WindowHidden);
+        }
+        self.set_state(id, AppState::Suspended, StateReason::UserQuit);
+        self.state_of(id) == Some(AppState::Suspended)
+    }
+
+    /// User-requested quit (`aetherctl apps quit`).
+    pub fn quit_app(&mut self, id: &AppId, now: Instant) -> bool {
+        self.now = now;
+        if self.state_of(id).is_none() {
+            return false;
+        }
+        self.handle(Event::UserQuit(id.clone()), now);
+        self.state_of(id).is_none()
+    }
+
+    /// Read append-only control commands written by `aetherctl`.
+    /// Format: one JSON object per line, `{"command":"suspend","app":"..."}`.
+    pub fn process_control_file(&mut self, path: &Path, now: Instant) -> usize {
+        let Ok(text) = fs::read_to_string(path) else {
+            return 0;
+        };
+        let mut handled = 0;
+        let mut cursor = 0u64;
+        for line in text.lines() {
+            let start = cursor;
+            cursor += line.len() as u64 + 1;
+            if start < self.control_offset {
+                continue;
+            }
+            #[derive(Deserialize)]
+            struct Control {
+                command: String,
+                app: String,
+            }
+            let Ok(command) = serde_json::from_str::<Control>(line) else {
+                continue;
+            };
+            let Ok(id) = AppId::new(command.app) else {
+                continue;
+            };
+            let ok = match command.command.as_str() {
+                "suspend" => self.suspend_app(&id, now),
+                "quit" => self.quit_app(&id, now),
+                _ => false,
+            };
+            self.push_log(Some(&id), format!("control {} ok={ok}", command.command));
+            handled += 1;
+        }
+        self.control_offset = cursor;
+        handled
     }
 
     pub fn timers(&self) -> impl Iterator<Item = ((&AppId, TimerKind), &Instant)> {

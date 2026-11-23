@@ -220,6 +220,15 @@ impl LifecyclePolicy {
         self.source = source;
     }
 
+    /// Apply a background policy received from `aether-powerd`.
+    pub fn set_background_policy(&mut self, grace: Duration, hibernate_after: Duration) {
+        match self.source {
+            PowerSourceKind::Ac => self.config.grace_period_ac = grace,
+            PowerSourceKind::Battery => self.config.grace_period_battery = grace,
+        }
+        self.config.hibernate_after = hibernate_after;
+    }
+
     pub fn set_pressure_level(&mut self, level: PressureLevel) {
         self.last_level = level;
     }

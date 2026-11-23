@@ -118,9 +118,16 @@ fn build_daemon(config: RuntimeConfig) -> Daemon {
 fn run_loop(daemon: &mut Daemon) -> ! {
     let mut last_pressure = PressureLevel::Normal;
     let psi = aether_lifecycled::pressure::PsiReader::system();
+    let runtime = std::env::var_os("XDG_RUNTIME_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("/run/user/1000"))
+        .join("aether");
+    let control_path = runtime.join("lifecycled-control.jsonl");
     loop {
         let now = Instant::now();
         daemon.poll_timers(now);
+        // Commands from `aetherctl apps suspend|quit`.
+        daemon.process_control_file(&control_path, now);
 
         let level = psi.level();
         if level != last_pressure {

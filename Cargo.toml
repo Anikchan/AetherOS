@@ -10,6 +10,7 @@ members = [
     "ui",
     "lifecycled",
     "powerd",
+    "config",
     "installer",
     "apps/text",
     "apps/calculator",
@@ -25,6 +26,7 @@ members = [
     "apps/pkg",
     "apps/sandbox",
     "apps/runner",
+    "apps/store",
 ]
 
 [workspace.package]
