@@ -13,8 +13,10 @@ use std::collections::VecDeque;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-/// Hard cap for one document (4 MiB of UTF-8), enforced on every edit.
-pub const MAX_DOCUMENT_BYTES: usize = 4 * 1024 * 1024;
+/// Hard cap for one document (16 MiB of UTF-8), enforced on every edit. The
+/// cap covers DA-AC-02's 10 MB file with headroom while keeping a stray binary
+/// file from being loaded as text.
+pub const MAX_DOCUMENT_BYTES: usize = 16 * 1024 * 1024;
 
 /// Default number of undo snapshots kept.
 pub const DEFAULT_HISTORY_LIMIT: usize = 200;
@@ -192,6 +194,24 @@ impl Encoding {
             }
         }
     }
+}
+
+/// Count non-overlapping occurrences of `needle` in `hay` in one pass.
+fn count_in(hay: &[char], needle: &[char]) -> usize {
+    if needle.is_empty() || hay.len() < needle.len() {
+        return 0;
+    }
+    let mut index = 0;
+    let mut count = 0;
+    while index + needle.len() <= hay.len() {
+        if hay[index..index + needle.len()] == *needle {
+            count += 1;
+            index += needle.len();
+        } else {
+            index += 1;
+        }
+    }
+    count
 }
 
 /// A text buffer with bounded undo/redo history and a saved-state marker.
@@ -476,14 +496,22 @@ impl Document {
     }
 
     /// Number of matches for the current query.
+    /// Count non-overlapping matches in one pass (DA-AC-02: a 10 MB file must
+    /// be searchable without freezing, so this must not call [`Self::find`] in
+    /// a loop — that would re-collect the text for every match).
     pub fn count_matches(&self, needle: &str, case_sensitive: bool) -> usize {
-        let mut cursor = 0;
-        let mut count = 0;
-        while let Some((_, end)) = self.find(needle, cursor, case_sensitive) {
-            count += 1;
-            cursor = end.max(cursor + 1);
+        if needle.is_empty() {
+            return 0;
         }
-        count
+        let hay: Vec<char> = self.text.chars().collect();
+        if case_sensitive {
+            let needle_chars: Vec<char> = needle.chars().collect();
+            count_in(&hay, &needle_chars)
+        } else {
+            let (folded, _) = fold_with_map(&hay);
+            let needle_chars: Vec<char> = needle.chars().flat_map(char::to_lowercase).collect();
+            count_in(&folded, &needle_chars)
+        }
     }
 
     /// Replace the first match at or after `from_char`; returns the char index
@@ -1183,4 +1211,65 @@ mod tests {
         assert_eq!(reloaded.len(), 2);
         let _ = fs::remove_dir_all(dir);
     }
+    #[test]
+    fn find_and_replace_ten_megabyte_file_within_a_second() {
+        // DA-AC-02: find/replace across ~10 MB with no UI freeze over 1 s.
+        let line = "lorem ipsum dolor sit amet 0123456789 aether\n"; // 44 bytes
+        let repeats = (10 * 1024 * 1024) / line.len() + 1;
+        let text = line.repeat(repeats);
+        assert!(text.len() > 10 * 1024 * 1024);
+        let mut doc = Document::from_text(text);
+        assert_eq!(doc.byte_len(), repeats * line.len());
+
+        // The 1 s budget is a release-build guarantee; a debug build runs the
+        // same code 10-20x slower, so only correctness is asserted there.
+        let budget = if cfg!(debug_assertions) {
+            std::time::Duration::from_secs(60)
+        } else {
+            std::time::Duration::from_secs(1)
+        };
+        let start = std::time::Instant::now();
+        let matches = doc.count_matches("ipsum", true);
+        let counted_in = start.elapsed();
+        assert_eq!(matches, repeats);
+        println!("DA-AC-02 count_matches 10 MB: {counted_in:?} ({matches} matches)");
+        assert!(counted_in < budget, "count took {counted_in:?}");
+
+        let start = std::time::Instant::now();
+        let replaced = doc.replace_all("ipsum", "IPSUM", true);
+        let replaced_in = start.elapsed();
+        assert_eq!(replaced, repeats);
+        println!("DA-AC-02 replace_all 10 MB: {replaced_in:?} ({replaced} replacements)");
+        assert!(replaced_in < budget, "replace all took {replaced_in:?}");
+        assert_eq!(doc.count_matches("IPSUM", true), repeats);
+        assert_eq!(doc.count_matches("ipsum", true), 0);
+    }
+
+    #[test]
+    fn ten_megabyte_file_loads_and_saves_within_a_second() {
+        let path = temp_file("large", "txt");
+        let line = "0123456789abcdefghijklmnopqrstuvwxyz\n"; // 37 bytes
+        let body = line.repeat((10 * 1024 * 1024) / line.len() + 1);
+        fs::write(&path, body.as_bytes()).unwrap();
+
+        let start = std::time::Instant::now();
+        let mut doc = Document::load(&path).unwrap();
+        let loaded_in = start.elapsed();
+        let budget = if cfg!(debug_assertions) {
+            std::time::Duration::from_secs(60)
+        } else {
+            std::time::Duration::from_secs(1)
+        };
+        println!("DA-AC-02 load 10 MB: {loaded_in:?}");
+        assert!(loaded_in < budget, "load took {loaded_in:?}");
+        assert_eq!(doc.text().len(), body.len());
+
+        let start = std::time::Instant::now();
+        doc.save().unwrap();
+        let saved_in = start.elapsed();
+        println!("DA-AC-02 save 10 MB: {saved_in:?}");
+        assert!(saved_in < budget, "save took {saved_in:?}");
+        let _ = fs::remove_dir_all(path.parent().unwrap());
+    }
+
 }
