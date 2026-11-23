@@ -103,7 +103,7 @@ The reference operating systems commonly ship these; decide scope before M3:
 | DA-AC-04 | Images opens each listed format and rotates without losing quality | Pass (headless, 2026-11-23) — png/jpeg/gif/bmp decode tested with generated fixtures; 90° rotation/flip are lossless pixel operations |
 | DA-AC-05 | Documents opens a 200-page PDF and searches it | Blocked — the poppler adapter is implemented and reports `NotAvailable` when `pdftoppm`/`pdftotext` are missing; no PDF tooling on the dev host |
 | DA-AC-06 | Player plays the test files for each supported format | Blocked — GStreamer is not installed on the dev host; transport/playlist logic is tested with the mock engine |
-| DA-AC-07 | Terminal runs the default shell with copy and paste, and resizing works | Partial — VT parser and a real forkpty session (spawn/read/write/resize) are tested on unix; copy/paste UI and an event-loop pump are pending |
+| DA-AC-07 | Terminal runs the default shell with copy and paste, and resizing works | Partial — VT parser, a real forkpty session (spawn/read/write/resize) and copy/paste model hooks are implemented and tested; the host clipboard (Slint exposes no clipboard API) and the event-loop pump belong to the layer-shell host (P3-T02) |
 | DA-AC-08 | Archive extracts ZIP and TAR test files with correct permissions | **Pass (headless, 2026-11-23)** — zip/tar extraction, creation, permissions and delete round-trip tested; `../` entries rejected in both formats |
 | DA-AC-09 | Each default app's cold launch ≤ 500 ms (F11 measurement) | Not measured — needs the device (no interactive host yet) |
 | DA-AC-10 | With all default apps closed, the apps use 0 MB and 0% CPU | Not measured — needs the device |

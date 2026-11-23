@@ -130,6 +130,36 @@ impl TerminalController {
         state.tabs[state.active].vt.screen_text()
     }
 
+    /// Text for the host clipboard: the visible screen with trailing blanks
+    /// trimmed from every line (DA-AC-07 copy).
+    pub fn copy_screen(&self) -> String {
+        trim_screen(&self.screen_text())
+    }
+
+    /// Paste text into the active tab. A terminal line break becomes a space so
+    /// a pasted block cannot execute commands by accident. Returns `true` when
+    /// the text went to the attached PTY, `false` when it was appended to the
+    /// prompt line instead.
+    pub fn paste(&self, text: &str) -> bool {
+        let clean = sanitise_paste(text);
+        if clean.is_empty() {
+            return false;
+        }
+        let mut state = self.state.borrow_mut();
+        let active = state.active;
+        if let Some(session) = state.tabs[active].pty.as_mut() {
+            if session.write(clean.as_bytes()).is_ok() {
+                state.note = format!("pasted {} bytes into the shell", clean.len());
+                return true;
+            }
+        }
+        state.prompt.push_str(&clean);
+        state.note = format!("pasted {} characters into the prompt", clean.len());
+        drop(state);
+        self.sync();
+        false
+    }
+
     pub fn scrollback_len(&self) -> usize {
         let state = self.state.borrow();
         state.tabs[state.active].vt.scrollback_len()
@@ -585,3 +615,43 @@ test session::tests::argv_is_program_then_arguments ... \x1b[32mok\x1b[0m\r\n\
 \x1b[2m  --> apps/terminal/src/session.rs:42:9\x1b[0m\r\n\
 \r\n\
 \x1b[32maether@aether\x1b[0m:\x1b[34m~/Projects/aetheros\x1b[0m$ \x1b[1m█\x1b[0m";
+
+/// Clipboard text for the visible screen: trailing blanks removed per line and
+/// trailing empty lines dropped, so a copy never pastes a wall of spaces.
+pub fn trim_screen(text: &str) -> String {
+    text.lines()
+        .map(str::trim_end)
+        .collect::<Vec<_>>()
+        .join("\n")
+        .trim_end()
+        .to_string()
+}
+
+/// Normalise pasted text for a terminal: line breaks become spaces so a pasted
+/// block cannot execute a command on its own (DA-AC-07 paste guard).
+pub fn sanitise_paste(text: &str) -> String {
+    text.replace("\r\n", " ")
+        .replace(['\r', '\n'], " ")
+        .trim_end()
+        .to_string()
+}
+
+#[cfg(test)]
+mod clipboard_tests {
+    use super::*;
+
+    #[test]
+    fn trim_screen_drops_trailing_blanks_and_empty_lines() {
+        assert_eq!(trim_screen("a    \nb\n\n\n"), "a\nb");
+        assert_eq!(trim_screen("  indented\n"), "  indented");
+        assert_eq!(trim_screen(""), "");
+    }
+
+    #[test]
+    fn paste_cannot_smuggle_a_line_break() {
+        assert_eq!(sanitise_paste("ls -la\r\nrm -rf /\n"), "ls -la rm -rf /");
+        assert_eq!(sanitise_paste("multi\nline"), "multi line");
+        assert_eq!(sanitise_paste("   "), "");
+        assert_eq!(sanitise_paste("plain"), "plain");
+    }
+}

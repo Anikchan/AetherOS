@@ -127,7 +127,7 @@ All rendered headlessly with the software renderer (`aether-ui::render`):
 | P4-T12 Images | Implemented, verified | Decode/metadata/rotate/zoom on generated fixtures |
 | P4-T13 Documents | Implemented, verified (PDF env-gated) | Markdown + pagination + search tested; poppler adapter reports NotAvailable when absent |
 | P4-T14 Player | Implemented, verified (audio env-gated) | Playlist/shuffle/repeat/transport tested; GStreamer shell-out is the adapter, mock in tests |
-| P4-T15 Terminal | Implemented, verified (host-gated PTY) | VT parser tested; forkpty session tested on unix, not pumped from an event loop yet |
+| P4-T15 Terminal | Implemented, verified (host-gated PTY) | VT parser, forkpty session and copy/paste model hooks tested; host clipboard and event-loop pump arrive with the layer-shell host |
 | P4-T16 Calendar/Clock | Implemented, verified | Leap year, month navigation, event CRUD + JSON round trip, hand angles, stopwatch/timer |
 | P4-T17 Archive | Implemented, verified | Malicious tar/zip member rejection, extract/create/delete round trip |
 | P4-T18 browser core | Implemented, verified | Tabs/bookmarks/history/downloads/private/session tested; WebKitGTK embedding awaits graphics bring-up |
