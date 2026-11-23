@@ -61,8 +61,8 @@ the window, and a `--render` entry point for evidence screenshots.
 Commands and results:
 
 ```text
-cargo test --workspace --exclude aether-compositor   # 66 test binaries, 510 cases, 0 failures
-cargo test -p aether-ui -p aether-shell              # 5 + 52 unit, 1 interaction
+cargo test --workspace --exclude aether-compositor   # 66 test binaries, 513 cases, 0 failures
+cargo test -p aether-ui -p aether-shell              # 5 + 55 unit, 1 interaction
 cargo test -p aether-text -p aether-calculator -p aether-terminal
 cargo test -p aether-files -p aether-archive -p aether-images
 cargo test -p aether-calendar -p aether-documents -p aether-player
@@ -71,10 +71,10 @@ cargo run -p <crate> -- --render docs/2026/11/23/results/screenshots
 ```
 
 The 66 binaries include 23 empty doc-test runs; P4 contributes 35 test binaries
-and **232 cases**. The exclusion is only for the macOS dev host (Smithay links
+and **235 cases**. The exclusion is only for the macOS dev host (Smithay links
 `libxkbcommon`); CI installs it and runs the full workspace.
 
-P4 totals: **221 unit/acceptance tests + 11 headless interaction tests (232
+P4 totals: **224 unit/acceptance tests + 11 headless interaction tests (235
 cases)**, all green. The `aether-compositor` crate is excluded on the macOS host
 because Smithay links `libxkbcommon`, which only the Linux CI image provides.
 
@@ -181,7 +181,21 @@ test:
 | Archive extraction traversed a symlink already in the destination | `prepare_target` walks each component without following links; tar + zip regression tests |
 | Images missed WebP/TIFF | Both decoder features enabled and tested, so DA-AC-04 covers all six formats |
 
-Non-blocking items also fixed: settings toggles now update live state and
-services (dotted keys mapped to short ids), the password field is no longer
-cleared by unrelated syncs, the player demo uses a generic home path, and a
-misleading test name was corrected.
+Non-blocking items also fixed:
+
+- **F4 layering** (CUS-01): `SettingsStore` now reads the user layer, then
+  `/etc/aether`, then `/usr/share/aether/defaults`; saves always go to the user
+  layer, so a shipped default can never be modified (tested).
+- Settings toggles update live state and services (dotted keys mapped to short
+  ids); the password field is no longer cleared by unrelated syncs.
+- Focus banner shows the real window (`09:00–17:00`) instead of a hardcoded
+  "18:00"; the dock/notification labels come from the schedule.
+- Files caches the `df` label per folder instead of spawning it on every
+  selection change.
+- Archive: selecting a folder extracts its children and deletes the whole
+  subtree (tested), not only the folder entry.
+- Services skip power supplies without a `type` file instead of aborting the
+  battery scan; the terminal's `wait()` marks the session closed and `Drop`
+  reaps without blocking forever; app launch goes through `sh -c` so quoted
+  `.desktop` Exec arguments survive.
+- Player demo paths are generic; a misnamed test was corrected.

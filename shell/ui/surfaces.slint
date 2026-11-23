@@ -620,6 +620,7 @@ export component ControlCenter inherits Rectangle {
     in property <bool> bluetooth: true;
     in property <bool> focus-on: false;
     in property <bool> night-light: false;
+    in property <string> focus-label: "";
     in-out property <float> volume: 0.62;
     in-out property <float> brightness: 0.8;
     in property <int> battery: 84;
@@ -677,7 +678,7 @@ export component ControlCenter inherits Rectangle {
             spacing: Tokens.space(2);
             QuickTile {
                 width: 150px;
-                title: "Focus"; subtitle: root.focus-on ? "Until 18:00" : "Off";
+                title: "Focus"; subtitle: root.focus-on ? root.focus-label : "Off";
                 icon: root.focus-on ? IconKind.moon : IconKind.bell;
                 active: root.focus-on; label: "Focus";
                 toggled => { root.toggled("focus", !root.focus-on); }
@@ -1181,6 +1182,7 @@ export component ShellRoot inherits Window {
     in-out property <bool> wifi: true;
     in-out property <bool> bluetooth: true;
     in-out property <bool> focus-on: false;
+    in-out property <string> focus-label: "";
     in-out property <bool> night-light: false;
     in-out property <bool> charging: false;
     in-out property <float> volume: 0.62;
@@ -1351,6 +1353,7 @@ export component ShellRoot inherits Window {
         wifi: root.wifi;
         bluetooth: root.bluetooth;
         focus-on: root.focus-on;
+        focus-label: root.focus-label;
         night-light: root.night-light;
         volume: root.volume;
         brightness: root.brightness;

@@ -274,11 +274,17 @@ mod unix {
             Ok(())
         }
 
-        /// Reap the child if it already exited.
+        /// Reap the child if it already exited. Marks the session closed so
+        /// `Drop` never signals a pid that the OS may have recycled.
         pub fn wait(&mut self) -> Option<i32> {
+            if self.closed {
+                return None;
+            }
             let mut status: c_int = 0;
             let result = unsafe { libc::waitpid(self.child, &mut status, libc::WNOHANG) };
             if result == self.child {
+                self.closed = true;
+                let _ = unsafe { libc::close(self.master) };
                 Some(status)
             } else {
                 None
@@ -295,8 +301,14 @@ mod unix {
             unsafe {
                 libc::kill(self.child, libc::SIGHUP);
                 libc::kill(self.child, libc::SIGKILL);
+                // Reap without blocking forever if the child ignores signals.
                 let mut status: c_int = 0;
-                libc::waitpid(self.child, &mut status, 0);
+                for _ in 0..50 {
+                    if libc::waitpid(self.child, &mut status, libc::WNOHANG) != 0 {
+                        break;
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(10));
+                }
                 libc::close(self.master);
             }
         }

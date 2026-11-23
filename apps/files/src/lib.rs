@@ -57,12 +57,15 @@ pub struct FilesState {
     pub back: Vec<PathBuf>,
     pub forward: Vec<PathBuf>,
     pub status: String,
+    /// Cached `df` label; refreshed on navigation, not on every selection.
+    pub free_space: String,
 }
 
 impl FilesState {
     /// State rooted at the sandbox root.
     pub fn root(sandbox: Sandbox) -> FilesState {
         let cwd = sandbox.root().to_path_buf();
+        let free_space = free_space_label(sandbox.root());
         FilesState {
             cwd,
             sandbox,
@@ -76,6 +79,7 @@ impl FilesState {
             back: Vec::new(),
             forward: Vec::new(),
             status: String::new(),
+            free_space,
         }
     }
 
@@ -92,8 +96,12 @@ impl FilesState {
             self.back.push(self.cwd.clone());
             self.forward.clear();
         }
+        let changed = self.cwd != dir;
         self.cwd = dir;
         self.selection.clear();
+        if changed {
+            self.free_space = free_space_label(self.sandbox.root());
+        }
         self.reload()
     }
 
@@ -267,7 +275,7 @@ fn refresh(ui: &FilesApp, state: &FilesState) {
             .unwrap_or_default()
             .into(),
     );
-    ui.set_free_space(free_space_label(state.sandbox.root()).into());
+    ui.set_free_space(state.free_space.clone().into());
 }
 
 // --- actions -------------------------------------------------------------

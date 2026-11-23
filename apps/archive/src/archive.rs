@@ -291,7 +291,11 @@ fn extract_tar(
         let raw = String::from_utf8_lossy(&item.path_bytes()).into_owned();
         let relative = safe_entry_path(&raw)?;
         if let Some(wanted) = wanted {
-            if !wanted.iter().any(|name| name == &normalize_name(&raw)) {
+            let normalized = normalize_name(&raw);
+            if !wanted
+                .iter()
+                .any(|name| *name == normalized || normalized.starts_with(&format!("{name}/")))
+            {
                 continue;
             }
         }
@@ -339,7 +343,11 @@ fn extract_zip(
         let raw = item.name().to_string();
         let relative = safe_entry_path(&raw)?;
         if let Some(wanted) = wanted {
-            if !wanted.iter().any(|name| name == &normalize_name(&raw)) {
+            let normalized = normalize_name(&raw);
+            if !wanted
+                .iter()
+                .any(|name| *name == normalized || normalized.starts_with(&format!("{name}/")))
+            {
                 continue;
             }
         }
@@ -463,7 +471,14 @@ pub fn delete_entries(
 ) -> Result<usize, ArchiveError> {
     let format = detect_format(archive)?;
     let doomed: Vec<String> = names.iter().map(|name| normalize_name(name)).collect();
-    let keep = |name: &str| !doomed.iter().any(|entry| entry == &normalize_name(name));
+    // Selecting a folder deletes everything inside it, not only the folder
+    // entry itself.
+    let keep = |name: &str| {
+        let normalized = normalize_name(name);
+        !doomed.iter().any(|entry| {
+            normalized == *entry || normalized.starts_with(&format!("{entry}/"))
+        })
+    };
     let (_, entries) = list(archive)?;
     let total: u64 = entries
         .iter()
@@ -1055,6 +1070,41 @@ mod tests {
 
         let _ = fs::remove_dir_all(&root);
         let _ = fs::remove_dir_all(&outside);
+    }
+
+    #[test]
+    fn selecting_a_folder_extracts_its_children() {
+        let root = fixture();
+        let zip_path = root.join("tree.zip");
+        write_test_zip(
+            &zip_path,
+            &[("dir/one.txt", b"1"), ("dir/sub/two.txt", b"2"), ("other.txt", b"3")],
+        );
+        let dest = root.join("dest");
+        let wanted = vec!["dir".to_string()];
+        let extracted = extract_selected(&zip_path, &dest, &wanted, &mut |_, _| {}).unwrap();
+        assert_eq!(extracted, 2, "both files under the selected folder");
+        assert!(dest.join("dir/one.txt").exists());
+        assert!(dest.join("dir/sub/two.txt").exists());
+        assert!(!dest.join("other.txt").exists());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn selecting_a_folder_for_deletion_removes_its_children() {
+        let root = fixture();
+        let zip_path = root.join("tree.zip");
+        write_test_zip(
+            &zip_path,
+            &[("dir/one.txt", b"1"), ("dir/two.txt", b"2"), ("keep.txt", b"3")],
+        );
+        let removed = delete_entries(&zip_path, &["dir".to_string()], &mut |_, _| {}).unwrap();
+        assert!(removed >= 1);
+        let (_, entries) = list(&zip_path).unwrap();
+        let names: Vec<&str> = entries.iter().map(|entry| entry.path.as_str()).collect();
+        assert!(!names.iter().any(|name| name.starts_with("dir")), "got {names:?}");
+        assert!(names.contains(&"keep.txt"));
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]

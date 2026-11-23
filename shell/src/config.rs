@@ -241,27 +241,61 @@ pub fn render_value(value: &toml::Value) -> String {
 /// Layered settings store rooted at the user config directory.
 #[derive(Debug, Clone)]
 pub struct SettingsStore {
+    /// User layer: the only layer that is ever written.
     root: PathBuf,
+    /// Read-only layers in precedence order: system defaults, then `/etc`.
+    layers: Vec<PathBuf>,
 }
 
 impl SettingsStore {
     pub fn new(root: impl Into<PathBuf>) -> SettingsStore {
-        SettingsStore { root: root.into() }
+        SettingsStore {
+            root: root.into(),
+            layers: Vec::new(),
+        }
     }
 
-    /// `$XDG_CONFIG_HOME/aether` or `~/.config/aether`.
-    pub fn at_default_location() -> SettingsStore {
-        if let Ok(xdg) = std::env::var("XDG_CONFIG_HOME") {
-            if !xdg.is_empty() {
-                return SettingsStore::new(Path::new(&xdg).join("aether"));
-            }
+    /// User layer plus read-only layers (highest precedence first). Saves always
+    /// go to the user layer, so a system default can never be modified.
+    pub fn with_layers(root: impl Into<PathBuf>, layers: Vec<PathBuf>) -> SettingsStore {
+        SettingsStore {
+            root: root.into(),
+            layers,
         }
-        let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
-        SettingsStore::new(Path::new(&home).join(".config").join("aether"))
+    }
+
+    /// F4 layering: `~/.config/aether` (user), `/etc/aether` (system overrides),
+    /// `/usr/share/aether/defaults` (shipped defaults). Later layers lose.
+    pub fn at_default_location() -> SettingsStore {
+        let user = if let Ok(xdg) = std::env::var("XDG_CONFIG_HOME") {
+            if !xdg.is_empty() {
+                Path::new(&xdg).join("aether")
+            } else {
+                Path::new(&std::env::var("HOME").unwrap_or_else(|_| ".".into()))
+                    .join(".config")
+                    .join("aether")
+            }
+        } else {
+            Path::new(&std::env::var("HOME").unwrap_or_else(|_| ".".into()))
+                .join(".config")
+                .join("aether")
+        };
+        SettingsStore::with_layers(
+            user,
+            vec![
+                PathBuf::from("/etc/aether"),
+                PathBuf::from("/usr/share/aether/defaults"),
+            ],
+        )
     }
 
     pub fn root(&self) -> &Path {
         &self.root
+    }
+
+    /// Read-only layers in precedence order.
+    pub fn layers(&self) -> &[PathBuf] {
+        &self.layers
     }
 
     fn file_path(&self, def: &SettingDef) -> PathBuf {
@@ -275,29 +309,13 @@ impl SettingsStore {
     }
 
     fn load_def(&self, def: &SettingDef) -> Result<Option<toml::Value>, String> {
-        let path = self.file_path(def);
-        let text = match fs::read_to_string(&path) {
-            Ok(text) => text,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-            Err(error) => return Err(format!("cannot read {}: {error}", path.display())),
-        };
-        let table: toml::Table = match toml::from_str(&text) {
-            Ok(table) => table,
-            Err(error) => {
-                return Err(format!(
-                    "{} is not valid TOML ({error}); keeping the last valid configuration",
-                    path.display()
-                ))
-            }
-        };
-        let mut current = toml::Value::Table(table);
-        for segment in def.key.split('.') {
-            match current.get(segment) {
-                Some(value) => current = value.clone(),
-                None => return Ok(None),
+        // Highest precedence first: user layer, then each read-only layer.
+        for base in std::iter::once(&self.root).chain(self.layers.iter()) {
+            if let Some(value) = read_key_in(&base.join(def.file), def)? {
+                return Ok(Some(value));
             }
         }
-        Ok(Some(current))
+        Ok(None)
     }
 
     /// Write one key atomically. Nested keys are created as tables.
@@ -351,6 +369,30 @@ impl SettingsStore {
         self.save(key, toml::Value::Boolean(next))?;
         Ok(next)
     }
+}
+
+/// Read `def.key` from one TOML file. A missing file or key yields `None`; an
+/// invalid file is an error so the caller never silently loses a layer.
+fn read_key_in(path: &Path, def: &SettingDef) -> Result<Option<toml::Value>, String> {
+    let text = match fs::read_to_string(path) {
+        Ok(text) => text,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(format!("cannot read {}: {error}", path.display())),
+    };
+    let table: toml::Table = toml::from_str(&text).map_err(|error| {
+        format!(
+            "{} is not valid TOML ({error}); keeping the last valid configuration",
+            path.display()
+        )
+    })?;
+    let mut current = toml::Value::Table(table);
+    for segment in def.key.split('.') {
+        match current.get(segment) {
+            Some(value) => current = value.clone(),
+            None => return Ok(None),
+        }
+    }
+    Ok(Some(current))
 }
 
 fn set_nested(table: &mut toml::Table, path: &[&str], value: toml::Value) {
@@ -449,6 +491,56 @@ mod tests {
         let text = fs::read_to_string(root.join("theme/tokens.toml")).unwrap();
         assert!(text.contains("[theme]"));
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn layers_apply_in_precedence_and_saves_go_to_the_user_layer() {
+        let user = temp_root("layer-user");
+        let system = temp_root("layer-system");
+        let shipped = temp_root("layer-shipped");
+        fs::create_dir_all(system.join("theme")).unwrap();
+        fs::create_dir_all(shipped.join("theme")).unwrap();
+        // Shipped default, system override, then a user override.
+        fs::write(
+            shipped.join("theme/tokens.toml"),
+            "[theme]\nappearance = \"light\"\neffects-tier = \"minimal\"\n",
+        )
+        .unwrap();
+        fs::write(
+            system.join("theme/tokens.toml"),
+            "[theme]\nappearance = \"dark\"\n",
+        )
+        .unwrap();
+
+        let store = SettingsStore::with_layers(&user, vec![system.clone(), shipped.clone()]);
+        assert_eq!(
+            store.load("theme.appearance").unwrap(),
+            Some(toml::Value::String("dark".into())),
+            "the system layer beats the shipped default"
+        );
+        assert_eq!(
+            store.load("theme.effects-tier").unwrap(),
+            Some(toml::Value::String("minimal".into())),
+            "a key missing from the system layer falls back to the shipped one"
+        );
+
+        // Saving writes the user layer only and then wins over both.
+        store
+            .save("theme.appearance", toml::Value::String("auto".into()))
+            .unwrap();
+        assert!(user.join("theme/tokens.toml").exists());
+        assert_eq!(
+            fs::read_to_string(system.join("theme/tokens.toml")).unwrap(),
+            "[theme]\nappearance = \"dark\"\n",
+            "system files are never modified"
+        );
+        assert_eq!(
+            store.load("theme.appearance").unwrap(),
+            Some(toml::Value::String("auto".into()))
+        );
+        let _ = fs::remove_dir_all(user);
+        let _ = fs::remove_dir_all(system);
+        let _ = fs::remove_dir_all(shipped);
     }
 
     #[test]

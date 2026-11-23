@@ -155,13 +155,20 @@ pub fn read_battery() -> Option<Battery> {
     let entries = std::fs::read_dir("/sys/class/power_supply").ok()?;
     for entry in entries.flatten() {
         let path = entry.path();
-        let kind = std::fs::read_to_string(path.join("type")).ok()?;
+        // Some power supplies (mains, USB) have no `type` file; skip those
+        // instead of aborting the whole scan.
+        let Ok(kind) = std::fs::read_to_string(path.join("type")) else {
+            continue;
+        };
         if kind.trim() != "Battery" {
             continue;
         }
-        let percent = std::fs::read_to_string(path.join("capacity"))
+        let Some(percent) = std::fs::read_to_string(path.join("capacity"))
             .ok()
-            .and_then(|text| parse_capacity(&text))?;
+            .and_then(|text| parse_capacity(&text))
+        else {
+            continue;
+        };
         let charging = std::fs::read_to_string(path.join("status"))
             .map(|text| parse_status(&text))
             .unwrap_or(false);

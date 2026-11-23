@@ -426,6 +426,8 @@ impl ShellController {
         self.ui.set_wifi(state.wifi);
         self.ui.set_bluetooth(state.bluetooth);
         self.ui.set_focus_on(state.focus_active());
+        self.ui
+            .set_focus_label(state.focus_label().unwrap_or_default().into());
         self.ui.set_night_light(state.night_light);
         self.ui.set_volume(state.volume);
         self.ui.set_brightness(state.brightness);
@@ -555,15 +557,18 @@ impl ShellController {
                 .map(|app| app.exec.clone())
         };
         if let Some(exec) = exec {
-            let mut parts = exec.split_whitespace();
-            if let Some(program) = parts.next() {
-                match std::process::Command::new(program).args(parts).spawn() {
-                    Ok(_) => self.log.borrow_mut().push(format!("spawned {id}")),
-                    Err(error) => self
-                        .log
-                        .borrow_mut()
-                        .push(format!("spawn {id} failed: {error}")),
-                }
+            // `.desktop` Exec lines may contain quoted arguments; let the shell
+            // parse them instead of splitting on whitespace.
+            match std::process::Command::new("sh")
+                .arg("-c")
+                .arg(format!("exec {exec}"))
+                .spawn()
+            {
+                Ok(_) => self.log.borrow_mut().push(format!("spawned {id}")),
+                Err(error) => self
+                    .log
+                    .borrow_mut()
+                    .push(format!("spawn {id} failed: {error}")),
             }
         }
     }
