@@ -241,6 +241,27 @@ fn shell_surfaces_are_interactive() {
         assert_eq!(controller.state().overlay, Overlay::None);
         assert_eq!(controller.state().active_app, "AetherPad");
 
+        // --- keyboard shortcuts -------------------------------------------
+        controller.handle_shortcut("escape");
+        assert_eq!(controller.state().overlay, Overlay::None);
+        assert!(controller.handle_shortcut("super+space"), "launcher shortcut handled");
+        assert_eq!(controller.state().overlay, Overlay::Launcher);
+        controller.search("ca");
+        controller.handle_shortcut("arrow-down");
+        assert_eq!(controller.state().search_selected, 1);
+        controller.handle_shortcut("arrow-up");
+        assert_eq!(controller.state().search_selected, 0);
+        controller.handle_shortcut("enter");
+        assert_eq!(controller.state().overlay, Overlay::None, "Enter opens the selection");
+        assert!(controller.handle_shortcut("super+f"));
+        assert!(controller.state().focus_active(), "Super+F toggles Focus");
+        assert!(controller.handle_shortcut("super+f"));
+        assert!(!controller.state().focus_active());
+        assert!(!controller.handle_shortcut("ctrl+alt+delete"));
+        assert!(controller.handle_shortcut("super+l"));
+        assert_eq!(controller.state().overlay, Overlay::Lock);
+        controller.handle_shortcut("escape");
+
         // The settings schema is complete: every category renders rows.
         for category in Category::ALL {
             let rows = SettingsStore::new(root.clone()).rows_for(category);

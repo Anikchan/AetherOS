@@ -1,7 +1,59 @@
-# apps
+# apps — AetherOS default apps (P4)
 
-Default apps (P4: AetherPad/Text, Calculator, Images, Documents, Player,
-Terminal, Calendar, Clock, Archive, Files, Browser) and platform apps
-(P5: Activity Manager; P6: Store).
+One crate per default app. Each crate follows the same shape:
 
-Each app becomes a workspace member when work starts. Empty for now (P0-T05).
+```
+apps/<name>/
+  Cargo.toml            package `aether-<name>`; slint + aether-ui + build script
+  build.rs              compiles ui/app.slint with debug info (element ids)
+  ui/app.slint          the app window (Window component, `<Name>App`)
+  src/lib.rs            include_modules! + core modules + controller glue
+  src/main.rs           `--render <dir>` writes app-<name>.png; `--help`
+  tests/ui.rs           one headless interaction test (testing backend)
+```
+
+Core logic lives in plain Rust modules with unit tests; the `.slint` file is
+presentation and callbacks only. That keeps every rule testable without a
+display server and makes the app port trivial when the compositor session
+arrives.
+
+| Task | Crate | App |
+| --- | --- | --- |
+| P4-T08 | `apps/files` | Files |
+| P4-T10 | `apps/text` | AetherPad |
+| P4-T11 | `apps/calculator` | Calculator |
+| P4-T12 | `apps/images` | Images |
+| P4-T13 | `apps/documents` | Documents / PDF |
+| P4-T14 | `apps/player` | Player |
+| P4-T15 | `apps/terminal` | Terminal |
+| P4-T16 | `apps/calendar` | Calendar & Clock |
+| P4-T17 | `apps/archive` | Archive |
+| P4-T18 | `apps/browser` | Browser |
+
+Platform apps for the P6 app platform (`apps/pkg`, `apps/store`, `apps/sandbox`,
+`apps/runner`) belong to session S4 and are separate crates.
+
+## Conventions
+
+- Import the design system with a relative path:
+  `import { Tokens, AetherButton } from "../../../ui/design.slint";`
+- Dark theme only; use `Tokens` colours and `Tokens.space(n)` (4 px grid). No
+  hard-coded hex values except alpha tints of tokens.
+- Interactive elements set `accessible-label`; tests query by label because
+  element ids repeat per component definition.
+- Use `Flickable` rather than `ScrollView` (std-widgets needs image decoders
+  that the workspace does not enable).
+- In a non-layout parent an element without explicit `x`/`y` is centred —
+  always set the position or use a layout.
+- Percent values are invalid for `x`/`y`/`border-radius`; use
+  `parent.width * 0.4` and single-value radii.
+- No per-side borders on `Rectangle`; draw a 1 px child rectangle.
+
+## Render an app
+
+```bash
+cargo run -p aether-text -- --render docs/2026/11/23/results/screenshots
+```
+
+Screenshots land in `docs/2026/11/23/results/screenshots/app-<name>.png` and are
+the P4 visual evidence.

@@ -201,13 +201,17 @@ budgets, Makefile, scripts.
 |---|---|---|
 | S1 | P1-T05 UEFI debug on real Dell firmware (investigation) + P2-T01 (waits on S2) + P3-T02 | In progress |
 | S2 | P0-T10 battery spike + P2-T08 coverage report on Dell | Ready (Dell ready) |
-| S3 | P4 shell (P4-T01..) — waits on S2 P3-T02 for layer shell | Prep / wait |
+| S3 | P4 desktop shell + default apps | **In progress (2026-11-23)**: shell surfaces T01–T07/T09 done headlessly (design system, model, settings, tests, screenshots); browser T18 core done; default apps T08/T10–T17 in progress |
 | S4 | P5 process block (P5-T01..) — can start now; docs pass continuous | Ready |
 
 ## What to do right now
 - **S1:** Debug P1-T05 UEFI on the Dell (real firmware); if it passes, unblock M1 and start P2. Otherwise record and continue with P3-T02.
 - **S2:** Run P0-T10 + P2-T08 on the Dell; report results to S1.
-- **S3:** Start P4-T01..T03 (menu bar, dock, launcher) — they don't need the compositor's layer shell for initial dev.
+- **S3:** P4 shell surfaces + default apps implemented headlessly; next is on-device
+  acceptance once S2's layer-shell host (P3-T02) lands.
+- **Territory note (2026-11-23):** S3 also owns the new top-level `ui/` crate
+  (`aether-ui`: design tokens, widget kit, icons, headless renderer) so the
+  shell and every app share one visual language.
 - **S4:** Start P5-T01 (app identity + cgroup scope) and the docs/design pass.
 
 ## Notes

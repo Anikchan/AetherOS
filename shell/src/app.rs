@@ -838,6 +838,59 @@ impl ShellController {
         self.activate_setting(key);
     }
 
+    /// Keyboard shortcut entry point (F1 SHL-03: launcher by keyboard, SHL-05
+    /// Focus, SHL-10 lock). The layer-shell host feeds XKB keysyms here; the
+    /// names below are also what `input/keybindings.toml` stores.
+    pub fn handle_shortcut(&self, shortcut: &str) -> bool {
+        match shortcut.trim().to_ascii_lowercase().as_str() {
+            "super+space" | "launcher" => {
+                self.request_overlay(Overlay::Launcher);
+                true
+            }
+            "super+a" | "overview" => {
+                self.request_overlay(Overlay::Overview);
+                true
+            }
+            "super+n" | "notifications" => {
+                self.request_overlay(Overlay::Notifications);
+                true
+            }
+            "super+c" | "control-centre" | "control-center" => {
+                self.request_overlay(Overlay::ControlCenter);
+                true
+            }
+            "super+l" | "lock" => {
+                self.request_overlay(Overlay::Lock);
+                true
+            }
+            "super+f" | "focus" => {
+                let focus = !self.state.borrow().focus_active();
+                self.quick_toggle("focus", focus);
+                true
+            }
+            "escape" | "esc" => {
+                self.request_overlay(Overlay::None);
+                true
+            }
+            "arrow-down" | "down" => {
+                self.state.borrow_mut().move_selection(1);
+                self.sync();
+                true
+            }
+            "arrow-up" | "up" => {
+                self.state.borrow_mut().move_selection(-1);
+                self.sync();
+                true
+            }
+            "enter" | "return" => {
+                let selected = self.state.borrow().search_selected;
+                self.accept_search(selected);
+                true
+            }
+            _ => false,
+        }
+    }
+
     /// Items currently rendered in the launcher (used by tests).
     pub fn result_titles(&self) -> Vec<String> {
         self.state

@@ -272,3 +272,31 @@ resume without duplication.
   install → plan → store list/install works; macOS correctly refuses
   unsandboxed launch. Windows engine packaging and the 40-app test results stay
   pending. Evidence: `docs/2026/11/23/results/p6-app-platform.md`.
+
+- 2026-11-23: **Session S3 / session-1 autonomous run — P4 desktop shell and
+  default apps.** Started the P4 block (tracker row moved to In progress).
+  Delivered:
+  (a) `ui/` — new `aether-ui` design-system crate implementing design D1
+  tokens, original 24×24 line icons, the widget kit (buttons, toggles, sliders,
+  segmented control, search field, list rows, badges, pills, glass panel) and a
+  headless PNG renderer over the software renderer (works on the macOS host and
+  in CI). Gallery screenshot: `docs/2026/11/23/results/screenshots/ui-gallery.png`.
+  (b) `shell/` — every P4 shell surface in one reviewable `surfaces.slint`
+  (menu bar with app menus/tray/clock/battery, dock with running indicators,
+  launcher with ranking + inline calculator, control centre with quick tiles and
+  power modes, notification centre with Focus, lock screen with credential
+  check, overview with workspaces, settings app generated from the F4 schema).
+  Rust side: `ShellState` rules, launcher ranking, F4 layered TOML store,
+  `.desktop` discovery, nmcli/bluetoothctl/wpctl/brightnessctl/sysfs adapters
+  with a mock, and `ShellController` wiring. Headless interaction test drives
+  the real widgets (tray, dock, launcher, quick tiles, settings file writes,
+  notifications, lock, overview). Nine surface screenshots rendered.
+  (c) `apps/browser` (P4-T18 core + T18b data) — tabs, address bar parsing,
+  bookmarks, history with de-duplication, downloads, private tabs that never
+  write profile data, session restore, WebKitGTK engine decision documented with
+  adapters. 38 unit tests + headless chrome test.
+  (d) Default app crates scaffolded and delegated in three parallel batches
+  (text/calculator/terminal; files/archive/images; calendar/documents/player);
+  results recorded in `docs/2026/11/23/results/p4-shell-and-apps.md` when the
+  batch work is integrated.
+  Evidence: `docs/2026/11/23/results/screenshots/`.
