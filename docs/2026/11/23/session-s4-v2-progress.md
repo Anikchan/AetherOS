@@ -90,3 +90,23 @@ Must NOT touch: `os-build/kernel/`, `os-build/buildroot/`, `compositor/`,
   `docs/2026/11/23/results/p6-app-platform.md`.
   Cargo.toml committed via index surgery with only S4 members (powerd,
   apps/taskmanager) because S3's ui/apps members are still in flight.
+
+## Final state (end of autonomous S4 run, 2026-11-23)
+
+- **Tests:** 278 pass across S4 crates (lifecycled 64, powerd 64,
+  taskmanager 26, pkg 18, sandbox 15, runner 12, store 5, config 34,
+  installer 26, storage-analyzer 5, update 9).
+- **Workspace:** builds with `LIBRARY_PATH=$(brew --prefix)/lib`; the
+  compositor needs libxkbcommon (S2 crate, environment note).
+- **Delivered:** P5-T01..T06/T08, P5-T09..T17, P5-T07 core, P6-T01..T10 core,
+  P7-T01..T04/T06/T07, P7-PK-T02/T03/T04, P8-T02/T03/T04/T06/T07, P9-T01/T02
+  state machine, P9-T04/T05 artifacts, P9-T06 parser fuzzing, P10-T03 guides.
+- **Blocked (owner/hardware/S1 image):** G-PM1/G-PM3/B2/B6 and 72 h soak;
+  G-BAT1/G-BAT2 and timed G-BAT3; TM-AC-01/04/05/06/07 and G-TM1/G-TM2;
+  Windows engine packaging and the 40-app results; live image (P8-T01),
+  Secure Boot (P8-T05), RAUC wiring (P9-T01), LUKS (P9-T03), nft syntax check
+  on AetherOS (P9-T04), signing (P9-T05), full fuzzing campaign (P9-T06),
+  hardware matrix/tuning/30-day dogfood/release (P10).
+- **Parallel work untouched:** S1 (kernel/buildroot/UEFI), S2 (compositor),
+  S3 (shell/apps/features) files were not modified; `Cargo.lock` left to the
+  session that owns the in-flight dependency changes.
