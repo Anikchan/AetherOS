@@ -122,8 +122,8 @@ All rendered headlessly with the software renderer (`aether-ui::render`):
 | P4-T06 lock screen | Implemented, headless-verified | greetd/PAM integration is the remaining on-device step |
 | P4-T07 settings | Implemented + verified | "Every setting maps to a file key" shown in the UI and asserted by tests |
 | P4-T08 files | Implemented, verified | Sandbox escape + symlink tests; copy/move/rename/trash on temp trees |
-| P4-T10 AetherPad | Implemented, verified | Undo/redo, counts, find/replace, save/load round trip (UTF-8 scope) |
-| P4-T11 Calculator | Implemented, verified | Precedence, `^` associativity, domain errors, history cap, memory |
+| P4-T10 AetherPad | Implemented, verified (UTF-8 scope) | Undo/redo, counts, find/replace, save/load round trip; DA-AC-01 UTF-16/CP-1252 and DA-AC-02 10 MB perf remain open |
+| P4-T11 Calculator | Implemented, verified | **DA-AC-03 Pass**: 50-case acceptance set; precedence, `^` associativity, domain errors, history cap, memory |
 | P4-T12 Images | Implemented, verified | Decode/metadata/rotate/zoom on generated fixtures |
 | P4-T13 Documents | Implemented, verified (PDF env-gated) | Markdown + pagination + search tested; poppler adapter reports NotAvailable when absent |
 | P4-T14 Player | Implemented, verified (audio env-gated) | Playlist/shuffle/repeat/transport tested; GStreamer shell-out is the adapter, mock in tests |

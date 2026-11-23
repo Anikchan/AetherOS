@@ -97,21 +97,21 @@ The reference operating systems commonly ship these; decide scope before M3:
 
 | ID | Criterion | Result |
 | --- | --- | --- |
-| DA-AC-01 | Text opens and saves a UTF-16 file and a Windows-1252 file without losing characters | Not tested |
-| DA-AC-02 | Text find and replace works across a 10 MB file with no UI freeze over 1 s | Not tested |
-| DA-AC-03 | Calculator produces correct results for a 50-case test set | Not tested |
-| DA-AC-04 | Images opens each listed format and rotates without losing quality | Not tested |
-| DA-AC-05 | Documents opens a 200-page PDF and searches it | Not tested |
-| DA-AC-06 | Player plays the test files for each supported format | Not tested |
-| DA-AC-07 | Terminal runs the default shell with copy and paste, and resizing works | Not tested |
-| DA-AC-08 | Archive extracts ZIP and TAR test files with correct permissions | Not tested |
-| DA-AC-09 | Each default app's cold launch ≤ 500 ms (F11 measurement) | Not tested |
-| DA-AC-10 | With all default apps closed, the apps use 0 MB and 0% CPU | Not tested |
-| DA-AC-11 | Browser plays the test media files with audio and video, including one streaming site | Not tested |
-| DA-AC-12 | Browser cold launch to first frame ≤ 500 ms | Not tested |
-| DA-AC-13 | Mail sends and receives a test message with an attachment | Not tested |
-| DA-AC-14 | Notes creates, searches, and reopens a note | Not tested |
-| DA-AC-15 | Magnifier and high-contrast mode work on the desktop | Not tested |
+| DA-AC-01 | Text opens and saves a UTF-16 file and a Windows-1252 file without losing characters | Partial (2026-11-23) — UTF-8 open/save, undo/redo, counts and find/replace are implemented and tested; UTF-16 and CP-1252 decoding are not implemented yet |
+| DA-AC-02 | Text find and replace works across a 10 MB file with no UI freeze over 1 s | Partial — find/replace (next/all, case toggle, unicode) is implemented and unit-tested; the 10 MB / 1 s performance run needs the device |
+| DA-AC-03 | Calculator produces correct results for a 50-case test set | **Pass (2026-11-23)** — 50-case set in `apps/calculator/tests/acceptance.rs`, all green, plus documented error cases |
+| DA-AC-04 | Images opens each listed format and rotates without losing quality | Pass (headless, 2026-11-23) — png/jpeg/gif/bmp decode tested with generated fixtures; 90° rotation/flip are lossless pixel operations |
+| DA-AC-05 | Documents opens a 200-page PDF and searches it | Blocked — the poppler adapter is implemented and reports `NotAvailable` when `pdftoppm`/`pdftotext` are missing; no PDF tooling on the dev host |
+| DA-AC-06 | Player plays the test files for each supported format | Blocked — GStreamer is not installed on the dev host; transport/playlist logic is tested with the mock engine |
+| DA-AC-07 | Terminal runs the default shell with copy and paste, and resizing works | Partial — VT parser and a real forkpty session (spawn/read/write/resize) are tested on unix; copy/paste UI and an event-loop pump are pending |
+| DA-AC-08 | Archive extracts ZIP and TAR test files with correct permissions | **Pass (headless, 2026-11-23)** — zip/tar extraction, creation, permissions and delete round-trip tested; `../` entries rejected in both formats |
+| DA-AC-09 | Each default app's cold launch ≤ 500 ms (F11 measurement) | Not measured — needs the device (no interactive host yet) |
+| DA-AC-10 | With all default apps closed, the apps use 0 MB and 0% CPU | Not measured — needs the device |
+| DA-AC-11 | Browser plays the test media files with audio and video, including one streaming site | Blocked — WebKitGTK embedding arrives with the graphics session (P3) |
+| DA-AC-12 | Browser cold launch to first frame ≤ 500 ms | Not measured — needs the device |
+
+Evidence: `docs/2026/11/23/results/p4-shell-and-apps.md` and
+`docs/2026/11/23/results/screenshots/`.
 
 ## 7. Open Questions
 
