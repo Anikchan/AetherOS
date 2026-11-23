@@ -1,9 +1,288 @@
-// AetherOS Terminal — P4 placeholder surface.
-import { Tokens } from "../../../ui/design.slint";
+// AetherOS Terminal — tabs, ANSI grid and prompt (P4-T15, DA-AC-07).
+//
+// The grid is rendered cell by cell from `TermGlyph` rows produced by
+// `apps/terminal/src/vt.rs`, so colours come from real SGR state and columns
+// stay aligned even when the host has no monospace "JetBrains Mono" installed.
+
+import {
+    Tokens,
+    Icon,
+    IconKind,
+    IconButton,
+    Pill,
+} from "../../../ui/design.slint";
+
+export struct TermGlyph {
+    row: int,
+    col: int,
+    ch: string,
+    // ANSI palette index, -1 for the default foreground.
+    fg: int,
+    bold: bool,
+    dim: bool,
+}
+
+component TabChip inherits Rectangle {
+    in property <string> title: "";
+    in property <bool> active: false;
+    callback clicked();
+    callback close();
+
+    height: 26px;
+    width: tab-text.preferred-width + (root.active ? 44px : 24px);
+    border-radius: 6px;
+    background: root.active ? Tokens.surface-high : (tab-hit.has-hover ? Tokens.hover : transparent);
+    accessible-role: tab;
+    accessible-label: root.title;
+    accessible-checked: root.active;
+
+    HorizontalLayout {
+        padding-left: 10px;
+        padding-right: 6px;
+        spacing: 6px;
+        cross-axis-alignment: center;
+
+        tab-text := Text {
+            text: root.title;
+            color: root.active ? Tokens.text : Tokens.text-muted;
+            font-size: Tokens.font-small;
+            font-weight: root.active ? 600 : 400;
+            vertical-alignment: center;
+        }
+
+        if root.active : Rectangle {
+            width: 16px;
+            height: 16px;
+            border-radius: 4px;
+            background: close-hit.has-hover ? Tokens.pressed : transparent;
+            accessible-role: button;
+            accessible-label: "Close tab";
+            close-hit := TouchArea {
+                clicked => { root.close(); }
+            }
+            Text {
+                text: "×";
+                color: Tokens.text-muted;
+                font-size: 12px;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+        }
+    }
+
+    tab-hit := TouchArea {
+        clicked => { root.clicked(); }
+    }
+}
 
 export component TerminalApp inherits Window {
     title: "Terminal";
-    width: 800px;
-    height: 600px;
+    width: 1200px;
+    height: 800px;
     background: Tokens.background;
+
+    in property <[string]> tabs: [];
+    in property <int> active-tab: 0;
+    in property <[TermGlyph]> glyphs: [];
+    in property <int> grid-cols: 124;
+    in property <int> grid-rows: 34;
+    in property <string> prompt-label: "aether@aether ~ $";
+    in-out property <string> prompt-text: "";
+    in property <string> status-left: "";
+    in property <string> status-right: "";
+    in property <bool> pty-ready: false;
+
+    // ANSI palette mapped to the design tokens (no hard-coded colours).
+    function term-color(index: int) -> color {
+        if (index < 0) { return Tokens.text; }
+        if (index == 0 || index == 8) { return Tokens.text_muted; }
+        if (index == 1 || index == 9) { return Tokens.danger; }
+        if (index == 2 || index == 10 || index == 6 || index == 14) { return Tokens.success; }
+        if (index == 3 || index == 11) { return Tokens.warning; }
+        if (index == 4) { return Tokens.accent; }
+        if (index == 5 || index == 12 || index == 13) { return Tokens.accent_strong; }
+        if (index == 7) { return Tokens.text_faint; }
+        return Tokens.text;
+    }
+
+    callback select-tab(int);
+    callback new-tab();
+    callback close-tab(int);
+    callback prompt-edited(string);
+    callback prompt-submitted();
+    callback clear-screen();
+
+    VerticalLayout {
+        padding: 16px;
+        spacing: 12px;
+
+        // Tab strip ---------------------------------------------------------
+        Rectangle {
+            height: 36px;
+            border-radius: 10px;
+            background: Tokens.surface-low;
+            border-width: 1px;
+            border-color: Tokens.divider;
+
+            HorizontalLayout {
+                padding-left: 8px;
+                padding-right: 8px;
+                spacing: 4px;
+                cross-axis-alignment: center;
+
+                for tab[i] in root.tabs : TabChip {
+                    title: tab;
+                    active: root.active-tab == i;
+                    clicked => { root.select-tab(i); }
+                    close => { root.close-tab(i); }
+                }
+                IconButton {
+                    kind: IconKind.plus;
+                    label: "New tab";
+                    button-size: 26px;
+                    icon-size: 14px;
+                    clicked => { root.new-tab(); }
+                }
+                Rectangle {
+                    height: 1px;
+                    horizontal-stretch: 1;
+                    background: transparent;
+                }
+                IconButton {
+                    kind: IconKind.trash;
+                    label: "Clear screen";
+                    button-size: 26px;
+                    icon-size: 14px;
+                    clicked => { root.clear-screen(); }
+                }
+                Pill {
+                    text: root.pty-ready ? "PTY ready" : "local shell";
+                    tone: root.pty-ready ? Tokens.success : Tokens.accent;
+                }
+            }
+        }
+
+        // Terminal panel ----------------------------------------------------
+        Rectangle {
+            vertical-stretch: 1;
+            border-radius: 12px;
+            background: Tokens.background-alt;
+            border-width: 1px;
+            border-color: Tokens.divider;
+            clip: true;
+
+            // ANSI grid: one Text per non-blank cell, positioned on the cell
+            // grid so columns align without relying on a monospace font.
+            Rectangle {
+                x: 12px;
+                y: 12px;
+                width: root.grid-cols * 9px;
+                height: root.grid-rows * 18px;
+                background: transparent;
+                clip: true;
+
+                for glyph in root.glyphs : Text {
+                    x: glyph.col * 9px;
+                    y: glyph.row * 18px;
+                    width: 9px;
+                    height: 18px;
+                    text: glyph.ch;
+                    color: root.term-color(glyph.fg);
+                    font-size: 13px;
+                    font-family: Tokens.font-family-mono;
+                    font-weight: glyph.bold ? 700 : 400;
+                    opacity: glyph.dim ? 0.62 : 1.0;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+            }
+
+            // Prompt line.
+            Rectangle {
+                x: 12px;
+                y: parent.height - 42px;
+                width: parent.width - 24px;
+                height: 30px;
+                border-radius: 6px;
+                background: Tokens.surface-low;
+                border-width: 1px;
+                border-color: Tokens.divider;
+
+                HorizontalLayout {
+                    padding-left: 10px;
+                    padding-right: 10px;
+                    spacing: 8px;
+                    cross-axis-alignment: center;
+
+                    Text {
+                        text: root.prompt-label;
+                        color: Tokens.success;
+                        font-size: Tokens.font-small;
+                        font-family: Tokens.font-family-mono;
+                        vertical-alignment: center;
+                    }
+                    prompt := TextInput {
+                        height: 26px;
+                        horizontal-stretch: 1;
+                        text <=> root.prompt-text;
+                        color: Tokens.text;
+                        font-size: Tokens.font-small;
+                        font-family: Tokens.font-family-mono;
+                        vertical-alignment: center;
+                        single-line: true;
+                        accessible-label: "Terminal prompt";
+                        selection-background-color: Tokens.accent-soft;
+                        selection-foreground-color: Tokens.text;
+                        edited => { root.prompt-edited(self.text); }
+                        accepted => { root.prompt-submitted(); }
+                    }
+                    Text {
+                        text: "⏎ run";
+                        color: Tokens.text-faint;
+                        font-size: Tokens.font-small;
+                        vertical-alignment: center;
+                    }
+                }
+            }
+        }
+
+        // Status bar --------------------------------------------------------
+        Rectangle {
+            height: 28px;
+            border-radius: 8px;
+            background: Tokens.surface-low;
+            border-width: 1px;
+            border-color: Tokens.divider;
+
+            HorizontalLayout {
+                padding-left: 12px;
+                padding-right: 12px;
+                spacing: 12px;
+                cross-axis-alignment: center;
+
+                Icon {
+                    kind: IconKind.terminal;
+                    size: 13px;
+                    tint: Tokens.accent;
+                }
+                Text {
+                    text: root.status-left;
+                    color: Tokens.text-muted;
+                    font-size: Tokens.font-small;
+                    vertical-alignment: center;
+                }
+                Rectangle {
+                    height: 1px;
+                    horizontal-stretch: 1;
+                    background: transparent;
+                }
+                Text {
+                    text: root.status-right;
+                    color: Tokens.text-faint;
+                    font-size: Tokens.font-small;
+                    vertical-alignment: center;
+                }
+            }
+        }
+    }
 }

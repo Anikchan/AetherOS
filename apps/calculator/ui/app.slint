@@ -1,9 +1,344 @@
-// AetherOS Calculator — P4 placeholder surface.
-import { Tokens } from "../../../ui/design.slint";
+// AetherOS Calculator — standard mode (P4-T11, DA-AC-03).
+//
+// Every result, memory value and history row is computed by
+// `apps/calculator/src/eval.rs` and `history.rs`; the window only forwards
+// key presses.
+
+import {
+    Tokens,
+    Icon,
+    IconKind,
+    IconButton,
+    Pill,
+    SectionLabel,
+} from "../../../ui/design.slint";
+
+export struct HistoryRow {
+    expression: string,
+    result: string,
+}
+
+component CalcKey inherits Rectangle {
+    in property <string> key-label: "";
+    in property <string> key-value: "";
+    in property <bool> primary: false;
+    in property <bool> faint: false;
+    callback pressed(string);
+
+    height: 44px;
+    border-radius: 10px;
+    background: key-ta.pressed ? Tokens.pressed
+        : (key-ta.has-hover ? Tokens.hover
+        : (root.primary ? Tokens.accent : (root.faint ? Tokens.surface-low : Tokens.surface)));
+    border-width: root.primary ? 0px : 1px;
+    border-color: Tokens.divider;
+    accessible-role: button;
+    accessible-label: root.key-label != "" ? root.key-label : root.key-value;
+
+    Text {
+        text: root.key-label != "" ? root.key-label : root.key-value;
+        color: root.primary ? Tokens.on-accent : (root.faint ? Tokens.text-muted : Tokens.text);
+        font-size: 16px;
+        font-weight: 600;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+
+    key-ta := TouchArea {
+        clicked => { root.pressed(root.key-value); }
+    }
+}
+
+component MemoryKey inherits Rectangle {
+    in property <string> label-text: "";
+    in property <string> value-text: "";
+    callback pressed(string);
+
+    height: 30px;
+    border-radius: 8px;
+    background: mem-ta.pressed ? Tokens.pressed : (mem-ta.has-hover ? Tokens.hover : Tokens.surface-low);
+    border-width: 1px;
+    border-color: Tokens.divider;
+    accessible-role: button;
+    accessible-label: root.label-text;
+
+    Text {
+        text: root.label-text;
+        color: Tokens.text-muted;
+        font-size: Tokens.font-small;
+        font-weight: 700;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+
+    mem-ta := TouchArea {
+        clicked => { root.pressed(root.value-text); }
+    }
+}
+
+component HistoryItem inherits Rectangle {
+    in property <string> expression: "";
+    in property <string> result: "";
+    callback clicked();
+
+    height: 30px;
+    border-radius: 6px;
+    background: item-ta.has-hover ? Tokens.hover : transparent;
+    accessible-role: list-item;
+    accessible-label: root.expression;
+
+    HorizontalLayout {
+        padding-left: 8px;
+        padding-right: 8px;
+        spacing: 8px;
+        cross-axis-alignment: center;
+
+        Text {
+            text: root.expression;
+            color: Tokens.text-muted;
+            font-size: Tokens.font-small;
+            overflow: elide;
+            horizontal-stretch: 1;
+        }
+        Text {
+            text: "=";
+            color: Tokens.text-faint;
+            font-size: Tokens.font-small;
+        }
+        Text {
+            text: root.result;
+            color: Tokens.text;
+            font-size: Tokens.font-body;
+            font-weight: 600;
+        }
+    }
+
+    item-ta := TouchArea {
+        clicked => { root.clicked(); }
+    }
+}
 
 export component CalculatorApp inherits Window {
     title: "Calculator";
-    width: 800px;
-    height: 600px;
+    width: 420px;
+    height: 640px;
     background: Tokens.background;
+
+    in property <string> expression: "12 + 30 * 0.5";
+    in property <string> result: "27";
+    in property <bool> has-error: false;
+    in property <string> memory-label: "M 0";
+    in property <[HistoryRow]> history: [];
+
+    callback key(string);
+    callback recall(int);
+    callback clear-history();
+
+    VerticalLayout {
+        padding-left: 16px;
+        padding-right: 16px;
+        padding-top: 16px;
+        padding-bottom: 16px;
+        spacing: 10px;
+
+        // Header ------------------------------------------------------------
+        HorizontalLayout {
+            height: 22px;
+            spacing: 8px;
+            cross-axis-alignment: center;
+
+            Icon {
+                kind: IconKind.calculator;
+                size: 16px;
+                tint: Tokens.accent;
+            }
+            Text {
+                text: "Calculator";
+                color: Tokens.text;
+                font-size: Tokens.font-title;
+                font-weight: 700;
+                vertical-alignment: center;
+            }
+            Text {
+                text: "standard";
+                color: Tokens.text-faint;
+                font-size: Tokens.font-small;
+                vertical-alignment: center;
+            }
+            Rectangle {
+                height: 1px;
+                horizontal-stretch: 1;
+                background: transparent;
+            }
+            Pill {
+                text: root.memory-label;
+                tone: Tokens.accent;
+            }
+        }
+
+        // Display -----------------------------------------------------------
+        Rectangle {
+            height: 96px;
+            border-radius: 12px;
+            background: Tokens.surface;
+            border-width: 1px;
+            border-color: Tokens.divider;
+            clip: true;
+
+            Text {
+                x: 14px;
+                y: 10px;
+                width: parent.width - 28px;
+                height: 20px;
+                text: root.expression;
+                color: Tokens.text-muted;
+                font-size: Tokens.font-body;
+                horizontal-alignment: right;
+                vertical-alignment: center;
+                overflow: elide;
+            }
+            Text {
+                x: 14px;
+                y: 30px;
+                width: parent.width - 28px;
+                height: 56px;
+                text: root.result;
+                color: root.has-error ? Tokens.danger : Tokens.text;
+                font-size: 30px;
+                font-weight: 600;
+                horizontal-alignment: right;
+                vertical-alignment: center;
+                overflow: elide;
+            }
+        }
+
+        // Memory row --------------------------------------------------------
+        HorizontalLayout {
+            height: 30px;
+            spacing: 6px;
+
+            MemoryKey { label-text: "MC"; value-text: "MC"; pressed(value) => { root.key(value); } }
+            MemoryKey { label-text: "MR"; value-text: "MR"; pressed(value) => { root.key(value); } }
+            MemoryKey { label-text: "M+"; value-text: "M+"; pressed(value) => { root.key(value); } }
+            MemoryKey { label-text: "M−"; value-text: "M-"; pressed(value) => { root.key(value); } }
+        }
+
+        // Keypad ------------------------------------------------------------
+        GridLayout {
+            height: 244px;
+            spacing: 6px;
+
+            Row {
+                CalcKey { key-label: "C"; key-value: "C"; faint: true; pressed(value) => { root.key(value); } }
+                CalcKey { key-label: "("; key-value: "("; faint: true; pressed(value) => { root.key(value); } }
+                CalcKey { key-label: ")"; key-value: ")"; faint: true; pressed(value) => { root.key(value); } }
+                CalcKey { key-label: "←"; key-value: "BACK"; faint: true; pressed(value) => { root.key(value); } }
+                CalcKey { key-label: "÷"; key-value: "/"; pressed(value) => { root.key(value); } }
+            }
+
+            Row {
+                CalcKey { key-label: "7"; key-value: "7"; pressed(value) => { root.key(value); } }
+                CalcKey { key-label: "8"; key-value: "8"; pressed(value) => { root.key(value); } }
+                CalcKey { key-label: "9"; key-value: "9"; pressed(value) => { root.key(value); } }
+                CalcKey { key-label: "×"; key-value: "*"; pressed(value) => { root.key(value); } }
+                CalcKey { key-label: "%"; key-value: "%"; pressed(value) => { root.key(value); } }
+            }
+
+            Row {
+                CalcKey { key-label: "4"; key-value: "4"; pressed(value) => { root.key(value); } }
+                CalcKey { key-label: "5"; key-value: "5"; pressed(value) => { root.key(value); } }
+                CalcKey { key-label: "6"; key-value: "6"; pressed(value) => { root.key(value); } }
+                CalcKey { key-label: "−"; key-value: "-"; pressed(value) => { root.key(value); } }
+                CalcKey { key-label: "^"; key-value: "^"; pressed(value) => { root.key(value); } }
+            }
+
+            Row {
+                CalcKey { key-label: "1"; key-value: "1"; pressed(value) => { root.key(value); } }
+                CalcKey { key-label: "2"; key-value: "2"; pressed(value) => { root.key(value); } }
+                CalcKey { key-label: "3"; key-value: "3"; pressed(value) => { root.key(value); } }
+                CalcKey { key-label: "+"; key-value: "+"; pressed(value) => { root.key(value); } }
+                CalcKey { key-label: "√"; key-value: "sqrt("; pressed(value) => { root.key(value); } }
+            }
+
+            Row {
+                CalcKey { key-label: "0"; key-value: "0"; pressed(value) => { root.key(value); } }
+                CalcKey { key-label: "."; key-value: "."; pressed(value) => { root.key(value); } }
+                CalcKey { key-label: "π"; key-value: "pi"; pressed(value) => { root.key(value); } }
+                CalcKey { key-label: "e"; key-value: "e"; pressed(value) => { root.key(value); } }
+                CalcKey { key-label: "="; key-value: "="; primary: true; pressed(value) => { root.key(value); } }
+            }
+        }
+
+        // History -----------------------------------------------------------
+        HorizontalLayout {
+            height: 24px;
+            spacing: 8px;
+            cross-axis-alignment: center;
+            SectionLabel { label: "HISTORY"; }
+            Rectangle {
+                height: 1px;
+                horizontal-stretch: 1;
+                background: transparent;
+            }
+            Text {
+                text: root.history.length + " saved";
+                color: Tokens.text-faint;
+                font-size: Tokens.font-small;
+                vertical-alignment: center;
+            }
+            IconButton {
+                kind: IconKind.trash;
+                label: "Clear history";
+                button-size: 20px;
+                icon-size: 13px;
+                clicked => { root.clear-history(); }
+            }
+        }
+
+        Rectangle {
+            height: 102px;
+            border-radius: 10px;
+            background: Tokens.surface-low;
+            border-width: 1px;
+            border-color: Tokens.divider;
+            clip: true;
+
+            Flickable {
+                x: 6px;
+                y: 6px;
+                width: parent.width - 12px;
+                height: parent.height - 12px;
+                interactive: true;
+
+                history-column := VerticalLayout {
+                    width: parent.width;
+                    spacing: 2px;
+                    for row[i] in root.history : HistoryItem {
+                        expression: row.expression;
+                        result: row.result;
+                        clicked => { root.recall(i); }
+                    }
+                }
+            }
+
+            if root.history.length == 0 : Text {
+                x: 10px;
+                y: 46px;
+                width: parent.width - 20px;
+                text: "No results yet — press = to keep one.";
+                color: Tokens.text-faint;
+                font-size: Tokens.font-small;
+                horizontal-alignment: center;
+            }
+        }
+
+        // Shortcut hints -----------------------------------------------------
+        Text {
+            height: 16px;
+            text: "Enter = evaluate · Esc clear · ← backspace · MR recall memory";
+            color: Tokens.text-faint;
+            font-size: Tokens.font-small;
+            horizontal-alignment: center;
+        }
+    }
 }

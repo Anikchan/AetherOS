@@ -1,9 +1,489 @@
-// AetherOS Text — P4 placeholder surface.
-import { Tokens } from "../../../ui/design.slint";
+// AetherOS AetherPad — text editor surface (P4-T10, DA-AC-01/02).
+//
+// The window is a view: every count, find result, save state and recent file
+// comes from `apps/text/src/document.rs` through `TextController`.
+
+import {
+    Tokens,
+    Icon,
+    IconKind,
+    AetherButton,
+    IconButton,
+    Divider,
+    Pill,
+    SectionLabel,
+    ListRow,
+    ToggleSwitch,
+} from "../../../ui/design.slint";
+
+export struct RecentEntry {
+    name: string,
+    path: string,
+}
+
+// A compact single-line text field with a placeholder.
+component FindField inherits Rectangle {
+    in property <string> placeholder: "Find";
+    in property <string> field-label: "Find";
+    in-out property <string> value: "";
+    callback edited(string);
+    callback accepted();
+
+    height: 32px;
+    border-radius: Tokens.radius-button;
+    background: Tokens.background-alt;
+    border-width: 1px;
+    border-color: input.has-focus ? Tokens.accent : Tokens.divider;
+
+    Text {
+        x: 10px;
+        y: 0px;
+        width: parent.width - 20px;
+        height: parent.height;
+        text: root.placeholder;
+        color: Tokens.text-faint;
+        font-size: Tokens.font-body;
+        vertical-alignment: center;
+        visible: input.text == "";
+    }
+
+    input := TextInput {
+        x: 10px;
+        y: 0px;
+        width: parent.width - 20px;
+        height: parent.height;
+        text <=> root.value;
+        color: Tokens.text;
+        font-size: Tokens.font-body;
+        vertical-alignment: center;
+        single-line: true;
+        accessible-label: root.field-label;
+        selection-background-color: Tokens.accent-soft;
+        selection-foreground-color: Tokens.text;
+        edited => { root.edited(self.text); }
+        accepted => { root.accepted(); }
+    }
+}
 
 export component TextApp inherits Window {
-    title: "Text";
-    width: 800px;
-    height: 600px;
+    title: "AetherPad";
+    width: 1200px;
+    height: 800px;
     background: Tokens.background;
+
+    // --- state mirrored from the Rust controller -------------------------
+    in-out property <string> editor-text: "";
+    in property <int> word-count: 0;
+    in property <int> char-count: 0;
+    in property <int> line-count: 0;
+    in property <bool> dirty: false;
+    in property <string> doc-name: "Untitled";
+    in property <string> doc-path: "Not saved yet";
+    in property <string> status-note: "Ready";
+    in property <[RecentEntry]> recent: [];
+    in property <int> selected-recent: -1;
+    in property <bool> can-undo: false;
+    in property <bool> can-redo: false;
+    in property <bool> find-open: false;
+    in-out property <string> find-query: "";
+    in-out property <string> replace-text: "";
+    in-out property <bool> case-sensitive: false;
+    in property <int> match-count: 0;
+
+    // --- actions ---------------------------------------------------------
+    callback editor-edited(string);
+    callback new-document();
+    callback open-selected();
+    callback open-recent(int);
+    callback save-document();
+    callback undo();
+    callback redo();
+    callback toggle-find();
+    callback close-find();
+    callback find-query-edited(string);
+    callback replace-edited(string);
+    callback case-toggled(bool);
+    callback find-next();
+    callback replace-all();
+
+    // Toolbar -------------------------------------------------------------
+    VerticalLayout {
+        spacing: 0px;
+
+        Rectangle {
+            height: 56px;
+            background: Tokens.surface-low;
+
+            HorizontalLayout {
+                padding-left: 20px;
+                padding-right: 20px;
+                spacing: 10px;
+                cross-axis-alignment: center;
+
+                Icon {
+                    kind: IconKind.document;
+                    size: 18px;
+                    tint: Tokens.accent;
+                }
+                Text {
+                    text: "AetherPad";
+                    color: Tokens.text;
+                    font-size: Tokens.font-title;
+                    font-weight: 700;
+                    vertical-alignment: center;
+                }
+                Text {
+                    text: root.doc-name;
+                    color: Tokens.text-muted;
+                    font-size: Tokens.font-body;
+                    vertical-alignment: center;
+                }
+                Rectangle {
+                    width: 6px;
+                    height: 6px;
+                    border-radius: 3px;
+                    background: Tokens.warning;
+                    visible: root.dirty;
+                }
+                IconButton {
+                    kind: IconKind.history;
+                    label: "Undo";
+                    enabled: root.can-undo;
+                    clicked => { root.undo(); }
+                }
+                IconButton {
+                    kind: IconKind.refresh;
+                    label: "Redo";
+                    enabled: root.can-redo;
+                    clicked => { root.redo(); }
+                }
+                Rectangle {
+                    height: 1px;
+                    horizontal-stretch: 1;
+                    background: transparent;
+                }
+                AetherButton {
+                    text: "New";
+                    icon: IconKind.plus;
+                    show-icon: true;
+                    clicked => { root.new-document(); }
+                }
+                AetherButton {
+                    text: "Open";
+                    icon: IconKind.folder;
+                    show-icon: true;
+                    clicked => { root.open-selected(); }
+                }
+                AetherButton {
+                    text: "Save";
+                    icon: IconKind.download;
+                    show-icon: true;
+                    clicked => { root.save-document(); }
+                }
+                AetherButton {
+                    text: "Find";
+                    icon: IconKind.search;
+                    show-icon: true;
+                    clicked => { root.toggle-find(); }
+                }
+            }
+        }
+
+        Divider { }
+
+        // Body: sidebar + editor --------------------------------------------
+        HorizontalLayout {
+            vertical-stretch: 1;
+            spacing: 0px;
+
+            Rectangle {
+                width: 264px;
+                background: Tokens.surface-low;
+
+                VerticalLayout {
+                    x: 0px;
+                    y: 0px;
+                    width: parent.width;
+                    height: parent.height;
+                    padding: Tokens.space(4);
+                    spacing: Tokens.space(3);
+
+                    SectionLabel { label: "RECENT FILES"; }
+
+                    VerticalLayout {
+                        spacing: 2px;
+                        for entry[i] in root.recent : ListRow {
+                            title: entry.name;
+                            subtitle: entry.path;
+                            show-icon: true;
+                            icon: IconKind.file;
+                            selected: root.selected-recent == i;
+                            clicked => { root.open-recent(i); }
+                        }
+                        if root.recent.length == 0 : Text {
+                            text: "No documents yet.\nUse New to start writing.";
+                            color: Tokens.text-faint;
+                            font-size: Tokens.font-small;
+                            wrap: word-wrap;
+                            height: 40px;
+                        }
+                    }
+
+                    Divider { }
+
+                    SectionLabel { label: "THIS DOCUMENT"; }
+
+                    Rectangle {
+                        width: parent.width;
+                        height: 96px;
+                        border-radius: Tokens.radius-button;
+                        background: Tokens.surface;
+                        border-width: 1px;
+                        border-color: Tokens.divider;
+                        clip: true;
+
+                        VerticalLayout {
+                            x: Tokens.space(3);
+                            y: Tokens.space(3);
+                            width: parent.width - Tokens.space(6);
+                            height: parent.height - Tokens.space(6);
+                            spacing: Tokens.space(1);
+                            alignment: start;
+
+                            Text {
+                                text: root.doc-name;
+                                color: Tokens.text;
+                                font-size: Tokens.font-body;
+                                font-weight: 600;
+                                overflow: elide;
+                            }
+                            Text {
+                                text: root.doc-path;
+                                color: Tokens.text-muted;
+                                font-size: Tokens.font-small;
+                                wrap: word-wrap;
+                                overflow: elide;
+                            }
+                            HorizontalLayout {
+                                spacing: Tokens.space(2);
+                                Pill {
+                                    text: root.dirty ? "Unsaved" : "Saved";
+                                    tone: root.dirty ? Tokens.warning : Tokens.success;
+                                }
+                                Pill {
+                                    text: "Text";
+                                    tone: Tokens.accent;
+                                }
+                            }
+                        }
+                    }
+
+                    Rectangle {
+                        width: 1px;
+                        vertical-stretch: 1;
+                        background: transparent;
+                    }
+
+                    Text {
+                        text: "UTF-8 · LF · undo history on";
+                        color: Tokens.text-faint;
+                        font-size: Tokens.font-small;
+                    }
+                }
+            }
+
+            Rectangle {
+                width: 1px;
+                background: Tokens.divider;
+            }
+
+            // Editor column -------------------------------------------------
+            VerticalLayout {
+                vertical-stretch: 1;
+                spacing: 0px;
+
+                // Find and replace bar.
+                if root.find-open : Rectangle {
+                    height: 104px;
+                    background: Tokens.surface-low;
+
+                    VerticalLayout {
+                        x: 0px;
+                        y: 0px;
+                        width: parent.width;
+                        height: parent.height;
+                        padding-left: Tokens.space(4);
+                        padding-right: Tokens.space(4);
+                        padding-top: Tokens.space(2);
+                        padding-bottom: Tokens.space(2);
+                        spacing: Tokens.space(2);
+                        alignment: start;
+
+                        HorizontalLayout {
+                            spacing: Tokens.space(2);
+                            cross-axis-alignment: center;
+
+                            FindField {
+                                width: 220px;
+                                placeholder: "Find in document";
+                                field-label: "Find in document";
+                                value <=> root.find-query;
+                                edited(text) => { root.find-query-edited(text); }
+                                accepted => { root.find-next(); }
+                            }
+                            Text {
+                                text: "Aa";
+                                color: Tokens.text-muted;
+                                font-size: Tokens.font-small;
+                                font-weight: 700;
+                                vertical-alignment: center;
+                            }
+                            ToggleSwitch {
+                                checked <=> root.case-sensitive;
+                                label: "Match case";
+                                toggled(checked) => { root.case-toggled(checked); }
+                            }
+                            Text {
+                                text: root.match-count + " matches";
+                                color: root.match-count > 0 ? Tokens.success : Tokens.text-faint;
+                                font-size: Tokens.font-small;
+                                vertical-alignment: center;
+                            }
+                            Rectangle {
+                                height: 1px;
+                                horizontal-stretch: 1;
+                                background: transparent;
+                            }
+                            AetherButton {
+                                text: "Next";
+                                clicked => { root.find-next(); }
+                            }
+                            IconButton {
+                                kind: IconKind.close;
+                                label: "Close find";
+                                clicked => { root.close-find(); }
+                            }
+                        }
+
+                        HorizontalLayout {
+                            spacing: Tokens.space(2);
+                            cross-axis-alignment: center;
+
+                            FindField {
+                                width: 220px;
+                                placeholder: "Replace with";
+                                field-label: "Replace with";
+                                value <=> root.replace-text;
+                                edited(text) => { root.replace-edited(text); }
+                                accepted => { root.replace-all(); }
+                            }
+                            AetherButton {
+                                text: "Replace all";
+                                primary: false;
+                                clicked => { root.replace-all(); }
+                            }
+                            Rectangle {
+                                height: 1px;
+                                horizontal-stretch: 1;
+                                background: transparent;
+                            }
+                        }
+                    }
+                }
+
+                // Editing surface.
+                Rectangle {
+                    vertical-stretch: 1;
+                    background: Tokens.background;
+
+                    Text {
+                        x: Tokens.space(5);
+                        y: Tokens.space(4);
+                        text: root.doc-path;
+                        color: Tokens.text-faint;
+                        font-size: Tokens.font-small;
+                    }
+
+                    Rectangle {
+                        x: Tokens.space(5);
+                        y: Tokens.space(8);
+                        width: parent.width - Tokens.space(10);
+                        height: parent.height - Tokens.space(11);
+                        background: Tokens.background-alt;
+                        border-radius: Tokens.radius-panel;
+                        border-width: 1px;
+                        border-color: Tokens.divider;
+                        clip: true;
+
+                        editor := TextInput {
+                            x: Tokens.space(5);
+                            y: Tokens.space(4);
+                            width: parent.width - Tokens.space(10);
+                            height: parent.height - Tokens.space(8);
+                            text <=> root.editor-text;
+                            color: Tokens.text;
+                            font-size: 14px;
+                            font-family: Tokens.font-family-mono;
+                            line-height-factor: 1.45;
+                            single-line: false;
+                            wrap: word-wrap;
+                            selection-background-color: Tokens.accent-soft;
+                            selection-foreground-color: Tokens.text;
+                            accessible-label: "Document editor";
+                            edited => { root.editor-edited(self.text); }
+                        }
+                    }
+                }
+
+                Divider { }
+
+                // Status bar.
+                Rectangle {
+                    height: 36px;
+                    background: Tokens.surface-low;
+
+                    HorizontalLayout {
+                        padding-left: 20px;
+                        padding-right: 20px;
+                        spacing: Tokens.space(3);
+                        cross-axis-alignment: center;
+
+                        Text {
+                            text: root.word-count + " words";
+                            color: Tokens.text-muted;
+                            font-size: Tokens.font-small;
+                        }
+                        Text {
+                            text: root.char-count + " characters";
+                            color: Tokens.text-muted;
+                            font-size: Tokens.font-small;
+                        }
+                        Text {
+                            text: root.line-count + " lines";
+                            color: Tokens.text-muted;
+                            font-size: Tokens.font-small;
+                        }
+                        Rectangle {
+                            width: 1px;
+                            height: 14px;
+                            background: Tokens.divider;
+                        }
+                        Pill {
+                            text: root.dirty ? "Unsaved changes" : "All changes saved";
+                            tone: root.dirty ? Tokens.warning : Tokens.success;
+                        }
+                        Rectangle {
+                            horizontal-stretch: 1;
+                            background: transparent;
+                        }
+                        Text {
+                            text: root.status-note;
+                            color: Tokens.text-faint;
+                            font-size: Tokens.font-small;
+                        }
+                    }
+                }
+            }
+        }
+    }
 }

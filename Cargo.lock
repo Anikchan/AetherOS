@@ -101,6 +101,7 @@ version = "0.1.0"
 dependencies = [
  "aether-ui",
  "i-slint-backend-testing",
+ "image",
  "slint",
  "slint-build",
 ]
@@ -108,6 +109,11 @@ dependencies = [
 [[package]]
 name = "aether-installer"
 version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+]
 
 [[package]]
 name = "aether-lifecycled"
@@ -189,6 +195,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "aether-storage-analyzer"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+ "walkdir",
+]
+
+[[package]]
 name = "aether-store"
 version = "0.1.0"
 dependencies = [
@@ -240,6 +256,17 @@ dependencies = [
  "png",
  "slint",
  "slint-build",
+]
+
+[[package]]
+name = "aether-update"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror 2.0.21",
+ "toml",
 ]
 
 [[package]]
@@ -2170,6 +2197,8 @@ checksum = "85ab80394333c02fe689eaf900ab500fbd0c2213da414687ebf995a65d5a6104"
 dependencies = [
  "bytemuck",
  "byteorder-lite",
+ "color_quant",
+ "gif",
  "moxcms",
  "num-traits",
  "png",
