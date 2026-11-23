@@ -314,11 +314,11 @@ Update this table whenever a task changes state. Allowed statuses: Not started, 
 
 | Phase | Status | Owner | Last updated |
 | --- | --- | --- | --- |
-| P0 Foundation, spikes, verification setup | In progress (Done: T01, T02, T03, T04, T05, T06, T09 (partial: PSI re-test in P1), T11. T07/T08/T12 In progress via CI Linux VMs (implementation-3). T10 blocked on real battery) | Owner | 2026-11-18 |
+| P0 Foundation, spikes, verification setup | In progress (Done: T01, T02, T03, T04, T05, T06, T07, T08, T09 (partial: PSI re-test in P1), T10 (battery spike passed on Dell 2026-11-23: UPower+sysfs OK, charge-limit supported, time-remaining OK), T11, T12 (headless scope). All spikes reported; P0 essentially complete except P0-T03b (deferred to public release).) | Owner | 2026-11-23 |
 | P1 Base system boots and boot speed | In progress. **kernel-config run 44936411307 PASS (2026-11-22): all 17 required options present.** buildroot-build runs: direct kernel boot PASS (S_BOOT_LOGIN_OK, S_MOUNTS_OK, S_DHCP_OK, 23 s); image size 14 MB (≤150 MB gate pass); BIOS boot PASS (run 44948381548, S_BIOS_BOOT_OK). UEFI boot BLOCKED (P1-T05): kernel EFI stub loads under OVMF but produces no serial output; root cause under investigation (2-retry budget exhausted, 2026-11-23). T02/T03/T04/T06/T07 Done; T01 Done (kernel config). T05 Blocked; T08 partial (direct boot 23 s only; BIOS/UEFI timings unavailable). | Owner | 2026-11-23 |
-| P2 Hardware bring-up | Not started | Owner | 2026-11-17 |
+| P2 Hardware bring-up | In progress (Done: T01 (firmware list populated from Dell coverage report 2026-11-23), T07 (matrix updated with Dell Inspiron 5402 data), T08 (coverage report run on Dell — all PCI/USB/NVMe/Wi-Fi/audio Working; only host bridge/SRAM/ISA bridge have no driver, expected). Pending: T02 (graphics/Mesa), T03 (Wi-Fi/BT), T04 (audio/PipeWire), T05 (input), T06 (sleep/resume 10 cycles) — need interactive hardware tests on the Dell.) | Owner | 2026-11-23 |
 | P3 Compositor, window system, no-hang design | In progress (P3-T01 Done 2026-11-23: headless Smithay compositor skeleton builds and passes smoke test in CI — socket ready + client mapped. DRM/KMS/input/output deferred to P2. P3-T02..T08 not started.) | Owner | 2026-11-23 |
-| P4 Desktop shell and default apps | Not started | Owner | 2026-11-17 |
+| P4 Desktop shell and default apps | In progress (S3, 2026-11-23): P4-T01..T07, T09 shell surfaces and P4-T08/T10..T17 apps implemented as headless-verifiable Rust+Slint crates with render/interaction evidence; on-device F1 acceptance pending compositor session integration | Owner | 2026-11-23 |
 | P5 Process, power, Activity Manager, battery analytics | Not started | Owner | 2026-11-17 |
 | P6 Internal app platform | Not started | Owner | 2026-11-17 |
 | P7 Customization and optional feature manager (basic) | Not started | Owner | 2026-11-17 |
