@@ -9,21 +9,18 @@
 
 ## Base image size (P1-T06 budget: ≤ 150 MB compressed, G-RES1)
 
-| Image | Size (MB, compressed) | Budget | Status |
-| --- | --- | --- | --- |
-| rootfs.squashfs | 15 | ≤ 150 | **Pass** |
-
-Evidence: `Report image sizes and check budgets` step printed
-`-rw-r--r-- 1 runner runner 15M ... rootfs.squashfs` and
-`base_image_compressed_mb = 14`.
+| Image | Size (MB, compressed) | Budget | Status | Run |
+| --- | --- | --- | --- | --- |
+| rootfs.squashfs (minimal, P1) | 14 | ≤ 150 | **Pass** | 44936414669 |
+| rootfs.squashfs (with P2 additions: Mesa/Vulkan/PipeWire/firmware) | 27 | ≤ 150 | **Pass** | 45155405768 |
 
 ## Boot time (P1-T08, G-SPD0 stage budget: ≤ 10 s in VM)
 
-| Chain | Seconds to login prompt (TCG) | Budget | Status |
-| --- | --- | --- | --- |
-| Direct kernel (QEMU, virtio) | 23–24 | ≤ 10 | TCG only — not the measurement target; bare-metal (Dell) pending (P2) |
-| Legacy BIOS (GRUB2 MBR) | 27 | ≤ 10 | TCG only — not the measurement target; bare-metal (Dell) pending (P2) |
-| UEFI (GRUB2 x86_64-efi) | n/a (timeout, no login) | ≤ 10 | **Fail** — P1-T05 blocked; see tracker |
+| Chain | Seconds to login prompt (TCG) | Budget | Status | Run |
+| --- | --- | --- | --- | --- |
+| Direct kernel (QEMU, virtio) | 25 (run 44936414669) / 16 (run 45155405768) | ≤ 10 | TCG only — not the measurement target; bare-metal (Dell) pending (P2) | 44936414669 / 45155405768 |
+| Legacy BIOS (GRUB2 MBR) | 30 / 17 | ≤ 10 | TCG only — bare-metal pending (P2) | same |
+| UEFI (GRUB2 x86_64-efi) | 33 / 24 | ≤ 10 | **Pass** (S_UEFI_BOOT_OK) | 44936414669 / 45155405768 |
 
 Notes:
 - TCG timings are functional evidence only (D6 §6). The bare-metal numbers come
