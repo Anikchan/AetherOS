@@ -227,3 +227,16 @@ resume without duplication.
 - 2026-11-20: Session S3 (docs & design) completed autonomously: reviewed/updated design docs (internal-architecture ADR-004/009/012 status + Slint spike note; ui-design Slint layer-shell/blur implementation note; process-manager PSI caveat; power-management battery/PSI notes); updated feature docs 01/02/03/07 with spike findings; updated project README status line; updated p1-boot-speed.md with billing-block note (no fabricated numbers); opportunistic nexa- -> aether- rename across S3 territory (design/, features/, README, boot results). D6 logs for P0-T06/T09/T12/T07-T08 already present; P1-T06/T08 stays pending on billing. Tracker (roadmap section 4) left to S1. Parallel WIP from S1/S2/S4 left untouched.
 
 - 2026-11-20: Coordination pass (main agent). Verified all unblocked work: cargo build/test pass; ci-local.sh pass (budgets 0 failed); type-check.sh pass (x86_64-unknown-linux-gnu). S1/S2/S3/S4 autonomous runs all complete and pushed; working tree clean. Remaining blockers are owner-action only: (1) GitHub Actions billing failure (S1) — fix billing so P1 verification can run; (2) spare Dell + battery (S2) for P0-T10/P2-T08/P2-T07; (3) graphical VM / Wine + Xvfb for P0-T12 GUI (S2/S4). No further startable tasks in any session territory. Parallel WIP left untouched.
+
+- 2026-11-23: **S4 autonomous run (v2 plan).** P5-T01..T06 + P5-T08 harness
+  landed in `lifecycled/`: identity + one cgroup v2 scope per app, full D3 §3
+  state machine, SDK will-suspend/did-resume protocol with a real-socket test
+  app, freeze/`memory.reclaim`/zram mechanisms, PSI reader with reclaim-only
+  fallback, background CPU budget, pure policy with priority bands and the 2 s
+  kill-storm guard, daemon wiring with timers/persistence/metrics, and the
+  50-app + soak harness (`lifecycled/bench/`). Verified: 62 unit + 2 integration
+  tests pass, `--simulate` shows suspend→hibernate→kill with audio protection
+  and foreground safety intact; bench B1/B3/B4/B5/G-PM2/G-PM4 pass on the model,
+  B2/B6/G-PM1/G-PM3 marked pending hardware. Evidence:
+  `docs/2026/11/23/results/p5-t01-t06-lifecycle-core.md`. Working plan:
+  `docs/2026/11/23/session-s4-v2-progress.md`.

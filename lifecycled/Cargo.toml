@@ -3,5 +3,11 @@ name = "aether-lifecycled"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+description = "AetherOS lifecycle daemon: app identity, suspension, hibernation and pressure-driven killer (P5, D3)"
 
 [dependencies]
+libc = "0.2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+toml = "=1.2.1"
