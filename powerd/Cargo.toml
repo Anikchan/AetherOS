@@ -1,0 +1,12 @@
+[package]
+name = "aether-powerd"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "AetherOS power policy daemon: profiles, battery telemetry, estimator, tuner (P5, D5)"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+toml = "=1.2.1"

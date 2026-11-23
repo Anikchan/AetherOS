@@ -240,3 +240,14 @@ resume without duplication.
   B2/B6/G-PM1/G-PM3 marked pending hardware. Evidence:
   `docs/2026/11/23/results/p5-t01-t06-lifecycle-core.md`. Working plan:
   `docs/2026/11/23/session-s4-v2-progress.md`.
+- 2026-11-23: **S4** P5-T09..T17 landed in `powerd/`: profile policy (AC/battery
+  switching, user choice per source, thermal cap), runtime-PM tuner with
+  10-minute watch window + exclusions, UPower/sysfs telemetry, time-remaining
+  estimator (10% accuracy after 10 min), charge limit (40–100%), low-battery
+  state machine and sleep policy (s2idle/deep, suspend-then-hibernate needs
+  swap ≥ RAM), battery analytics (cycles/health/sessions/temp/standby/energy by
+  app/report) and screen time (screen-on/per-app/pickups/notifications/gaps).
+  Verified: 59 unit tests pass; `--simulate` rule walk-through correct;
+  sampler dry-run OK. Hardware gates G-BAT1/G-BAT2 and timed G-BAT3 remain
+  pending the owner's laptop. Evidence:
+  `docs/2026/11/23/results/p5-t09-t17-powerd.md`.

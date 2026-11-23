@@ -31,15 +31,15 @@ Must NOT touch: `os-build/kernel/`, `os-build/buildroot/`, `compositor/`,
 | 6 | P5-T06 Exceptions + background task budget | Done (logic+tests) | 10-min audio run needs hardware |
 | 7 | P5-T07 Activity Manager + spike S7 | Not started | apps/taskmanager |
 | 8 | P5-T08 50-app benchmark + 72 h soak harness | Harness Done; soak run pending (2026-11-23) | `lifecycled/bench/`, `aether-bench` |
-| 9 | P5-T09 powerd policy engine | Not started | G-BAT3 |
-| 10 | P5-T10 Runtime PM tuner + revert | Not started | |
-| 11 | P5-T11 Battery estimator | Not started | within 10% after 10 min |
-| 12 | P5-T12 Charge limit control | Not started | |
-| 13 | P5-T13 Low-battery actions + sleep policy | Not started | |
-| 14 | P5-T14 Battery benchmark + control-center view | Not started | view deferred to S3 |
-| 15 | P5-T15 Energy-impact column | Not started | taskmanager column |
-| 16 | P5-T16 Battery analytics (spike S8) | Not started | |
-| 17 | P5-T17 Screen time (basic) | Not started | |
+| 9 | P5-T09 powerd policy engine | Done (2026-11-23) | G-BAT3 policy-verified; hardware timed run pending |
+| 10 | P5-T10 Runtime PM tuner + revert | Done (2026-11-23) | revert/exclusion tested; kernel-log watcher follow-up |
+| 11 | P5-T11 Battery estimator | Done (2026-11-23) | within 10% after 10 min tested |
+| 12 | P5-T12 Charge limit control | Done (2026-11-23) | clamped 40-100, unsupported hidden |
+| 13 | P5-T13 Low-battery actions + sleep policy | Done (2026-11-23) | thresholds once/cycle, swap rule tested |
+| 14 | P5-T14 Battery benchmark + control-center view | Benchmark Done; view = S3 (2026-11-23) | `bench/`, PowerStatus JSON contract |
+| 15 | P5-T15 Energy-impact column | API Done (2026-11-23); column with P5-T07 | `energy_by_app` |
+| 16 | P5-T16 Battery analytics (spike S8) | Done (2026-11-23) | cycle count fallback tested; hardware check pending |
+| 17 | P5-T17 Screen time (basic) | Done (2026-11-23) | screen-on/per-app/pickups/notifications/gaps |
 | 18 | P6-T01 Package format + manifest inspector | Not started | |
 | 19 | P6-T02 Native bundle install & run | Not started | |
 | 20 | P6-T03 AppImage runner | Not started | |
@@ -67,3 +67,8 @@ Must NOT touch: `os-build/kernel/`, `os-build/buildroot/`, `compositor/`,
   isolated copy meanwhile and again in the workspace once ui/src landed.
   S2/S3 files left untouched; `Cargo.lock` not committed because it carries
   their in-flight slint packages.
+- 2026-11-23: P5-T09..T17 Done (powerd). 59 unit tests pass. Policy
+  walk-through verified profile switching, thermal cap, low-battery thresholds
+  and lid sleep. Benchmark sampler verified with dry-run rows. Battery view is
+  an S3 handoff (PowerStatus JSON), energy-impact API ready for P5-T07.
+  Evidence: `docs/2026/11/23/results/p5-t09-t17-powerd.md`.
