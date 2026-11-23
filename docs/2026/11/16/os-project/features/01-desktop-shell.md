@@ -54,21 +54,37 @@ Priority key: MVP (needed for the first daily-driver build), v1 (needed for rele
 
 | ID | Criterion | Result |
 | --- | --- | --- |
-| SHL-AC-01 | Menu bar shows the active app menu and updates within 100 ms of focus change | Not tested |
-| SHL-AC-02 | Dock shows running indicators; a closed app's indicator disappears within 1 s | Not tested |
-| SHL-AC-03 | Launcher opens by keyboard shortcut within 200 ms and finds apps by partial name | Not tested |
-| SHL-AC-04 | Control center changes Wi-Fi, Bluetooth, volume, and brightness | Not tested |
-| SHL-AC-05 | Focus mode hides notifications during the scheduled time and shows them after | Not tested |
-| SHL-AC-06 | Snap to halves and quarters works with a mouse drag and a keyboard shortcut | Not tested |
-| SHL-AC-07 | Glass tiers switch without restart; Minimal tier used when reduce transparency is on | Not tested |
-| SHL-AC-08 | Lock screen rejects a wrong password and accepts the right one | Not tested |
-| SHL-AC-09 | Every settings category opens and every change is written to the config file | Not tested |
-| SHL-AC-10 | Two monitors with different scales work without restart | Not tested |
-| SHL-AC-11 | Screen reader announces menu bar items and launcher results | Not tested |
+| SHL-AC-01 | Menu bar shows the active app menu and updates within 100 ms of focus change | Implemented, headless-verified (2026-11-23) — menus are property-driven; the 100 ms figure needs compositor focus events (P3-T02) |
+| SHL-AC-02 | Dock shows running indicators; a closed app's indicator disappears within 1 s | Implemented, headless-verified — indicator is bound to `App.running`; live timing needs the session |
+| SHL-AC-03 | Launcher opens by keyboard shortcut within 200 ms and finds apps by partial name | Implemented, headless-verified — Super+Space opens it, ranking is a pure function (no I/O) and partial names rank above substrings |
+| SHL-AC-04 | Control center changes Wi-Fi, Bluetooth, volume, and brightness | Implemented, headless-verified with mock services — nmcli/bluetoothctl/wpctl/brightnessctl adapters exist; on-device confirmation pending |
+| SHL-AC-05 | Focus mode hides notifications during the scheduled time and shows them after | Implemented, headless-verified — Focus hides cards and the badge without deleting; schedule editor is a v1 follow-up |
+| SHL-AC-06 | Snap to halves and quarters works with a mouse drag and a keyboard shortcut | Not tested — compositor work (P3-T04) |
+| SHL-AC-07 | Glass tiers switch without restart; Minimal tier used when reduce transparency is on | Partially verified — tier selection and the reduce-transparency override are unit-tested; live switching needs the effect pipeline (P3-T05) |
+| SHL-AC-08 | Lock screen rejects a wrong password and accepts the right one | Implemented, headless-verified — salted digest, constant-time compare; PAM/greetd integration is the remaining step |
+| SHL-AC-09 | Every settings category opens and every change is written to the config file | Implemented, headless-verified — generated from the F4 schema; each row shows file+key and writes TOML atomically |
+| SHL-AC-10 | Two monitors with different scales work without restart | Not tested — compositor work (P3-T02) |
+| SHL-AC-11 | Screen reader announces menu bar items and launcher results | Partially verified — every interactive element sets an accessible role/label (asserted by the headless tests); AT-SPI session pending |
+
+Evidence: `docs/2026/11/23/results/p4-shell-and-apps.md` and
+`docs/2026/11/23/results/screenshots/`.
 
 Status values: Not tested, Pass (date and evidence), Fail (ticket ID).
 
 ## 6. Open Questions
 
-- Dock position default: bottom (macOS-like) or side. Decide with the owner (Q1 relates to the visual reference).
-- Whether to include a start-menu-style layout as an option (Windows-friendly users). Proposed: yes, as a launcher layout option in v1.
+- Dock position default: bottom (macOS-like) or side. Decide with the owner (Q1 relates to the visual reference). **Status: the implementation ships a bottom dock; the config key `shell/dock.toml: position` is accepted by the schema but only `bottom` is rendered so far.**
+- Whether to include a start-menu-style layout as an option (Windows-friendly users). Proposed: yes, as a launcher layout option in v1. **Status: the launcher is the macOS-like centred panel; the start-menu layout remains a v1 option.**
+
+## 7. Implementation Notes (2026-11-23)
+
+- The shell is `shell/` (Rust + Slint); the visual language, widgets and icons
+  live in the shared `ui/` crate so the default apps match.
+- Every surface is rendered headlessly in CI-able form; screenshots are the P4
+  evidence.
+- Keyboard shortcuts: Super+Space (launcher), Super+A (overview), Super+N
+  (notifications), Super+C (control centre), Super+L (lock), Super+F (Focus),
+  arrows + Enter in the launcher, Esc closes any overlay. Names match the
+  `input/keybindings.toml` keys.
+- The on-device gate for this document's acceptance table is the layer-shell
+  host from P3-T02 plus greetd/PAM for the lock screen.
