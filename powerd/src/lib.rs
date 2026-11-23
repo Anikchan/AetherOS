@@ -15,6 +15,7 @@ pub mod backend;
 pub mod charge;
 pub mod daemon;
 pub mod estimator;
+pub mod limits;
 pub mod policy;
 pub mod screentime;
 pub mod sleep;
@@ -35,6 +36,10 @@ pub use daemon::{
     PowerStatus, PowerdConfig,
 };
 pub use estimator::{EstimatorConfig, RateEstimator};
+pub use limits::{
+    decide as decide_screen_time_limit, remaining_seconds, BlockDecision, DowntimeWindow,
+    LimitRule, LimitsConfig, LimitsState,
+};
 pub use policy::{
     clamp_charge_limit, LowBatteryMachine, LowBatteryState, PowerPolicyConfig, PowerPolicyImpl,
     Threshold,

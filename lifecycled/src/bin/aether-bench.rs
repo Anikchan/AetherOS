@@ -232,6 +232,10 @@ impl Bench {
             let pid = if spawn_real {
                 std::process::Command::new("/bin/sleep")
                     .arg("3600")
+                    // Do not inherit the harness stdout/stderr: otherwise a
+                    // pipeline (tail/CI log) waits for the children to exit.
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
                     .spawn()
                     .ok()
                     .map(|child| {

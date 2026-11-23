@@ -323,3 +323,11 @@ resume without duplication.
   `LIBRARY_PATH=$(brew --prefix)/lib` (the compositor needs xkbcommon).
   Remaining P8/P9/P10 tasks require the live image, RAUC, hardware, or the
   30-day dogfood period.
+- 2026-11-23: **S4** P5-T08 50-app benchmark re-run with 50 real client
+  processes: B1/B3/B4/B5/G-PM2/G-PM4 PASS (6 kills, band order), harness
+  stdout-inheritance leak fixed; compressed soak run completes. P7-PK-T02 Pack
+  E (limits/downtime + `aether-limits`, 6 tests) and P9-T06 parser fuzzing
+  (27,000+ inputs, no panic) added. Evidence:
+  `docs/2026/11/23/results/p5-t08-bench-50.md`,
+  `docs/2026/11/23/results/p7pk-e-p9-fuzz.md`. Full 72 h soak, hardware gates
+  and a coverage-guided fuzzing campaign remain pending.

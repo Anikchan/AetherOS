@@ -30,7 +30,7 @@ Must NOT touch: `os-build/kernel/`, `os-build/buildroot/`, `compositor/`,
 | 5 | P5-T05 Pressure-driven killer + priority bands | Done (policy+tests); hardware run pending | G-PM4 policy-level pass |
 | 6 | P5-T06 Exceptions + background task budget | Done (logic+tests) | 10-min audio run needs hardware |
 | 7 | P5-T07 Activity Manager + spike S7 | Core Done (2026-11-23); UI + hardware gates pending | `apps/taskmanager`; S7 verdict needs AetherOS |
-| 8 | P5-T08 50-app benchmark + 72 h soak harness | Harness Done; soak run pending (2026-11-23) | `lifecycled/bench/`, `aether-bench` |
+| 8 | P5-T08 50-app benchmark + 72 h soak harness | 50-app real-process run PASS (2026-11-23); 72 h soak pending hardware | `lifecycled/bench/`, report in results/ |
 | 9 | P5-T09 powerd policy engine | Done (2026-11-23) | G-BAT3 policy-verified; hardware timed run pending |
 | 10 | P5-T10 Runtime PM tuner + revert | Done (2026-11-23) | revert/exclusion tested; kernel-log watcher follow-up |
 | 11 | P5-T11 Battery estimator | Done (2026-11-23) | within 10% after 10 min tested |
@@ -48,7 +48,7 @@ Must NOT touch: `os-build/kernel/`, `os-build/buildroot/`, `compositor/`,
 | 23 | P6-T07/T08 Cross-platform bundles, macOS detector | Done (2026-11-23) | `aether-samples` 3 bundles verified; macOS alternative message |
 | 24 | P6-T09 Software app (basic) | Core Done (2026-11-23) | scan/search/install/update/remove; UI = S3 |
 | 25 | P6-T10 Compatibility database | Schema+gate Done; results untested (2026-11-23) | 40 slots, gate A/B>=30 OPEN |
-| 26 | P7/P8/P9/P10 startable items | P7/P8 core + Pack G + checksums + firewall + guides Done (2026-11-23); live image/RAUC/hardware pending | evidence in results/ |
+| 26 | P7/P8/P9/P10 startable items | P7/P8 core + Pack E/G + checksums + firewall + guides + fuzz harness Done (2026-11-23); live image/RAUC/hardware/72 h soak pending | evidence in results/ |
 | 27 | Docs & design pass (D3/D5/D8/D10, feature docs, README) | Continuous | |
 
 ## Progress log
