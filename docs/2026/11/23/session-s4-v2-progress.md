@@ -48,7 +48,7 @@ Must NOT touch: `os-build/kernel/`, `os-build/buildroot/`, `compositor/`,
 | 23 | P6-T07/T08 Cross-platform bundles, macOS detector | Done (2026-11-23) | `aether-samples` 3 bundles verified; macOS alternative message |
 | 24 | P6-T09 Software app (basic) | Core Done (2026-11-23) | scan/search/install/update/remove; UI = S3 |
 | 25 | P6-T10 Compatibility database | Schema+gate Done; results untested (2026-11-23) | 40 slots, gate A/B>=30 OPEN |
-| 26 | P7/P8/P9/P10 startable items | P7/P8 core + Pack E/G + checksums + firewall + guides + fuzz harness Done (2026-11-23); live image/RAUC/hardware/72 h soak pending | evidence in results/ |
+| 26 | P7/P8/P9/P10 startable items | P7/P8 core + Packs E/G + P9 update state machine + checksums/firewall/guides/fuzz Done (2026-11-23); live image/RAUC wiring/hardware/72 h soak pending | evidence in results/ |
 | 27 | Docs & design pass (D3/D5/D8/D10, feature docs, README) | Continuous | |
 
 ## Progress log

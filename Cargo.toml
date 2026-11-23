@@ -12,6 +12,7 @@ members = [
     "powerd",
     "config",
     "installer",
+    "update",
     "apps/text",
     "apps/calculator",
     "apps/files",

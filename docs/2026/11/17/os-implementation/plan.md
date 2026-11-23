@@ -331,3 +331,10 @@ resume without duplication.
   `docs/2026/11/23/results/p5-t08-bench-50.md`,
   `docs/2026/11/23/results/p7pk-e-p9-fuzz.md`. Full 72 h soak, hardware gates
   and a coverage-guided fuzzing campaign remain pending.
+- 2026-11-23: **S4** P9-T01/T02 A/B update state machine in `update/`:
+  checksum/signature/downgrade guards, inactive-slot staging, pending→active,
+  boot-attempt limit with automatic rollback, health pass/fail, JSON
+  persistence, `aether-update` CLI. Verified: 9 tests pass and the CLI rolls
+  back on the 4th boot. RAUC image wiring and real boot-failure detection stay
+  pending (S1 image work). Evidence:
+  `docs/2026/11/23/results/p9-ab-updates.md`.
