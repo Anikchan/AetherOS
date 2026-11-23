@@ -102,6 +102,21 @@ Slint testing backend and asserts model, UI and file effects —
 | Lock screen | wrong password shows the error and keeps the lock; correct password unlocks |
 | Overview | clicking a window card activates it and closes the overlay |
 
+### P4-T18a media decision record
+
+- **Engine**: WebKitGTK 6.0 embedded through the platform surface; the chrome
+  and data model are engine-agnostic (`apps/browser/src/engine.rs`).
+- **Codecs**: the public image ships royalty-free codecs only (VP9, Opus, AV1).
+  H.264/AAC are excluded from the shipped image per the P0-T03 legal note, so a
+  page that requires them shows an explicit "codec unavailable" state (reduced
+  quality path) rather than failing silently.
+- **DRM/EME**: off by default; enabling it is a per-user choice (owner decision
+  recorded in Q24: lighter browser, HD-or-reduced playback).
+- **State today**: hardware-accelerated playback and streaming sites are
+  **blocked on the graphics session** (GPU + compositor surfaces). The transport
+  and policy above are what T18a will implement; no playback path is claimed as
+  tested.
+
 ## 3. Evidence screenshots
 
 All rendered headlessly with the software renderer (`aether-ui::render`):
