@@ -29,6 +29,9 @@ CONFIG_BTRFS_FS=y
 CONFIG_EFI=y
 CONFIG_EFI_STUB=y
 CONFIG_EFIVAR_FS=y
+# Serial console (needed for UEFI boot output on OVMF/real hardware)
+CONFIG_SERIAL_8250=y
+CONFIG_SERIAL_8250_CONSOLE=y
 # Fallback command line for UEFI (systemd-boot may not pass options correctly).
 # Not forced: the bootloader's -append/cmdline takes precedence when present
 # (direct BIOS boot uses root=/dev/vda via -append).
