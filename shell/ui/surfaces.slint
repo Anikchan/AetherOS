@@ -979,6 +979,7 @@ export component Overview inherits Rectangle {
 
     callback activated(string);
     callback dismissed();
+    callback workspace-selected(int);
 
     background: Tokens.scrim;
 
@@ -1044,7 +1045,7 @@ export component Overview inherits Rectangle {
                 accessible-role: tab;
                 accessible-label: "Workspace " + (ws + 1);
                 Text { text: "" + (ws + 1); color: Tokens.text-muted; font-size: Tokens.font-small; horizontal-alignment: center; vertical-alignment: center; }
-                TouchArea { clicked => { root.workspace = ws; } }
+                TouchArea { clicked => { root.workspace-selected(ws); } }
             }
         }
     }
@@ -1060,6 +1061,7 @@ export component SettingsApp inherits Rectangle {
 
     callback row-toggled(string, bool);
     callback row-activated(string);
+    callback page-changed(int);
 
     background: Tokens.background;
 
@@ -1094,7 +1096,7 @@ export component SettingsApp inherits Rectangle {
                         Icon { kind: category.icon; size: 15px; tint: idx == root.page ? Tokens.accent-strong : Tokens.text-muted; }
                         Text { text: category.name; color: Tokens.text; font-size: Tokens.font-body; vertical-alignment: center; }
                     }
-                    ta := TouchArea { clicked => { root.page = idx; } }
+                    ta := TouchArea { clicked => { root.page-changed(idx); } }
                 }
             }
         }
@@ -1213,6 +1215,8 @@ export component ShellRoot inherits Window {
     callback overlay-requested(int);
     callback settings-row-toggled(string, bool);
     callback settings-row-activated(string);
+    callback settings-page-requested(int);
+    callback workspace-requested(int);
     callback window-activated(string);
 
     Wallpaper { width: 100%; height: 100%; }
@@ -1318,7 +1322,9 @@ export component ShellRoot inherits Window {
     }
 
     // Overlay surfaces.
-    if root.overlay != 0 : Rectangle {
+    // Scrim closes panels, but never the lock screen: it has no dismiss path
+    // other than the password.
+    if root.overlay != 0 && root.overlay != 6 : Rectangle {
         width: 100%;
         height: 100%;
         background: #05070A66;
@@ -1379,6 +1385,7 @@ export component ShellRoot inherits Window {
         tier: root.tier;
         activated(id) => { root.window-activated(id); }
         dismissed => { root.overlay-requested(0); }
+        workspace-selected(index) => { root.workspace-requested(index); }
     }
 
     if root.overlay == 5 : SettingsApp {
@@ -1391,6 +1398,7 @@ export component ShellRoot inherits Window {
         rows: root.settings-rows;
         row-toggled(key, value) => { root.settings-row-toggled(key, value); }
         row-activated(key) => { root.settings-row-activated(key); }
+        page-changed(index) => { root.settings-page-requested(index); }
     }
 
     if root.overlay == 6 : LockScreen {

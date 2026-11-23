@@ -643,9 +643,25 @@ impl Document {
             }
         }
         let (bytes, encoding) = self.encoding.encode(&self.text);
-        fs::write(&path, bytes).map_err(|error| {
-            DocumentError::Io(format!("cannot write {}: {error}", path.display()))
+        // Atomic save: write a sibling temp file, then rename over the target,
+        // so a crash mid-write cannot truncate the document.
+        let temp = path.with_extension(format!(
+            "{}tmp",
+            path.extension()
+                .and_then(|ext| ext.to_str())
+                .map(|ext| format!("{ext}."))
+                .unwrap_or_default()
+        ));
+        fs::write(&temp, &bytes).map_err(|error| {
+            DocumentError::Io(format!("cannot write {}: {error}", temp.display()))
         })?;
+        if let Err(error) = fs::rename(&temp, &path) {
+            let _ = fs::remove_file(&temp);
+            return Err(DocumentError::Io(format!(
+                "cannot replace {}: {error}",
+                path.display()
+            )));
+        }
         self.encoding = encoding;
         self.path = Some(path.clone());
         self.saved = self.text.clone();

@@ -60,9 +60,35 @@ pub struct FilesState {
 }
 
 impl FilesState {
+    /// State rooted at the sandbox root.
+    pub fn root(sandbox: Sandbox) -> FilesState {
+        let cwd = sandbox.root().to_path_buf();
+        FilesState {
+            cwd,
+            sandbox,
+            entries: Vec::new(),
+            selection: Selection::default(),
+            clipboard: None,
+            sort: SortKey::Name,
+            ascending: true,
+            query: String::new(),
+            view: ViewMode::List,
+            back: Vec::new(),
+            forward: Vec::new(),
+            status: String::new(),
+        }
+    }
+
     fn open(&mut self, dir: &Path) -> Result<(), FsError> {
+        self.navigate(dir, true)
+    }
+
+    /// Move to `dir`. `record` is false for Back/Forward, which manage the
+    /// history stacks themselves (recording there used to clear `forward`
+    /// immediately, so Forward never worked).
+    fn navigate(&mut self, dir: &Path, record: bool) -> Result<(), FsError> {
         let dir = self.sandbox.resolve(dir)?;
-        if dir != self.cwd {
+        if record && dir != self.cwd {
             self.back.push(self.cwd.clone());
             self.forward.clear();
         }
@@ -79,6 +105,28 @@ impl FilesState {
         self.selection
             .retain(|path| paths.iter().any(|known| known == path));
         self.entries = entries;
+        Ok(())
+    }
+
+    /// Go back one folder in history.
+    pub fn go_back(&mut self) -> Result<(), FsError> {
+        let Some(previous) = self.back.pop() else {
+            return Ok(());
+        };
+        let current = self.cwd.clone();
+        self.navigate(&previous, false)?;
+        self.forward.push(current);
+        Ok(())
+    }
+
+    /// Go forward one folder in history.
+    pub fn go_forward(&mut self) -> Result<(), FsError> {
+        let Some(next) = self.forward.pop() else {
+            return Ok(());
+        };
+        let current = self.cwd.clone();
+        self.navigate(&next, false)?;
+        self.back.push(current);
         Ok(())
     }
 
@@ -248,6 +296,47 @@ fn action_navigate(ui: &FilesApp, state: &mut FilesState, target: &str) {
     refresh(ui, state);
 }
 
+fn action_open_row(ui: &FilesApp, state: &mut FilesState, index: i32) {
+    let Some(entry) = usize::try_from(index)
+        .ok()
+        .and_then(|index| state.entries.get(index))
+        .cloned()
+    else {
+        return;
+    };
+    if entry.kind == fsops::EntryKind::Directory {
+        match state.open(&entry.path) {
+            Ok(()) => state.status = state.folder_status(),
+            Err(error) => state.status = error.to_string(),
+        }
+        refresh(ui, state);
+    } else {
+        state.status = format!("{} opens with the default app (P6)", entry.name);
+        refresh(ui, state);
+    }
+}
+
+/// Open the selected entry (toolbar "Open" and Enter).
+fn action_open_selected(ui: &FilesApp, state: &mut FilesState) {
+    let Some(path) = state.selection.items().first().cloned() else {
+        state.status = "Select a folder to open".to_string();
+        refresh(ui, state);
+        return;
+    };
+    if path.is_dir() {
+        match state.open(&path) {
+            Ok(()) => state.status = state.folder_status(),
+            Err(error) => state.status = error.to_string(),
+        }
+    } else {
+        state.status = format!(
+            "{} opens with the default app (P6)",
+            path.file_name().unwrap_or_default().to_string_lossy()
+        );
+    }
+    refresh(ui, state);
+}
+
 fn action_select(ui: &FilesApp, state: &mut FilesState, index: i32) {
     if let Some(entry) = state.entries.get(index.max(0) as usize).cloned() {
         state.selection.toggle(&entry.path);
@@ -281,25 +370,17 @@ fn action_search(ui: &FilesApp, state: &mut FilesState, text: &str) {
 }
 
 fn action_back(ui: &FilesApp, state: &mut FilesState) {
-    if let Some(previous) = state.back.pop() {
-        let current = state.cwd.clone();
-        state.forward.push(current);
-        match state.open(&previous) {
-            Ok(()) => state.status = state.folder_status(),
-            Err(error) => state.status = error.to_string(),
-        }
+    match state.go_back() {
+        Ok(()) => state.status = state.folder_status(),
+        Err(error) => state.status = error.to_string(),
     }
     refresh(ui, state);
 }
 
 fn action_forward(ui: &FilesApp, state: &mut FilesState) {
-    if let Some(next) = state.forward.pop() {
-        let current = state.cwd.clone();
-        state.back.push(current);
-        match state.open(&next) {
-            Ok(()) => state.status = state.folder_status(),
-            Err(error) => state.status = error.to_string(),
-        }
+    match state.go_forward() {
+        Ok(()) => state.status = state.folder_status(),
+        Err(error) => state.status = error.to_string(),
     }
     refresh(ui, state);
 }
@@ -434,20 +515,9 @@ impl FilesController {
 
     pub fn with_sandbox(sandbox: Sandbox) -> Result<Self, String> {
         let ui = FilesApp::new().map_err(|error| error.to_string())?;
-        let state = FilesState {
-            cwd: sandbox.root().to_path_buf(),
-            sandbox,
-            entries: Vec::new(),
-            selection: Selection::new(),
-            clipboard: None,
-            sort: SortKey::Name,
-            ascending: true,
-            query: String::new(),
-            view: ViewMode::List,
-            back: Vec::new(),
-            forward: Vec::new(),
-            status: "Ready".to_string(),
-        };
+        let mut state = FilesState::root(sandbox);
+        state.selection = Selection::new();
+        state.status = "Ready".to_string();
         let state = Rc::new(RefCell::new(state));
         let controller = Self { ui, state };
         controller.wire();
@@ -505,6 +575,18 @@ impl FilesController {
             Err(error) => state.status = error.to_string(),
         }
         refresh(&self.ui, &state);
+    }
+
+    /// Open a row: folders navigate, files are handed to their app (P6).
+    pub fn open_row(&self, index: i32) {
+        let mut state = self.state.borrow_mut();
+        action_open_row(&self.ui, &mut state, index);
+    }
+
+    /// Open the current selection (toolbar "Open").
+    pub fn open_selected(&self) {
+        let mut state = self.state.borrow_mut();
+        action_open_selected(&self.ui, &mut state);
     }
 
     pub fn select_row(&self, index: i32) {
@@ -599,6 +681,12 @@ impl FilesController {
         bind!(on_select_row, |index| (ui, state) => {
             action_select(&ui, &mut state, index);
         });
+        bind!(on_open_row, |index| (ui, state) => {
+            action_open_row(&ui, &mut state, index);
+        });
+        bind!(on_open_selected, (ui, state) => {
+            action_open_selected(&ui, &mut state);
+        });
         bind!(on_view_changed, |index| (ui, state) => {
             action_view(&ui, &mut state, index);
         });
@@ -663,4 +751,62 @@ fn build_demo_tree(root: &Path) -> Result<(), std::io::Error> {
     fs::write(downloads.join("aether-sdk.tar.gz"), payload(30 * 1024))?;
     fs::write(projects.join("README.md"), "# Projects\n")?;
     Ok(())
+}
+
+
+#[cfg(test)]
+mod navigation_tests {
+    use super::*;
+
+    fn sandbox() -> (PathBuf, FilesState) {
+        let root = std::env::temp_dir().join(format!(
+            "aether-files-nav-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(root.join("A")).unwrap();
+        std::fs::create_dir_all(root.join("B")).unwrap();
+        let sandbox = Sandbox::new(&root).unwrap();
+        let root = sandbox.root().to_path_buf();
+        (root.clone(), FilesState::root(sandbox))
+    }
+
+    #[test]
+    fn back_and_forward_track_history_in_both_directions() {
+        let (root, mut state) = sandbox();
+        state.open(&root.join("A")).unwrap();
+        state.open(&root.join("B")).unwrap();
+        assert_eq!(state.cwd, root.join("B"));
+        assert_eq!(state.back.len(), 2);
+
+        state.go_back().unwrap();
+        assert_eq!(state.cwd, root.join("A"));
+        assert_eq!(state.forward.len(), 1, "forward is available");
+
+        state.go_back().unwrap();
+        assert_eq!(state.cwd, state.sandbox.root());
+
+        state.go_forward().unwrap();
+        assert_eq!(state.cwd, root.join("A"), "forward returns to A");
+        state.go_forward().unwrap();
+        assert_eq!(state.cwd, root.join("B"), "forward returns to B");
+        assert!(state.back.len() == 2);
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn opening_a_new_folder_clears_the_forward_stack() {
+        let (root, mut state) = sandbox();
+        state.open(&root.join("A")).unwrap();
+        state.open(&root.join("B")).unwrap();
+        state.go_back().unwrap();
+        state.open(&root.join("A")).ok();
+        state.open(&root.join("B")).unwrap();
+        assert!(state.forward.is_empty(), "forward clears on a new navigation");
+        let _ = std::fs::remove_dir_all(root);
+    }
 }

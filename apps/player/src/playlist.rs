@@ -34,7 +34,7 @@ impl Track {
     ) -> Track {
         let id = id.into();
         Track {
-            uri: format!("file:///home/anik/Music/{id}.flac"),
+            uri: format!("file:///home/aether/Music/{id}.flac"),
             id,
             title: title.into(),
             artist: artist.into(),
@@ -204,6 +204,7 @@ impl Playlist {
         if index >= self.tracks.len() {
             return None;
         }
+        let order_position = self.order.iter().position(|&queued| queued == index);
         let removed = self.tracks.remove(index);
         let was_current = self.current_index() == Some(index);
         self.order.retain(|&queued| queued != index);
@@ -214,6 +215,13 @@ impl Playlist {
         }
         if !self.shuffle {
             self.order = (0..self.tracks.len()).collect();
+        }
+        // Removing a track before the playing one shifts the play order left,
+        // so the cursor must follow to keep the same track playing.
+        if let Some(position) = order_position {
+            if !was_current && position < self.cursor && self.cursor > 0 {
+                self.cursor -= 1;
+            }
         }
         if was_current || self.cursor >= self.order.len() {
             self.cursor = self.cursor.min(self.order.len().saturating_sub(1));
@@ -414,6 +422,23 @@ mod tests {
         assert_eq!(playlist.current(), None);
         assert_eq!(playlist.position(), None);
         assert_eq!(playlist.total_duration(), Duration::ZERO);
+    }
+
+    #[test]
+    fn removing_an_earlier_track_keeps_the_current_track_playing() {
+        let mut playlist = playlist();
+        // Play the third track ("Neon Rain").
+        playlist.select(2);
+        assert_eq!(playlist.current().unwrap().title, "Neon Rain");
+        playlist.remove(0);
+        assert_eq!(
+            playlist.current().unwrap().title,
+            "Neon Rain",
+            "removing an earlier track must not skip to the next one"
+        );
+        // Removing a later track leaves the current one alone.
+        playlist.remove(3);
+        assert_eq!(playlist.current().unwrap().title, "Neon Rain");
     }
 
     #[test]

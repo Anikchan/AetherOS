@@ -341,13 +341,13 @@ mod tests {
     fn play_command_contains_the_uri() {
         let bin = fake_bin("command", &["gst-play-1.0"]);
         let engine = GStreamerEngine::detect_in(&bin.display().to_string()).unwrap();
-        let command = engine.play_command("file:///home/anik/Music/glass.flac");
+        let command = engine.play_command("file:///home/aether/Music/glass.flac");
         assert!(command.program.ends_with("gst-play-1.0"));
-        assert_eq!(command.args, vec!["file:///home/anik/Music/glass.flac"]);
+        assert_eq!(command.args, vec!["file:///home/aether/Music/glass.flac"]);
         assert_eq!(
             command.command_line(),
             format!(
-                "{} file:///home/anik/Music/glass.flac",
+                "{} file:///home/aether/Music/glass.flac",
                 command.program.display()
             )
         );

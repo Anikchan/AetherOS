@@ -396,6 +396,24 @@ impl ShellController {
         }
         self.ui
             .on_settings_row_activated(on(Self::activate_setting));
+        {
+            let weak = Rc::downgrade(self);
+            self.ui.on_settings_page_requested(move |index| {
+                if let Some(controller) = weak.upgrade() {
+                    let page = (index.max(0) as usize).min(Category::ALL.len() - 1);
+                    controller.open_settings_category(Category::ALL[page]);
+                }
+            });
+        }
+        {
+            let weak = Rc::downgrade(self);
+            self.ui.on_workspace_requested(move |index| {
+                if let Some(controller) = weak.upgrade() {
+                    controller.state.borrow_mut().workspace = (index.max(0) as usize).min(3);
+                    controller.sync();
+                }
+            });
+        }
         self.ui.on_window_activated(on(Self::activate_window));
     }
 
@@ -421,7 +439,6 @@ impl ShellController {
         self.ui.set_dock_auto_hide(state.dock_auto_hide);
         self.ui.set_search_query(state.search_query.clone().into());
         self.ui.set_search_selected(state.search_selected as i32);
-        self.ui.set_lock_password(slint::SharedString::new());
         self.ui.set_lock_error(state.lock_error.clone().into());
         self.ui.set_unlocking(state.unlocking);
 
@@ -659,7 +676,6 @@ impl ShellController {
                 } else {
                     None
                 };
-                state.focus_until = None;
             }
         }
         let keyed = match id {
@@ -773,7 +789,17 @@ impl ShellController {
     fn set_setting_bool(&self, key: &str, value: bool) {
         let _ = self.store.save(key, toml::Value::Boolean(value));
         if let Some(def) = config::find_setting(key) {
-            self.state.borrow_mut().set_toggle(key, value);
+            // Settings use dotted file keys; live state uses short ids. Without
+            // this mapping a settings toggle wrote the file but left the shell
+            // (and its services) on the old value.
+            let live_id = match key {
+                "network.wifi" => "wifi",
+                "network.bluetooth" => "bluetooth",
+                "display.night-light" => "night-light",
+                "notifications.focus-enabled" => "focus",
+                other => other,
+            };
+            self.state.borrow_mut().set_toggle(live_id, value);
             if def.key.starts_with("theme.") {
                 self.log.borrow_mut().push(format!("theme {key}={value}"));
             }
@@ -861,14 +887,19 @@ impl ShellController {
 
     /// Update the clock and date (called on a one-minute timer by the binary).
     pub fn tick(&self, now: &chrono::DateTime<chrono::Local>) {
-        {
+        let minute = (now.hour() * 60 + now.minute()) as u16;
+        let focus_changed = {
             let mut state = self.state.borrow_mut();
             state.clock = model::format_clock(now);
             state.date_label = model::format_date(now);
-            state.now_minute = (now.hour() * 60 + now.minute()) as u16;
-        }
+            state.refresh_time(minute)
+        };
         self.ui.set_clock(model::format_clock(now).into());
         self.ui.set_date_label(model::format_date(now).into());
+        if focus_changed {
+            // Focus started or ended with the clock: refresh badges and cards.
+            self.sync();
+        }
     }
 
     pub fn open(&self, overlay: Overlay) {

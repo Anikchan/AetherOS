@@ -58,11 +58,11 @@ Priority key: MVP (needed for the first daily-driver build), v1 (needed for rele
 | SHL-AC-02 | Dock shows running indicators; a closed app's indicator disappears within 1 s | Implemented, headless-verified — indicator is bound to `App.running`; live timing needs the session |
 | SHL-AC-03 | Launcher opens by keyboard shortcut within 200 ms and finds apps by partial name | Implemented, headless-verified — Super+Space opens it, ranking is a pure function (no I/O) and partial names rank above substrings |
 | SHL-AC-04 | Control center changes Wi-Fi, Bluetooth, volume, and brightness | Implemented, headless-verified with mock services — nmcli/bluetoothctl/wpctl/brightnessctl adapters exist; on-device confirmation pending |
-| SHL-AC-05 | Focus mode hides notifications during the scheduled time and shows them after | Implemented, headless-verified — Focus hides cards and the badge without deleting; schedule editor is a v1 follow-up |
+| SHL-AC-05 | Focus mode hides notifications during the scheduled time and shows them after | Implemented, headless-verified — the daily window comes from `notifications.toml` (`focus-start`/`focus-end`, overnight supported), manual Focus runs two hours, the minute tick expires it and refreshes cards and badge; the settings pane edits the keys |
 | SHL-AC-06 | Snap to halves and quarters works with a mouse drag and a keyboard shortcut | Not tested — compositor work (P3-T04) |
 | SHL-AC-07 | Glass tiers switch without restart; Minimal tier used when reduce transparency is on | Partially verified — tier selection and the reduce-transparency override are unit-tested; live switching needs the effect pipeline (P3-T05) |
-| SHL-AC-08 | Lock screen rejects a wrong password and accepts the right one | Implemented, headless-verified — salted digest, constant-time compare; PAM/greetd integration is the remaining step |
-| SHL-AC-09 | Every settings category opens and every change is written to the config file | Implemented, headless-verified — generated from the F4 schema; each row shows file+key and writes TOML atomically |
+| SHL-AC-08 | Lock screen rejects a wrong password and accepts the right one | Implemented, headless-verified — salted digest, constant-time compare, and the screen is modal: scrim, Escape and shortcuts cannot dismiss it (asserted); PAM/greetd integration is the remaining step |
+| SHL-AC-09 | Every settings category opens and every change is written to the config file | Implemented, headless-verified — categories switch the page (clicked in the test), rows are generated from the F4 schema, each shows file+key, and writes are atomic and read back from disk |
 | SHL-AC-10 | Two monitors with different scales work without restart | Not tested — compositor work (P3-T02) |
 | SHL-AC-11 | Screen reader announces menu bar items and launcher results | Partially verified — every interactive element sets an accessible role/label (asserted by the headless tests); AT-SPI session pending |
 

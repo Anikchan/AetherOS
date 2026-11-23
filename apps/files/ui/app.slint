@@ -66,6 +66,7 @@ component FileRowView inherits Rectangle {
     in property <FileRow> data;
     in property <int> view: 0;
     callback activate();
+    callback opened();
 
     height: 36px;
     border-radius: Tokens.radius-button;
@@ -118,6 +119,7 @@ component FileRowView inherits Rectangle {
     }
     ta := TouchArea {
         clicked => { root.activate(); }
+        double-clicked => { root.opened(); }
     }
 }
 
@@ -145,6 +147,8 @@ export component FilesApp inherits Window {
     // --- intents -----------------------------------------------------------
     callback navigate(string);
     callback select_row(int);
+    callback open_row(int);
+    callback open_selected();
     callback go_back();
     callback go_forward();
     callback go_up();
@@ -297,6 +301,12 @@ export component FilesApp inherits Window {
                                 padding-top: Tokens.space(2);
                                 padding-bottom: Tokens.space(2);
                                 spacing: Tokens.space(2);
+                                AetherButton {
+                                    text: "Open";
+                                    icon: IconKind.folder;
+                                    show-icon: true;
+                                    clicked => { root.open_selected(); }
+                                }
                                 AetherButton {
                                     text: "New folder";
                                     icon: IconKind.plus;
@@ -456,6 +466,8 @@ export component FilesApp inherits Window {
                                     data: entry;
                                     view: root.view_mode;
                                     activate => { root.select_row(idx); }
+                                    // Double-click opens folders (F1 SHL-12).
+                                    opened => { root.open_row(idx); }
                                 }
                             }
                         }

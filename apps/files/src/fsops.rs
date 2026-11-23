@@ -18,6 +18,8 @@ pub enum FsError {
     OutsideSandbox(PathBuf),
     /// A name or destination that would corrupt the operation.
     InvalidName(String),
+    /// The target already exists and would be overwritten.
+    AlreadyExists(String),
     /// A filesystem call failed.
     Io { path: PathBuf, source: io::Error },
 }
@@ -43,6 +45,7 @@ impl std::fmt::Display for FsError {
                 write!(f, "{} is outside the sandbox", path.display())
             }
             FsError::InvalidName(name) => write!(f, "invalid name: {name}"),
+            FsError::AlreadyExists(name) => write!(f, "already exists: {name}"),
             FsError::Io { path, source } => write!(f, "{}: {source}", path.display()),
         }
     }
@@ -377,6 +380,11 @@ pub fn rename(sandbox: &Sandbox, path: &Path, new_name: &str) -> Result<PathBuf,
     let target = parent.join(new_name);
     if target == path {
         return Ok(path);
+    }
+    // fs::rename would silently replace an existing entry on Unix, which loses
+    // data without warning. Refuse instead and let the user pick another name.
+    if fs::symlink_metadata(&target).is_ok() {
+        return Err(FsError::AlreadyExists(target.display().to_string()));
     }
     fs::rename(&path, &target).map_err(|e| FsError::io(&path, e))?;
     Ok(target)
@@ -802,6 +810,24 @@ mod tests {
         // Moving into the current parent is a no-op, not a duplicate.
         let same = move_entry(&sandbox, &moved, &folder).unwrap();
         assert_eq!(same, moved);
+    }
+
+    #[test]
+    fn rename_refuses_to_overwrite_an_existing_entry() {
+        let (root, sandbox) = fixture();
+        fs::write(root.join("b.txt"), "BBB").unwrap();
+        let error = rename(&sandbox, &root.join("readme.txt"), "b.txt").unwrap_err();
+        assert!(matches!(error, FsError::AlreadyExists(_)));
+        assert_eq!(fs::read_to_string(root.join("readme.txt")).unwrap(), "hello");
+        assert_eq!(
+            fs::read_to_string(root.join("b.txt")).unwrap(),
+            "BBB",
+            "the existing file is untouched"
+        );
+        // A free name still works.
+        rename(&sandbox, &root.join("readme.txt"), "renamed.txt").unwrap();
+        assert!(root.join("renamed.txt").exists());
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]

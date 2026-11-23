@@ -190,6 +190,17 @@ fn shell_surfaces_are_interactive() {
             Some(false),
             "toggling a row writes the TOML key"
         );
+        // Sidebar categories switch the page and its rows (the click used to be
+        // lost because the parent owns the `page` binding).
+        click(ui, "Display").await;
+        assert_eq!(ui.get_settings_page(), 1);
+        assert!(ui
+            .get_settings_rows()
+            .iter()
+            .any(|row| row.file.to_string() == "display.toml"));
+        click(ui, "Appearance").await;
+        assert_eq!(ui.get_settings_page(), 0);
+
         // Select rows cycle their values and persist them.
         controller.settings_category(Category::Appearance);
         click(ui, "Effects tier").await;
@@ -233,6 +244,14 @@ fn shell_surfaces_are_interactive() {
         let password = ElementHandle::find_by_accessible_label(ui, "Password")
             .next()
             .expect("password field is in the tree");
+        // The lock screen is modal: scrim/Escape/shortcuts must not dismiss it.
+        controller.open(Overlay::None);
+        assert_eq!(controller.state().overlay, Overlay::Lock, "scrim cannot dismiss the lock");
+        controller.handle_shortcut("escape");
+        assert_eq!(controller.state().overlay, Overlay::Lock, "Escape cannot dismiss the lock");
+        controller.handle_shortcut("super+space");
+        assert_eq!(controller.state().overlay, Overlay::Lock, "launcher cannot open over the lock");
+
         password.set_accessible_value("wrong");
         click(ui, "Unlock").await;
         assert!(ui.get_lock_error().to_string().contains("Incorrect"));

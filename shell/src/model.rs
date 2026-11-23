@@ -285,7 +285,6 @@ pub struct ShellState {
     pub date_label: String,
     pub wifi: bool,
     pub bluetooth: bool,
-    pub focus_until: Option<String>,
     pub focus_schedule: Option<FocusSchedule>,
     /// Minutes since midnight; refreshed by the host's minute timer.
     pub now_minute: u16,
@@ -319,7 +318,6 @@ impl Default for ShellState {
             date_label: "Monday, 23 November".to_string(),
             wifi: true,
             bluetooth: true,
-            focus_until: None,
             focus_schedule: None,
             now_minute: 9 * 60 + 41,
             night_light: false,
@@ -373,20 +371,44 @@ impl ShellState {
         }
     }
 
+    /// Focus is on when the daily window contains the current minute, so a
+    /// manual Focus (a two-hour window) expires on its own at the next tick.
     pub fn focus_active(&self) -> bool {
-        if self.focus_until.is_some() {
-            return true;
-        }
         self.focus_schedule
             .is_some_and(|schedule| schedule.active_at(self.now_minute))
     }
 
-    /// Label for the Focus banner: the manual end time or the schedule.
+    /// Label for the Focus banner: the active window, for example "09:00–17:00".
     pub fn focus_label(&self) -> Option<String> {
-        if let Some(until) = &self.focus_until {
-            return Some(until.clone());
-        }
         self.focus_schedule.map(|schedule| schedule.label())
+    }
+
+    /// Manually start or stop a Focus session. Starting one without a
+    /// configured window uses two hours from now.
+    pub fn set_focus(&mut self, on: bool) {
+        if !on {
+            self.focus_schedule = None;
+            return;
+        }
+        if self.focus_active() {
+            return;
+        }
+        let end = (self.now_minute + 120) % 1440;
+        self.focus_schedule = Some(FocusSchedule::new(self.now_minute, end));
+    }
+
+    /// Test helper: is Focus active at a given minute without mutating state.
+    pub fn focus_active_at(&self, minute_of_day: u16) -> bool {
+        self.focus_schedule
+            .is_some_and(|schedule| schedule.active_at(minute_of_day))
+    }
+
+    /// Called by the host's minute timer: expires a finished Focus window.
+    /// Returns `true` when the active state changed (the caller must resync).
+    pub fn refresh_time(&mut self, minute_of_day: u16) -> bool {
+        let before = self.focus_active();
+        self.now_minute = minute_of_day % 1440;
+        before != self.focus_active()
     }
 
     pub fn unread_count(&self) -> usize {
@@ -424,6 +446,11 @@ impl ShellState {
     }
 
     pub fn set_overlay(&mut self, overlay: Overlay) {
+        // The lock screen is modal: nothing may replace it except a successful
+        // unlock (which writes `overlay` directly).
+        if self.overlay == Overlay::Lock && overlay != Overlay::Lock {
+            return;
+        }
         if overlay == Overlay::Launcher {
             self.search_selected = 0;
         }
@@ -431,7 +458,15 @@ impl ShellState {
     }
 
     pub fn toggle_overlay(&mut self, requested: Overlay) {
-        self.set_overlay(self.overlay.toggle(requested));
+        if self.overlay == Overlay::Lock {
+            // Lock never toggles off (P4-T06): only the password does that.
+            return;
+        }
+        if requested == Overlay::Lock {
+            self.overlay = Overlay::Lock;
+            return;
+        }
+        self.overlay = self.overlay.toggle(requested);
     }
 
     pub fn set_search_query(&mut self, query: &str, settings: &[crate::config::SettingDef]) {
@@ -530,9 +565,7 @@ impl ShellState {
         match id {
             "wifi" => self.wifi = value,
             "bluetooth" => self.bluetooth = value,
-            "focus" => {
-                self.focus_until = if value { Some("18:00".to_string()) } else { None };
-            }
+            "focus" => self.set_focus(value),
             "night-light" => self.night_light = value,
             _ => {}
         }
@@ -658,6 +691,31 @@ mod tests {
     }
 
     #[test]
+    fn manual_focus_expires_and_reports_the_change() {
+        let mut state = ShellState::default();
+        state.now_minute = 10 * 60;
+        state.set_focus(true);
+        assert!(state.focus_active());
+        assert_eq!(state.focus_label().as_deref(), Some("10:00–12:00"));
+        assert!(!state.refresh_time(11 * 60), "still inside the window");
+        assert!(state.refresh_time(12 * 60), "the window ended");
+        assert!(!state.focus_active());
+        state.set_focus(false);
+        assert!(state.focus_label().is_none());
+    }
+
+    #[test]
+    fn overnight_manual_focus_wraps_midnight() {
+        let mut state = ShellState::default();
+        state.now_minute = 23 * 60 + 30;
+        state.set_focus(true);
+        assert!(state.focus_active());
+        assert_eq!(state.focus_label().as_deref(), Some("23:30–01:30"));
+        assert!(state.focus_active_at(0), "after midnight the window is still open");
+        assert!(!state.focus_active_at(1 * 60 + 31));
+    }
+
+    #[test]
     fn scheduled_focus_suppresses_without_a_manual_toggle() {
         let mut state = ShellState::default();
         state.notifications.push(Notification {
@@ -687,6 +745,26 @@ mod tests {
         state.dock_auto_hide = true;
         assert!(!state.dock_visible(false));
         assert!(state.dock_visible(true));
+    }
+
+    #[test]
+    fn lock_screen_cannot_be_dismissed_without_a_password() {
+        let mut state = ShellState::default();
+        state.overlay = Overlay::Lock;
+        // Every dismiss path must be ignored while locked.
+        state.toggle_overlay(Overlay::None);
+        assert_eq!(state.overlay, Overlay::Lock);
+        state.set_overlay(Overlay::None);
+        assert_eq!(state.overlay, Overlay::Lock);
+        state.toggle_overlay(Overlay::Launcher);
+        assert_eq!(state.overlay, Overlay::Lock);
+        state.toggle_overlay(Overlay::Lock);
+        assert_eq!(state.overlay, Overlay::Lock, "Lock never toggles off");
+        // Only the password leaves the lock screen.
+        assert!(!state.submit_unlock("wrong"));
+        assert_eq!(state.overlay, Overlay::Lock);
+        assert!(state.submit_unlock("aether"));
+        assert_eq!(state.overlay, Overlay::None);
     }
 
     #[test]

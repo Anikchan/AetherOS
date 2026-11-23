@@ -455,7 +455,7 @@ mod tests {
     }
 
     #[test]
-    fn evaluates_a_fifty_case_arithmetic_set() {
+    fn evaluates_a_table_of_expressions() {
         // DA-AC-03: a small table of independent cases, including precedence,
         // signs, powers and modulo.
         let cases: [(&str, f64); 22] = [

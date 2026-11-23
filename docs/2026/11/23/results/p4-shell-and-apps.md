@@ -61,8 +61,8 @@ the window, and a `--render` entry point for evidence screenshots.
 Commands and results:
 
 ```text
-cargo test --workspace --exclude aether-compositor   # 66 test binaries, 503 cases, 0 failures
-cargo test -p aether-ui -p aether-shell              # 5 + 49 unit, 1 interaction
+cargo test --workspace --exclude aether-compositor   # 66 test binaries, 510 cases, 0 failures
+cargo test -p aether-ui -p aether-shell              # 5 + 52 unit, 1 interaction
 cargo test -p aether-text -p aether-calculator -p aether-terminal
 cargo test -p aether-files -p aether-archive -p aether-images
 cargo test -p aether-calendar -p aether-documents -p aether-player
@@ -71,10 +71,10 @@ cargo run -p <crate> -- --render docs/2026/11/23/results/screenshots
 ```
 
 The 66 binaries include 23 empty doc-test runs; P4 contributes 35 test binaries
-and **225 cases**. The exclusion is only for the macOS dev host (Smithay links
+and **232 cases**. The exclusion is only for the macOS dev host (Smithay links
 `libxkbcommon`); CI installs it and runs the full workspace.
 
-P4 totals: **214 unit/acceptance tests + 11 headless interaction tests (225
+P4 totals: **221 unit/acceptance tests + 11 headless interaction tests (232
 cases)**, all green. The `aether-compositor` crate is excluded on the macOS host
 because Smithay links `libxkbcommon`, which only the Linux CI image provides.
 
@@ -129,10 +129,10 @@ All rendered headlessly with the software renderer (`aether-ui::render`):
 | P4-T02 dock | Implemented, headless-verified | Running indicators asserted on launch and close (the File menu's "Close window" clears the app and moves focus); auto-hide reveal needs pointer enter from the host |
 | P4-T03 launcher | Implemented, headless-verified | Ranking + calculation + keyboard model tested |
 | P4-T04 control centre | Implemented, headless-verified | Wi-Fi/BT/volume/brightness/Focus/power mode wired to adapters |
-| P4-T05 notifications | Implemented, headless-verified | Grouping/Focus rules tested; real D-Bus notifications arrive with the session |
-| P4-T06 lock screen | Implemented, headless-verified | greetd/PAM integration is the remaining on-device step |
-| P4-T07 settings | Implemented + verified | "Every setting maps to a file key" shown in the UI and asserted by tests |
-| P4-T08 files | Implemented, verified | Sandbox escape + symlink tests; copy/move/rename/trash on temp trees |
+| P4-T05 notifications | Implemented, headless-verified | Grouping/Hide rules tested; Focus is a daily window that expires on the minute tick (manual Focus runs two hours), and the badge/cards refresh when it flips; real D-Bus notifications arrive with the session |
+| P4-T06 lock screen | Implemented, headless-verified | Modal: scrim, Escape and every shortcut are ignored while locked (tested); only the password leaves it. greetd/PAM is the remaining on-device step |
+| P4-T07 settings | Implemented + verified | Sidebar categories switch pages (callback-wired and clicked in the test); every row shows its file+key; writes are atomic and asserted from disk |
+| P4-T08 files | Implemented, verified | Sandbox escape + symlink tests; Back/Forward, toolbar Open (double-click also wired), rename that refuses to overwrite; copy/move/trash on temp trees |
 | P4-T10 AetherPad | Implemented, verified | **DA-AC-01 Pass**: UTF-16 LE/BE + Windows-1252 detection and round trips preserve characters and bytes. **DA-AC-02 Pass**: 10 MB count 77 ms, replace-all 67 ms, load/save 3 ms (release) |
 | P4-T11 Calculator | Implemented, verified | **DA-AC-03 Pass**: 50-case acceptance set; precedence, `^` associativity, domain errors, history cap, memory |
 | P4-T12 Images | Implemented, verified | All six DA-03 formats decode (PNG/JPEG/GIF/BMP/WebP/TIFF on generated fixtures), metadata, lossless rotate/flip, clamped zoom |
@@ -160,3 +160,28 @@ All rendered headlessly with the software renderer (`aether-ui::render`):
    headless and need no display; install `fonts-dejavu-core` on the runner only
    if a future screenshot job renders text (the current tests do not compare
    pixels).
+
+## 6. Review pass (2026-11-23, after independent verification)
+
+A read-only review and an independent tester re-ran the suites and probed the
+APIs. Blocking findings were fixed in the same session, each with a regression
+test:
+
+| Finding | Fix |
+| --- | --- |
+| Lock screen could be dismissed by the scrim, Escape or any shortcut | Lock is modal in the model: only a successful unlock changes the overlay; the scrim is skipped for overlay 6; three assertions in the interaction test |
+| Settings sidebar categories did nothing (child wrote a parent-bound property) | `page-changed` callback wired to `open_settings_category`; test clicks Display and asserts the page and its `display.toml` rows |
+| Focus never ended and the badge never refreshed | `FocusSchedule` is the single source of truth, manual Focus is a two-hour window, `tick` reports a flip and the shell resyncs; overnight windows tested |
+| Files Back/Forward broken (navigation always recorded history) | `navigate(dir, record)` split from history; Back/Forward manage the stacks and a test asserts both directions |
+| Files rename silently overwrote an existing file | Rename refuses with `AlreadyExists`; test proves the existing file is untouched |
+| Files could not open a folder | Toolbar "Open" (and double-click) opens the selected directory; test navigates in and out |
+| AetherPad save could truncate on a crash | Atomic temp-file + rename save |
+| Player skipped the current track when an earlier one was removed | Cursor follows the play order; test keeps "Neon Rain" playing |
+| Private-tab bookmarks/downloads leaked into the profile | Refused in a private tab; test reloads `profile.json` and finds it empty |
+| Archive extraction traversed a symlink already in the destination | `prepare_target` walks each component without following links; tar + zip regression tests |
+| Images missed WebP/TIFF | Both decoder features enabled and tested, so DA-AC-04 covers all six formats |
+
+Non-blocking items also fixed: settings toggles now update live state and
+services (dotted keys mapped to short ids), the password field is no longer
+cleared by unrelated syncs, the player demo uses a generic home path, and a
+misleading test name was corrected.

@@ -81,6 +81,34 @@ fn files_window_navigates_selects_and_pastes() {
         assert_eq!(ui.get_view_mode(), 0);
         assert_eq!(ui.get_path().to_string(), "Home");
 
+        // Opening a folder with the toolbar Open button, then Back/Forward (P4-T08).
+        let folder = ElementQuery::from_root(ui)
+            .match_accessible_label("Pictures")
+            .find_all()
+            .into_iter()
+            .max_by(|a, b| {
+                (a.size().width * a.size().height)
+                    .partial_cmp(&(b.size().width * b.size().height))
+                    .unwrap()
+            })
+            .expect("folder row is in the tree");
+        // Double-click opens the row; selection runs first, which rebuilds the
+        // row model, so the test drives the same action through the toolbar.
+        folder.single_click(PointerEventButton::Left).await;
+        assert_eq!(ui.get_selected_count(), 1);
+        click(&ui, "Open").await;
+        assert_eq!(ui.get_path().to_string(), "Home / Pictures");
+        assert_eq!(ui.get_item_count(), 0);
+        click(&ui, "Back").await;
+        assert_eq!(ui.get_path().to_string(), "Home", "Back returns to Home");
+        click(&ui, "Forward").await;
+        assert_eq!(
+            ui.get_path().to_string(),
+            "Home / Pictures",
+            "Forward works after Back"
+        );
+        click(&ui, "Back").await;
+
         // Clicking a row toggles the Rust selection model and the Slint count.
         click(&ui, "Notes.md").await;
         assert_eq!(ui.get_selected_count(), 1);

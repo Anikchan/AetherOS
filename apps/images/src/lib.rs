@@ -241,7 +241,7 @@ fn refresh(ui: &ImagesApp, state: &mut ImageState) {
     ui.set_modified(
         format_time(state.info.as_ref().and_then(|info| info.modified)).into(),
     );
-    ui.set_folder(state.folder.display().to_string().into());
+    ui.set_folder(display_path(&state.folder).into());
     ui.set_thumbs(ModelRc::new(VecModel::from(thumbs)));
     ui.set_current_index(state.index as i32);
     ui.set_total_images(state.files.len() as i32);
