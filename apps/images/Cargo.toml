@@ -1,0 +1,20 @@
+[package]
+name = "aether-images"
+description = "AetherOS Images default app (P4)."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "aether-images"
+path = "src/main.rs"
+
+[build-dependencies]
+slint-build.workspace = true
+
+[dependencies]
+slint.workspace = true
+aether-ui.workspace = true
+
+[dev-dependencies]
+i-slint-backend-testing = "1.19.0"

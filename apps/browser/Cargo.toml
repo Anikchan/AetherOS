@@ -1,0 +1,20 @@
+[package]
+name = "aether-browser"
+description = "AetherOS Browser default app (P4)."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "aether-browser"
+path = "src/main.rs"
+
+[build-dependencies]
+slint-build.workspace = true
+
+[dependencies]
+slint.workspace = true
+aether-ui.workspace = true
+
+[dev-dependencies]
+i-slint-backend-testing = "1.19.0"

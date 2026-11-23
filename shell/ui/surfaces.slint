@@ -1,0 +1,1407 @@
+// AetherOS desktop shell surfaces (P4, S3).
+//
+// One file keeps the surface layout in a single reviewable place: the menu bar,
+// dock, launcher, control center, notification center, lock screen, overview,
+// the settings app and the `ShellRoot` composition that a layer-shell host
+// mounts (menubar/dock as layer surfaces, panels as overlays).
+//
+// Behavior lives in Rust (`shell/src/model.rs`, `shell/src/app.rs`): the .slint
+// side is presentation plus callbacks, so every rule is unit-testable without a
+// display server. All numbers follow design D1 section 3 (4 px grid, 28 px menu
+// bar, 64 px dock, 340 px control center, 360 px notifications, 640 px launcher).
+
+import {
+    Tokens, Icon, IconKind, GlassTier, GlassPanel, AetherButton, IconButton,
+    ToggleSwitch, AetherSlider, SegmentedControl, SearchField, ListRow, Badge,
+    Pill, Divider, SectionLabel, MenuItem,
+} from "../../ui/design.slint";
+
+export struct AppEntry {
+    id: string,
+    name: string,
+    icon: IconKind,
+    running: bool,
+    pinned: bool,
+    badge: int,
+}
+
+export struct TrayEntry {
+    id: string,
+    icon: IconKind,
+    label: string,
+    active: bool,
+    badge: int,
+}
+
+export struct NotificationEntry {
+    id: string,
+    app: string,
+    title: string,
+    body: string,
+    time: string,
+    icon: IconKind,
+    unread: bool,
+}
+
+export struct WindowEntry {
+    id: string,
+    title: string,
+    app: string,
+    icon: IconKind,
+    workspace: int,
+}
+
+export struct MenuEntry {
+    label: string,
+    shortcut: string,
+    enabled: bool,
+}
+
+export struct MenuGroup {
+    title: string,
+    items: [MenuEntry],
+}
+
+export struct SearchResultEntry {
+    id: string,
+    title: string,
+    subtitle: string,
+    icon: IconKind,
+    kind: string,
+}
+
+export struct SettingsCategoryEntry {
+    id: string,
+    name: string,
+    icon: IconKind,
+}
+
+export struct SettingsRowEntry {
+    key: string,
+    label: string,
+    file: string,
+    kind: string,
+    value: string,
+    on: bool,
+}
+
+// Wallpaper: a calm gradient with two soft colour fields. Original artwork —
+// no photographic assets are shipped.
+export component Wallpaper inherits Rectangle {
+    background: @linear-gradient(155deg, #0B1220 0%, #0E1116 45%, #101725 100%);
+
+    Rectangle {
+        x: parent.width * 0.08; y: parent.height * 0.12;
+        width: 46%; height: 58%;
+        border-radius: Tokens.radius-pill;
+        background: @linear-gradient(145deg, #1C3D7A55 0%, #4C8DFF00 100%);
+        drop-shadow-blur: 120px;
+        drop-shadow-color: #1B4A9A44;
+    }
+    Rectangle {
+        x: parent.width * 0.58; y: parent.height * 0.42;
+        width: 38%; height: 48%;
+        border-radius: Tokens.radius-pill;
+        background: @linear-gradient(200deg, #6C4CE633 0%, #3DD68C00 100%);
+        drop-shadow-blur: 140px;
+        drop-shadow-color: #6C4CE622;
+    }
+}
+
+// A desktop window frame. Title bar 38 px, original traffic-light controls.
+export component WindowFrame inherits Rectangle {
+    in property <string> title: "";
+    in property <IconKind> icon: IconKind.file;
+    in property <bool> active: true;
+    in property <GlassTier> tier: GlassTier.full;
+
+    background: Tokens.surface.with-alpha(root.active ? 0.96 : 0.88);
+    border-radius: 12px;
+    border-width: 1px;
+    border-color: root.active ? #FFFFFF2E : #FFFFFF14;
+    drop-shadow-blur: 24px;
+    drop-shadow-color: #00000055;
+    drop-shadow-offset-y: 8px;
+
+    titlebar := Rectangle {
+        x: 0;
+        y: 0;
+        width: 100%;
+        height: Tokens.titlebar-height;
+        background: transparent;
+
+        Rectangle {
+            y: parent.height - 1px;
+            width: 100%;
+            height: 1px;
+            background: Tokens.divider;
+        }
+
+        HorizontalLayout {
+            alignment: start;
+            padding-left: 12px;
+            padding-right: 12px;
+            spacing: 8px;
+            // Original window controls (F1 SHL-06): close, minimize, maximize.
+            HorizontalLayout {
+                spacing: 6px;
+                alignment: center;
+                Rectangle { width: 12px; height: 12px; border-radius: Tokens.radius-pill; background: #FF5F57DD; accessible-role: button; accessible-label: "Close window"; }
+                Rectangle { width: 12px; height: 12px; border-radius: Tokens.radius-pill; background: #FEBC2EDD; accessible-role: button; accessible-label: "Minimize window"; }
+                Rectangle { width: 12px; height: 12px; border-radius: Tokens.radius-pill; background: #28C840DD; accessible-role: button; accessible-label: "Maximize window"; }
+            }
+            Icon { kind: root.icon; size: 14px; tint: Tokens.text-muted; }
+            Text {
+                text: root.title;
+                color: root.active ? Tokens.text : Tokens.text-muted;
+                font-size: Tokens.font-body;
+                font-weight: 600;
+                vertical-alignment: center;
+                overflow: elide;
+            }
+        }
+    }
+
+    Rectangle {
+        y: Tokens.titlebar-height;
+        width: 100%;
+        height: parent.height - Tokens.titlebar-height;
+        border-radius: 0px;
+        background: transparent;
+        @children
+    }
+}
+
+// ---------------------------------------------------------------- menu bar ---
+
+export component Menubar inherits Rectangle {
+    in property <string> app-name: "AetherOS";
+    in property <[MenuGroup]> menus: [];
+    in property <string> clock: "09:41";
+    in property <bool> wifi: true;
+    in property <bool> bluetooth: true;
+    in property <bool> focus-on: false;
+    in property <int> battery: 84;
+    in property <bool> charging: false;
+    in property <string> unread: "";
+    in property <GlassTier> tier: GlassTier.full;
+    in-out property <int> open-menu: -1;
+
+    callback menu-clicked(int, int);
+    callback tray-clicked(string);
+
+    height: Tokens.menubar-height;
+    background: Tokens.background.with-alpha(0.86);
+    accessible-role: navigation;
+
+    Rectangle {
+        y: parent.height - 1px;
+        width: 100%;
+        height: 1px;
+        background: Tokens.divider;
+    }
+
+    HorizontalLayout {
+        padding-left: 8px;
+        padding-right: 8px;
+        spacing: 6px;
+
+        logo := Rectangle {
+            width: 20px;
+            height: 20px;
+            border-radius: 6px;
+            background: @linear-gradient(135deg, Tokens.accent 0%, #8B6CFF 100%);
+            accessible-role: button;
+            accessible-label: "AetherOS menu";
+            logo-ta := TouchArea {
+                clicked => { root.open-menu = root.open-menu == 0 ? -1 : 0; }
+            }
+            Text {
+                text: "A";
+                color: #FFFFFF;
+                font-size: 12px;
+                font-weight: 800;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+        }
+
+        Text {
+            text: root.app-name;
+            color: Tokens.text;
+            font-size: Tokens.font-body;
+            font-weight: 700;
+            vertical-alignment: center;
+        }
+        Rectangle { width: 4px; background: transparent; }
+
+        for group[idx] in root.menus : Rectangle {
+            height: 20px;
+            width: menu-text.preferred-width + 12px;
+            border-radius: 5px;
+            background: menu-ta.has-hover || root.open-menu == idx + 1 ? Tokens.hover : transparent;
+            accessible-role: button;
+            accessible-label: group.title;
+            menu-text := Text {
+                x: 6px;
+                text: group.title;
+                color: Tokens.text-muted;
+                font-size: Tokens.font-small;
+                vertical-alignment: center;
+            }
+            menu-ta := TouchArea {
+                clicked => { root.open-menu = root.open-menu == idx + 1 ? -1 : idx + 1; }
+            }
+        }
+
+        Rectangle { horizontal-stretch: 1; background: transparent; }
+
+        if root.focus-on : VerticalLayout { alignment: center; Pill { text: "Focus"; tone: Tokens.accent; } }
+
+        IconButton {
+            kind: root.wifi ? IconKind.wifi : IconKind.wifi-off;
+            label: root.wifi ? "Wi-Fi on" : "Wi-Fi off";
+            button-size: 20px;
+            icon-size: 14px;
+            clicked => { root.tray-clicked("wifi"); }
+        }
+        IconButton {
+            kind: root.bluetooth ? IconKind.bluetooth : IconKind.bluetooth-off;
+            label: root.bluetooth ? "Bluetooth on" : "Bluetooth off";
+            button-size: 20px;
+            icon-size: 14px;
+            clicked => { root.tray-clicked("bluetooth"); }
+        }
+        IconButton {
+            kind: IconKind.volume;
+            label: "Sound";
+            button-size: 20px;
+            icon-size: 14px;
+            clicked => { root.tray-clicked("sound"); }
+        }
+        Rectangle {
+            width: 28px;
+            height: 20px;
+            border-radius: 5px;
+            background: battery-ta.has-hover ? Tokens.hover : transparent;
+            accessible-role: button;
+            accessible-label: "Battery " + root.battery + "%";
+            HorizontalLayout {
+                alignment: center;
+                spacing: 2px;
+                Text {
+                    text: root.battery + "%";
+                    color: root.battery < 20 && !root.charging ? Tokens.danger : Tokens.text-muted;
+                    font-size: 10px;
+                    vertical-alignment: center;
+                }
+                Icon {
+                    kind: root.charging ? IconKind.bolt : IconKind.battery;
+                    size: 15px;
+                    tint: root.battery < 20 && !root.charging ? Tokens.danger : Tokens.text-muted;
+                }
+            }
+            battery-ta := TouchArea { clicked => { root.tray-clicked("battery"); } }
+        }
+        Rectangle {
+            width: 22px;
+            height: 20px;
+            border-radius: 5px;
+            background: bell-ta.has-hover ? Tokens.hover : transparent;
+            accessible-role: button;
+            accessible-label: "Notifications";
+            Icon {
+                kind: root.focus-on ? IconKind.bell-off : IconKind.bell;
+                size: 14px;
+                tint: root.unread != "" ? Tokens.accent-strong : Tokens.text-muted;
+                x: 3px;
+                y: 3px;
+            }
+            if root.unread != "" : Badge {
+                x: parent.width - self.width + 2px;
+                y: -1px;
+                count: root.unread;
+            }
+            bell-ta := TouchArea { clicked => { root.tray-clicked("notifications"); } }
+        }
+        Rectangle { width: 4px; background: transparent; }
+        Text {
+            text: root.clock;
+            color: Tokens.text;
+            font-size: Tokens.font-small;
+            font-weight: 600;
+            vertical-alignment: center;
+            accessible-role: button;
+            accessible-label: "Clock " + root.clock;
+        }
+    }
+
+    // Dropdown. Declared after the bar row so it paints above it and overflows
+    // the 28 px strip; the shell root keeps this area clickable.
+    if root.open-menu >= 0 : Rectangle {
+        x: 44px;
+        y: Tokens.menubar-height;
+        width: 240px;
+        height: Math.max(56px, root.open-menu < root.menus.length ? root.menus[root.open-menu].items.length * 28px + 8px : 56px);
+        background: Tokens.surface.with-alpha(0.98);
+        border-radius: Tokens.radius-menu;
+        border-width: 1px;
+        border-color: Tokens.glass-edge;
+        drop-shadow-blur: 20px;
+        drop-shadow-color: #00000055;
+        drop-shadow-offset-y: 6px;
+
+        VerticalLayout {
+            padding: 4px;
+            for item[idx] in (root.open-menu >= 0 && root.open-menu < root.menus.length) ? root.menus[root.open-menu].items : [] : MenuItem {
+                text: item.label;
+                shortcut: item.shortcut;
+                enabled: item.enabled;
+                clicked => {
+                    root.menu-clicked(root.open-menu, idx);
+                    root.open-menu = -1;
+                }
+            }
+        }
+    }
+}
+
+// --------------------------------------------------------------------- dock ---
+
+export component Dock inherits Rectangle {
+    in property <[AppEntry]> apps: [];
+    in property <bool> auto-hide: true;
+    in property <GlassTier> tier: GlassTier.full;
+    in-out property <bool> hovered: false;
+
+    callback app-clicked(string);
+
+    height: Tokens.dock-height;
+    width: Math.max(96px, 16px + root.apps.length * 56px + Math.max(0, root.apps.length - 1) * 10px);
+    border-radius: Tokens.radius-panel;
+    background: Tokens.surface.with-alpha(0.82);
+    border-width: 1px;
+    border-color: Tokens.glass-edge;
+    drop-shadow-blur: 24px;
+    drop-shadow-color: #00000044;
+    animate y { duration: Tokens.motion-base; easing: ease-out; }
+
+    // Hover sensor, declared first so it sits under the app buttons and never
+    // swallows their clicks; the layer-shell host feeds pointer enter/leave too.
+    TouchArea {
+        clicked => {}
+    }
+
+    HorizontalLayout {
+        padding: 8px;
+        spacing: 10px;
+        for app in root.apps : Rectangle {
+            width: 56px;
+            height: 48px;
+            background: transparent;
+            accessible-role: button;
+            accessible-label: app.name;
+            accessible-description: app.running ? "Running" : "Not running";
+
+            Rectangle {
+                x: 4px;
+                y: 0px;
+                width: 48px;
+                height: 48px;
+                border-radius: 12px;
+                background: ta.has-hover ? Tokens.hover : Tokens.surface-high.with-alpha(0.7);
+                border-width: 1px;
+                border-color: Tokens.divider;
+                Icon {
+                    kind: app.icon;
+                    size: 24px;
+                    tint: app.running ? Tokens.text : Tokens.text-muted;
+                    x: (parent.width - self.width) / 2;
+                    y: (parent.height - self.height) / 2;
+                }
+                if app.badge > 0 : Badge {
+                    x: parent.width - self.width + 2px;
+                    y: -2px;
+                    count: "" + app.badge;
+                }
+            }
+            // Running indicator (F1 SHL-AC-02).
+            if app.running : Rectangle {
+                width: 4px;
+                height: 4px;
+                x: (parent.width - self.width) / 2;
+                y: parent.height - 2px;
+                border-radius: 2px;
+                background: Tokens.accent-strong;
+            }
+            // Pinned marker: a hairline under pinned apps without making it look
+            // like a running dot.
+            if app.pinned && !app.running : Rectangle {
+                width: 16px;
+                height: 2px;
+                x: (parent.width - self.width) / 2;
+                y: parent.height - 1px;
+                border-radius: 1px;
+                background: Tokens.text-faint.with-alpha(0.5);
+            }
+            ta := TouchArea {
+                clicked => { root.app-clicked(app.id); }
+            }
+        }
+    }
+}
+
+// ----------------------------------------------------------------- launcher ---
+
+export component Launcher inherits Rectangle {
+    in property <[SearchResultEntry]> results: [];
+    in-out property <string> query: "";
+    in-out property <int> selected: 0;
+    in property <GlassTier> tier: GlassTier.full;
+
+    callback edited(string);
+    callback accepted(int);
+    callback dismissed();
+
+    width: Tokens.launcher-width;
+    height: 420px;
+    border-radius: Tokens.radius-panel;
+    background: Tokens.surface.with-alpha(0.94);
+    border-width: 1px;
+    border-color: Tokens.glass-edge;
+    drop-shadow-blur: 40px;
+    drop-shadow-color: #00000066;
+
+    VerticalLayout {
+        padding: Tokens.space(4);
+        spacing: Tokens.space(3);
+
+        search := SearchField {
+            placeholder: "Search apps, files, settings and calculations";
+            text: root.query;
+            edited(text) => { root.edited(text); }
+            accepted => { root.accepted(root.selected); }
+        }
+
+        Flickable {
+            vertical-stretch: 1;
+            VerticalLayout {
+                width: 100%;
+                height: self.preferred-height;
+                alignment: start;
+                spacing: 2px;
+                if root.results.length == 0 : VerticalLayout {
+                    alignment: center;
+                    spacing: Tokens.space(2);
+                    Text {
+                        text: root.query == "" ? "Type to search AetherOS" : "No results for “" + root.query + "”";
+                        color: Tokens.text-muted;
+                        font-size: Tokens.font-body;
+                        horizontal-alignment: center;
+                    }
+                    Text {
+                        text: "Apps · files · settings · 12 + 30 × 4";
+                        color: Tokens.text-faint;
+                        font-size: Tokens.font-small;
+                        horizontal-alignment: center;
+                    }
+                }
+                for result[idx] in root.results : Rectangle {
+                    height: 44px;
+                    border-radius: Tokens.radius-button;
+                    background: idx == root.selected ? Tokens.accent-soft : (row-ta.has-hover ? Tokens.hover : transparent);
+                    accessible-role: list-item;
+                    accessible-label: result.title;
+                    accessible-checked: idx == root.selected;
+
+                    HorizontalLayout {
+                        padding-left: 10px;
+                        padding-right: 10px;
+                        spacing: 10px;
+                        Rectangle {
+                            width: 30px; height: 30px; border-radius: 8px;
+                            background: Tokens.surface-high;
+                            Icon {
+                                kind: result.icon; size: 16px; tint: Tokens.accent-strong;
+                                x: (parent.width - self.width) / 2;
+                                y: (parent.height - self.height) / 2;
+                            }
+                        }
+                        VerticalLayout {
+                            alignment: center;
+                            Text { text: result.title; color: Tokens.text; font-size: Tokens.font-body; font-weight: 600; overflow: elide; }
+                            Text { text: result.subtitle; color: Tokens.text-muted; font-size: Tokens.font-small; overflow: elide; }
+                        }
+                        Rectangle { horizontal-stretch: 1; background: transparent; }
+                        VerticalLayout {
+                            alignment: center;
+                            Pill {
+                                text: result.kind;
+                                tone: result.kind == "App" ? Tokens.accent : (result.kind == "Settings" ? Tokens.warning : Tokens.text-muted);
+                            }
+                        }
+                    }
+                    row-ta := TouchArea {
+                        clicked => {
+                            root.selected = idx;
+                            root.accepted(idx);
+                        }
+                    }
+                }
+            }
+        }
+
+        Divider {}
+        HorizontalLayout {
+            spacing: Tokens.space(2);
+            Text {
+                text: "↑ ↓ navigate    ↵ open    esc close";
+                color: Tokens.text-faint;
+                font-size: Tokens.font-small;
+                vertical-alignment: center;
+            }
+            Rectangle { horizontal-stretch: 1; background: transparent; }
+            Text {
+                text: root.results.length + " results";
+                color: Tokens.text-faint;
+                font-size: Tokens.font-small;
+                vertical-alignment: center;
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------- control center ---
+
+component QuickTile inherits Rectangle {
+    in property <string> title: "";
+    in property <string> subtitle: "";
+    in property <IconKind> icon: IconKind.wifi;
+    in property <bool> active: false;
+    in property <string> label: "";
+    callback toggled();
+
+    height: 64px;
+    border-radius: Tokens.radius-button;
+    background: root.active ? Tokens.accent : Tokens.surface-high;
+    border-width: 1px;
+    border-color: root.active ? transparent : Tokens.divider;
+    accessible-role: switch;
+    accessible-label: root.label;
+    accessible-checked: root.active;
+
+    VerticalLayout {
+        padding: 10px;
+        spacing: 2px;
+        Icon {
+            kind: root.icon;
+            size: 18px;
+            tint: root.active ? Tokens.on-accent : Tokens.text;
+        }
+        Text {
+            text: root.title;
+            color: root.active ? Tokens.on-accent : Tokens.text;
+            font-size: Tokens.font-body;
+            font-weight: 600;
+            overflow: elide;
+        }
+        Text {
+            text: root.subtitle;
+            color: root.active ? Tokens.on-accent.with-alpha(0.75) : Tokens.text-muted;
+            font-size: Tokens.font-small;
+            overflow: elide;
+        }
+    }
+    ta := TouchArea { clicked => { root.toggled(); } }
+}
+
+export component ControlCenter inherits Rectangle {
+    in property <bool> wifi: true;
+    in property <bool> bluetooth: true;
+    in property <bool> focus-on: false;
+    in property <bool> night-light: false;
+    in-out property <float> volume: 0.62;
+    in-out property <float> brightness: 0.8;
+    in property <int> battery: 84;
+    in property <bool> charging: false;
+    in property <string> power-mode: "balanced";
+    in property <GlassTier> tier: GlassTier.full;
+
+    callback toggled(string, bool);
+    callback volume-changed(float);
+    callback brightness-changed(float);
+    callback power-mode-changed(string);
+    callback open-settings();
+    callback lock();
+
+    width: Tokens.controlcenter-width;
+    height: 428px;
+    border-radius: Tokens.radius-panel;
+    background: Tokens.surface.with-alpha(0.95);
+    border-width: 1px;
+    border-color: Tokens.glass-edge;
+    drop-shadow-blur: 32px;
+    drop-shadow-color: #00000066;
+
+    VerticalLayout {
+        alignment: start;
+        padding: Tokens.space(4);
+        spacing: Tokens.space(3);
+        HorizontalLayout {
+            Text { text: "Control centre"; color: Tokens.text; font-size: Tokens.font-title; font-weight: 700; }
+            Rectangle { horizontal-stretch: 1; background: transparent; }
+            IconButton { kind: IconKind.gear; label: "Settings"; clicked => { root.open-settings(); } }
+        }
+
+        // 2 x 2 quick tiles (F1 SHL-04).
+        HorizontalLayout {
+            width: 100%;
+            spacing: Tokens.space(2);
+            QuickTile {
+                width: 150px;
+                title: "Wi-Fi"; subtitle: root.wifi ? "Home-5G" : "Off";
+                icon: root.wifi ? IconKind.wifi : IconKind.wifi-off;
+                active: root.wifi; label: "Wi-Fi";
+                toggled => { root.toggled("wifi", !root.wifi); }
+            }
+            QuickTile {
+                width: 150px;
+                title: "Bluetooth"; subtitle: root.bluetooth ? "2 devices" : "Off";
+                icon: root.bluetooth ? IconKind.bluetooth : IconKind.bluetooth-off;
+                active: root.bluetooth; label: "Bluetooth";
+                toggled => { root.toggled("bluetooth", !root.bluetooth); }
+            }
+        }
+        HorizontalLayout {
+            width: 100%;
+            spacing: Tokens.space(2);
+            QuickTile {
+                width: 150px;
+                title: "Focus"; subtitle: root.focus-on ? "Until 18:00" : "Off";
+                icon: root.focus-on ? IconKind.moon : IconKind.bell;
+                active: root.focus-on; label: "Focus";
+                toggled => { root.toggled("focus", !root.focus-on); }
+            }
+            QuickTile {
+                width: 150px;
+                title: "Night light"; subtitle: root.night-light ? "On" : "Off";
+                icon: IconKind.sun; active: root.night-light; label: "Night light";
+                toggled => { root.toggled("night-light", !root.night-light); }
+            }
+        }
+
+        HorizontalLayout {
+            width: 100%;
+            spacing: Tokens.space(2);
+            Icon { kind: IconKind.volume; size: 16px; tint: Tokens.text-muted; }
+            AetherSlider {
+                horizontal-stretch: 1;
+                value: root.volume;
+                label: "Volume";
+                changed(value) => { root.volume-changed(value); }
+            }
+        }
+        HorizontalLayout {
+            width: 100%;
+            spacing: Tokens.space(2);
+            Icon { kind: IconKind.brightness; size: 16px; tint: Tokens.text-muted; }
+            AetherSlider {
+                horizontal-stretch: 1;
+                value: root.brightness;
+                label: "Brightness";
+                changed(value) => { root.brightness-changed(value); }
+            }
+        }
+
+        Divider {}
+
+        // Battery + power mode.
+        HorizontalLayout {
+            width: 100%;
+            spacing: Tokens.space(2);
+            Icon { kind: root.charging ? IconKind.bolt : IconKind.battery; size: 16px; tint: root.battery < 20 && !root.charging ? Tokens.danger : Tokens.success; }
+            Text {
+                text: root.battery + "%" + (root.charging ? " · charging" : "");
+                color: Tokens.text;
+                font-size: Tokens.font-body;
+                font-weight: 600;
+                vertical-alignment: center;
+            }
+            Rectangle { horizontal-stretch: 1; background: transparent; }
+        }
+        SegmentedControl {
+            items: ["Power saver", "Balanced", "Performance"];
+            current: root.power-mode == "saver" ? 0 : (root.power-mode == "performance" ? 2 : 1);
+            selected(idx) => {
+                root.power-mode-changed(idx == 0 ? "saver" : (idx == 2 ? "performance" : "balanced"));
+            }
+        }
+
+        Divider {}
+        HorizontalLayout {
+            width: 100%;
+            spacing: Tokens.space(2);
+            AetherButton {
+                text: "Settings"; icon: IconKind.gear; show-icon: true;
+                clicked => { root.open-settings(); }
+            }
+            Rectangle { horizontal-stretch: 1; background: transparent; }
+            AetherButton {
+                text: "Lock"; icon: IconKind.lock; show-icon: true;
+                clicked => { root.lock(); }
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------- notifications ---
+
+export component NotificationCenter inherits Rectangle {
+    in property <[NotificationEntry]> items: [];
+    in property <bool> focus-on: false;
+    in property <string> focus-until: "18:00";
+    in property <GlassTier> tier: GlassTier.full;
+
+    callback dismissed(string);
+    callback cleared-all();
+    callback open-settings();
+
+    width: Tokens.notification-width;
+    height: 420px;
+    border-radius: Tokens.radius-panel;
+    background: Tokens.surface.with-alpha(0.95);
+    border-width: 1px;
+    border-color: Tokens.glass-edge;
+    drop-shadow-blur: 32px;
+    drop-shadow-color: #00000066;
+
+    VerticalLayout {
+        alignment: start;
+        padding: Tokens.space(4);
+        spacing: Tokens.space(2);
+        HorizontalLayout {
+            Text { text: "Notifications"; color: Tokens.text; font-size: Tokens.font-title; font-weight: 700; }
+            Rectangle { horizontal-stretch: 1; background: transparent; }
+            AetherButton { text: "Clear all"; clicked => { root.cleared-all(); } }
+        }
+
+        if root.focus-on : Rectangle {
+            height: 44px;
+            border-radius: Tokens.radius-button;
+            background: Tokens.accent-soft;
+            border-width: 1px;
+            border-color: Tokens.accent.with-alpha(0.4);
+            HorizontalLayout {
+                padding-left: 12px;
+                padding-right: 12px;
+                spacing: 8px;
+                Icon { kind: IconKind.moon; size: 16px; tint: Tokens.accent-strong; }
+                Text {
+                    text: "Focus is on until " + root.focus-until + " — notifications are muted";
+                    color: Tokens.text;
+                    font-size: Tokens.font-small;
+                    vertical-alignment: center;
+                    horizontal-stretch: 1;
+                }
+            }
+        }
+
+        if root.items.length == 0 : VerticalLayout {
+            vertical-stretch: 1;
+            alignment: center;
+            spacing: Tokens.space(2);
+            Icon { kind: IconKind.bell-off; size: 28px; tint: Tokens.text-faint; }
+            Text { text: "You're all caught up"; color: Tokens.text-muted; font-size: Tokens.font-body; horizontal-alignment: center; }
+        }
+
+        Flickable {
+            vertical-stretch: 1;
+            VerticalLayout {
+                width: 100%;
+                height: self.preferred-height;
+                alignment: start;
+                spacing: Tokens.space(2);
+                for item in root.items : Rectangle {
+                    height: 74px;
+                    border-radius: Tokens.radius-button;
+                    background: Tokens.surface-high;
+                    border-width: 1px;
+                    border-color: item.unread ? Tokens.accent.with-alpha(0.5) : Tokens.divider;
+                    accessible-role: list-item;
+                    accessible-label: item.app + ": " + item.title;
+
+                    HorizontalLayout {
+                        padding: 10px;
+                        spacing: 10px;
+                        Rectangle {
+                            width: 28px; height: 28px; border-radius: 8px;
+                            background: Tokens.surface-low;
+                            Icon {
+                                kind: item.icon; size: 15px; tint: Tokens.accent-strong;
+                                x: (parent.width - self.width) / 2;
+                                y: (parent.height - self.height) / 2;
+                            }
+                        }
+                        VerticalLayout {
+                            vertical-stretch: 1;
+                            spacing: 2px;
+                            HorizontalLayout {
+                                Text { text: item.app; color: Tokens.text-muted; font-size: Tokens.font-small; font-weight: 600; }
+                                Rectangle { horizontal-stretch: 1; background: transparent; }
+                                Text { text: item.time; color: Tokens.text-faint; font-size: Tokens.font-small; }
+                            }
+                            Text { text: item.title; color: Tokens.text; font-size: Tokens.font-body; font-weight: 600; overflow: elide; }
+                            Text { text: item.body; color: Tokens.text-muted; font-size: Tokens.font-small; overflow: elide; }
+                        }
+                        IconButton {
+                            kind: IconKind.close;
+                            label: "Dismiss " + item.title;
+                            clicked => { root.dismissed(item.id); }
+                        }
+                    }
+                }
+            }
+        }
+
+        Divider {}
+        HorizontalLayout {
+            alignment: center;
+            AetherButton { text: "Focus settings"; clicked => { root.open-settings(); } }
+            Rectangle { horizontal-stretch: 1; background: transparent; }
+        }
+    }
+}
+
+// --------------------------------------------------------------- lock screen ---
+
+export component LockScreen inherits Rectangle {
+    in property <string> clock: "09:41";
+    in property <string> date-label: "Monday, 23 November";
+    in property <string> user: "Anik";
+    in property <string> error: "";
+    in property <bool> unlocking: false;
+    in-out property <string> password: "";
+    in property <GlassTier> tier: GlassTier.full;
+
+    callback submitted(string);
+
+    background: #00000000;
+
+    Rectangle {
+        width: 100%; height: 100%;
+        background: @linear-gradient(160deg, #070B12F7 0%, #0B1524F7 60%, #101B2EF7 100%);
+    }
+    Rectangle {
+        x: parent.width * 0.12; y: parent.height * 0.08; width: 40%; height: 50%;
+        border-radius: Tokens.radius-pill;
+        background: @linear-gradient(160deg, #2C5BA844 0%, #4C8DFF00 100%);
+        drop-shadow-blur: 160px;
+        drop-shadow-color: #24508E44;
+    }
+
+    VerticalLayout {
+        width: 100%;
+        alignment: center;
+        spacing: Tokens.space(3);
+
+        Text { text: root.clock; color: #FFFFFF; font-size: 92px; font-weight: 200; horizontal-alignment: center; }
+        Text { text: root.date-label; color: Tokens.text-muted; font-size: Tokens.font-title; horizontal-alignment: center; }
+
+        Rectangle { height: Tokens.space(10); background: transparent; }
+
+        HorizontalLayout {
+            alignment: center;
+            Rectangle {
+                width: 72px; height: 72px; border-radius: 36px;
+                background: Tokens.surface-high;
+                border-width: 1px;
+                border-color: Tokens.glass-edge;
+                Text { text: root.user; color: Tokens.text; font-size: Tokens.font-large; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
+            }
+        }
+        Text { text: root.user; color: Tokens.text; font-size: Tokens.font-title; font-weight: 600; horizontal-alignment: center; }
+
+        HorizontalLayout {
+            alignment: center;
+            Rectangle {
+            width: 300px;
+            height: 40px;
+            border-radius: Tokens.radius-button;
+            background: #FFFFFF14;
+            border-width: 1px;
+            border-color: root.error != "" ? Tokens.danger : Tokens.glass-edge;
+
+            HorizontalLayout {
+                padding-left: 12px;
+                padding-right: 8px;
+                spacing: 8px;
+                Icon { kind: IconKind.lock; size: 15px; tint: Tokens.text-muted; }
+                pw := TextInput {
+                    text <=> root.password;
+                    input-type: InputType.password;
+                    color: Tokens.text;
+                    font-size: Tokens.font-body;
+                    vertical-alignment: center;
+                    horizontal-stretch: 1;
+                    accessible-role: text-input;
+                    accessible-label: "Password";
+                    accepted => { root.submitted(root.password); }
+                }
+                IconButton {
+                    kind: IconKind.chevron-right;
+                    label: "Unlock";
+                    clicked => { root.submitted(root.password); }
+                }
+            }
+            }
+        }
+        Text {
+            text: root.error;
+            color: Tokens.danger;
+            font-size: Tokens.font-small;
+            horizontal-alignment: center;
+        }
+        Text {
+            text: root.unlocking ? "Unlocking…" : "Press Enter to unlock";
+            color: Tokens.text-faint;
+            font-size: Tokens.font-small;
+            horizontal-alignment: center;
+        }
+    }
+}
+
+// ------------------------------------------------------------------ overview ---
+
+export component Overview inherits Rectangle {
+    in property <[WindowEntry]> windows: [];
+    in-out property <int> workspace: 0;
+    in property <GlassTier> tier: GlassTier.full;
+
+    callback activated(string);
+    callback dismissed();
+
+    background: Tokens.scrim;
+
+    VerticalLayout {
+        padding: Tokens.space(8);
+        padding-bottom: Tokens.space(22);
+        spacing: Tokens.space(4);
+
+        HorizontalLayout {
+            Text { text: "Overview"; color: Tokens.text; font-size: Tokens.font-hero; font-weight: 700; }
+            Rectangle { horizontal-stretch: 1; background: transparent; }
+            SearchField { width: 280px; placeholder: "Search windows"; }
+        }
+
+        GridLayout {
+            spacing: Tokens.space(4);
+            for window-entry in root.windows : Rectangle {
+                height: 240px;
+                border-radius: 14px;
+                background: Tokens.surface.with-alpha(0.92);
+                border-width: 1px;
+                border-color: ta.has-hover ? Tokens.accent : Tokens.glass-edge;
+                drop-shadow-blur: 24px;
+                drop-shadow-color: #00000055;
+                accessible-role: button;
+                accessible-label: window-entry.title;
+
+                VerticalLayout {
+                    padding: 10px;
+                    spacing: 6px;
+                    HorizontalLayout {
+                        spacing: 8px;
+                        Icon { kind: window-entry.icon; size: 15px; tint: Tokens.text-muted; }
+                        Text { text: window-entry.title; color: Tokens.text; font-size: Tokens.font-body; font-weight: 600; overflow: elide; }
+                        Rectangle { horizontal-stretch: 1; background: transparent; }
+                        Text { text: window-entry.app; color: Tokens.text-faint; font-size: Tokens.font-small; }
+                    }
+                    Rectangle {
+                        vertical-stretch: 1;
+                        border-radius: 8px;
+                        background: @linear-gradient(160deg, #FFFFFF10 0%, #FFFFFF05 100%);
+                        border-width: 1px;
+                        border-color: Tokens.divider;
+                    }
+                }
+                ta := TouchArea { clicked => { root.activated(window-entry.id); } }
+            }
+        }
+
+        Rectangle { vertical-stretch: 1; background: transparent; }
+
+        // Workspace strip.
+        HorizontalLayout {
+            alignment: center;
+            spacing: Tokens.space(2);
+            for ws in 4 : Rectangle {
+                width: 108px;
+                height: 58px;
+                border-radius: 10px;
+                background: ws == root.workspace ? Tokens.accent-soft : Tokens.surface.with-alpha(0.7);
+                border-width: ws == root.workspace ? 2px : 1px;
+                border-color: ws == root.workspace ? Tokens.accent : Tokens.divider;
+                accessible-role: tab;
+                accessible-label: "Workspace " + (ws + 1);
+                Text { text: "" + (ws + 1); color: Tokens.text-muted; font-size: Tokens.font-small; horizontal-alignment: center; vertical-alignment: center; }
+                TouchArea { clicked => { root.workspace = ws; } }
+            }
+        }
+    }
+}
+
+// ------------------------------------------------------------------ settings ---
+
+export component SettingsApp inherits Rectangle {
+    in property <[SettingsCategoryEntry]> categories: [];
+    in-out property <int> page: 0;
+    in property <[SettingsRowEntry]> rows: [];
+    in property <string> foot: "Every change is written to your config files";
+
+    callback row-toggled(string, bool);
+    callback row-activated(string);
+
+    background: Tokens.background;
+
+    HorizontalLayout {
+        // Sidebar.
+        Rectangle {
+            width: 200px;
+            background: Tokens.surface-low;
+            Rectangle {
+                x: parent.width - 1px;
+                width: 1px;
+                height: 100%;
+                background: Tokens.divider;
+            }
+
+            VerticalLayout {
+                alignment: start;
+                padding: Tokens.space(3);
+                spacing: 2px;
+                SectionLabel { label: "SETTINGS"; }
+                for category[idx] in root.categories : Rectangle {
+                    height: 34px;
+                    border-radius: Tokens.radius-button;
+                    background: idx == root.page ? Tokens.accent-soft : (ta.has-hover ? Tokens.hover : transparent);
+                    accessible-role: tab;
+                    accessible-label: category.name;
+                    accessible-checked: idx == root.page;
+                    HorizontalLayout {
+                        padding-left: 8px;
+                        padding-right: 8px;
+                        spacing: 8px;
+                        Icon { kind: category.icon; size: 15px; tint: idx == root.page ? Tokens.accent-strong : Tokens.text-muted; }
+                        Text { text: category.name; color: Tokens.text; font-size: Tokens.font-body; vertical-alignment: center; }
+                    }
+                    ta := TouchArea { clicked => { root.page = idx; } }
+                }
+            }
+        }
+
+        // Content.
+        VerticalLayout {
+            alignment: start;
+            padding: Tokens.space(6);
+            spacing: Tokens.space(3);
+
+            Text {
+                text: root.categories.length > root.page ? root.categories[root.page].name : "Settings";
+                color: Tokens.text;
+                font-size: Tokens.font-hero;
+                font-weight: 700;
+            }
+            Divider {}
+            Flickable {
+                vertical-stretch: 1;
+                VerticalLayout {
+                    width: 100%;
+                    height: self.preferred-height;
+                    alignment: start;
+                    spacing: 2px;
+                    for row in root.rows : Rectangle {
+                        height: 48px;
+                        border-radius: Tokens.radius-button;
+                        background: row-ta.has-hover ? Tokens.hover : transparent;
+                        accessible-role: list-item;
+                        accessible-label: row.label;
+
+                        HorizontalLayout {
+                            padding-left: 8px;
+                            padding-right: 8px;
+                            spacing: 12px;
+                            VerticalLayout {
+                                alignment: center;
+                                Text { text: row.label; color: Tokens.text; font-size: Tokens.font-body; }
+                                Text { text: row.file + "  ·  " + row.key; color: Tokens.text-faint; font-size: 10px; font-family: Tokens.font-family-mono; }
+                            }
+                            Rectangle { horizontal-stretch: 1; background: transparent; }
+                            if row.kind == "toggle" : ToggleSwitch {
+                                checked: row.on;
+                                label: row.label;
+                                toggled(value) => { root.row-toggled(row.key, value); }
+                            }
+                            if row.kind == "value" : Text {
+                                text: row.value;
+                                color: Tokens.text-muted;
+                                font-size: Tokens.font-body;
+                                vertical-alignment: center;
+                            }
+                            if row.kind == "select" : VerticalLayout { alignment: center; Pill { text: row.value; tone: Tokens.accent; } }
+                        }
+                        row-ta := TouchArea { clicked => { root.row-activated(row.key); } }
+                    }
+                }
+            }
+            Text { text: root.foot; color: Tokens.text-faint; font-size: Tokens.font-small; }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------- root ---
+
+export component ShellRoot inherits Window {
+    title: "AetherOS";
+    background: Tokens.background;
+
+    // Shell state (pushed from Rust).
+    in-out property <string> active-app: "AetherOS";
+    in-out property <string> clock: "09:41";
+    in-out property <string> date-label: "Monday, 23 November";
+    in-out property <[MenuGroup]> menus: [];
+    in-out property <[AppEntry]> apps: [];
+    in-out property <[NotificationEntry]> notifications: [];
+    in-out property <[WindowEntry]> windows: [];
+    in-out property <[SearchResultEntry]> results: [];
+    in-out property <[SettingsCategoryEntry]> settings-categories: [];
+    in-out property <[SettingsRowEntry]> settings-rows: [];
+    in-out property <string> unread: "";
+    in-out property <bool> wifi: true;
+    in-out property <bool> bluetooth: true;
+    in-out property <bool> focus-on: false;
+    in-out property <bool> night-light: false;
+    in-out property <bool> charging: false;
+    in-out property <float> volume: 0.62;
+    in-out property <float> brightness: 0.8;
+    in-out property <int> battery: 84;
+    in-out property <string> power-mode: "balanced";
+    in-out property <string> search-query: "";
+    in-out property <int> search-selected: 0;
+    in-out property <string> lock-password: "";
+    in-out property <string> lock-error: "";
+    in-out property <bool> unlocking: false;
+    in-out property <int> overlay: 0;
+    in-out property <int> settings-page: 0;
+    in-out property <int> workspace: 0;
+    in-out property <GlassTier> tier: GlassTier.full;
+    in-out property <bool> dock-auto-hide: false;
+    in-out property <string> desk-note: "Welcome to AetherOS";
+
+    callback launch-app(string);
+    callback menu-chosen(int, int);
+    callback tray-chosen(string);
+    callback dock-chosen(string);
+    callback search-edited(string);
+    callback search-accepted(int);
+    callback quick-toggle(string, bool);
+    callback volume-changed(float);
+    callback brightness-changed(float);
+    callback power-mode-changed(string);
+    callback notification-dismissed(string);
+    callback notifications-cleared();
+    callback unlock-submitted(string);
+    callback overlay-requested(int);
+    callback settings-row-toggled(string, bool);
+    callback settings-row-activated(string);
+    callback window-activated(string);
+
+    Wallpaper { width: 100%; height: 100%; }
+
+    // Desktop preview: two sample windows so the composed shell reads like a
+    // desktop. Real app windows are compositor clients (P3).
+    WindowFrame {
+        x: 120px; y: 92px;
+        width: 760px; height: 500px;
+        title: "Notes.md — AetherPad";
+        icon: IconKind.document;
+        active: true;
+        tier: root.tier;
+        Rectangle {
+            width: 100%; height: 100%;
+            background: Tokens.surface-low;
+            border-radius: 0px;
+            HorizontalLayout {
+                Rectangle {
+                    width: 180px;
+                    height: 100%;
+                    background: Tokens.surface;
+                    Rectangle {
+                        x: parent.width - 1px;
+                        width: 1px;
+                        height: 100%;
+                        background: Tokens.divider;
+                    }
+                    VerticalLayout {
+                        padding: 10px;
+                        spacing: 4px;
+                        SectionLabel { label: "FILES"; }
+                        ListRow { title: "Notes.md"; subtitle: "Edited just now"; icon: IconKind.file; show-icon: true; selected: true; }
+                        ListRow { title: "Plan.md"; subtitle: "Yesterday"; icon: IconKind.file; show-icon: true; }
+                        ListRow { title: "Ideas.md"; subtitle: "2 days ago"; icon: IconKind.file; show-icon: true; }
+                    }
+                }
+                VerticalLayout {
+                    padding: 20px;
+                    spacing: 10px;
+                    Text { text: "Notes"; color: Tokens.text; font-size: 24px; font-weight: 700; }
+                    Text { vertical-stretch: 0; text: "The desktop stays quiet. Chrome is thin and translucent, content is the focus."; color: Tokens.text-muted; font-size: Tokens.font-body; wrap: word-wrap; }
+                    Text { vertical-stretch: 0; text: "1. Menu bar carries the active app menu, tray and clock."; color: Tokens.text; font-size: Tokens.font-body; wrap: word-wrap; }
+                    Text { vertical-stretch: 0; text: "2. Dock shows pinned and running apps with indicators."; color: Tokens.text; font-size: Tokens.font-body; wrap: word-wrap; }
+                    Text { vertical-stretch: 0; text: "3. Launcher answers in under 200 ms."; color: Tokens.text; font-size: Tokens.font-body; wrap: word-wrap; }
+                    Rectangle { height: 1px; background: Tokens.divider; }
+                    Text { text: root.desk-note; color: Tokens.text-faint; font-size: Tokens.font-small; font-family: Tokens.font-family-mono; }
+                }
+            }
+        }
+    }
+
+    WindowFrame {
+        x: 900px; y: 120px;
+        width: 440px; height: 340px;
+        title: "Files — Home";
+        icon: IconKind.folder;
+        active: false;
+        tier: root.tier;
+        Rectangle {
+            width: 100%; height: 100%;
+            background: Tokens.surface-low;
+            border-radius: 0px;
+            VerticalLayout {
+                padding: 10px;
+                spacing: 4px;
+                ListRow { title: "Documents"; subtitle: "12 items"; icon: IconKind.folder; show-icon: true; }
+                ListRow { title: "Pictures"; subtitle: "48 items"; icon: IconKind.folder; show-icon: true; }
+                ListRow { title: "Downloads"; subtitle: "3 items"; icon: IconKind.folder; show-icon: true; }
+                ListRow { title: "Music"; subtitle: "27 items"; icon: IconKind.folder; show-icon: true; }
+                ListRow { title: "Projects"; subtitle: "6 items"; icon: IconKind.folder; show-icon: true; }
+            }
+        }
+    }
+
+    // Menu bar (layer-shell top surface on the device).
+    Menubar {
+        x: 0;
+        y: 0;
+        width: 100%;
+        app-name: root.active-app;
+        menus: root.menus;
+        clock: root.clock;
+        wifi: root.wifi;
+        bluetooth: root.bluetooth;
+        focus-on: root.focus-on;
+        battery: root.battery;
+        charging: root.charging;
+        unread: root.unread;
+        tier: root.tier;
+        menu-clicked(idx, item) => { root.menu-chosen(idx, item); }
+        tray-clicked(id) => { root.tray-chosen(id); }
+    }
+
+    // Dock (layer-shell bottom surface on the device).
+    Dock {
+        x: (parent.width - self.width) / 2;
+        y: parent.height - self.height - 10px;
+        apps: root.apps;
+        auto-hide: root.dock-auto-hide;
+        tier: root.tier;
+        app-clicked(id) => { root.dock-chosen(id); }
+    }
+
+    // Overlay surfaces.
+    if root.overlay != 0 : Rectangle {
+        width: 100%;
+        height: 100%;
+        background: #05070A66;
+        accessible-role: button;
+        accessible-label: "Close overlay";
+        TouchArea { clicked => { root.overlay-requested(0); } }
+    }
+
+    if root.overlay == 1 : Launcher {
+        x: (parent.width - self.width) / 2;
+        y: 96px;
+        query: root.search-query;
+        results: root.results;
+        selected: root.search-selected;
+        tier: root.tier;
+        edited(text) => { root.search-edited(text); }
+        accepted(idx) => { root.search-accepted(idx); }
+        dismissed => { root.overlay-requested(0); }
+    }
+
+    if root.overlay == 2 : ControlCenter {
+        x: parent.width - self.width - 12px;
+        y: Tokens.menubar-height + 8px;
+        wifi: root.wifi;
+        bluetooth: root.bluetooth;
+        focus-on: root.focus-on;
+        night-light: root.night-light;
+        volume: root.volume;
+        brightness: root.brightness;
+        battery: root.battery;
+        charging: root.charging;
+        power-mode: root.power-mode;
+        tier: root.tier;
+        toggled(id, value) => { root.quick-toggle(id, value); }
+        volume-changed(value) => { root.volume-changed(value); }
+        brightness-changed(value) => { root.brightness-changed(value); }
+        power-mode-changed(mode) => { root.power-mode-changed(mode); }
+        open-settings => { root.overlay-requested(5); }
+        lock => { root.overlay-requested(6); }
+    }
+
+    if root.overlay == 3 : NotificationCenter {
+        x: parent.width - self.width - 12px;
+        y: Tokens.menubar-height + 8px;
+        items: root.notifications;
+        focus-on: root.focus-on;
+        tier: root.tier;
+        dismissed(id) => { root.notification-dismissed(id); }
+        cleared-all => { root.notifications-cleared(); }
+        open-settings => { root.overlay-requested(5); }
+    }
+
+    if root.overlay == 4 : Overview {
+        width: 100%;
+        height: 100%;
+        windows: root.windows;
+        workspace: root.workspace;
+        tier: root.tier;
+        activated(id) => { root.window-activated(id); }
+        dismissed => { root.overlay-requested(0); }
+    }
+
+    if root.overlay == 5 : SettingsApp {
+        x: 0;
+        y: Tokens.menubar-height;
+        width: 100%;
+        height: parent.height - Tokens.menubar-height;
+        categories: root.settings-categories;
+        page: root.settings-page;
+        rows: root.settings-rows;
+        row-toggled(key, value) => { root.settings-row-toggled(key, value); }
+        row-activated(key) => { root.settings-row-activated(key); }
+    }
+
+    if root.overlay == 6 : LockScreen {
+        width: 100%;
+        height: 100%;
+        clock: root.clock;
+        date-label: root.date-label;
+        password: root.lock-password;
+        error: root.lock-error;
+        unlocking: root.unlocking;
+        tier: root.tier;
+        submitted(password) => { root.unlock-submitted(password); }
+    }
+}

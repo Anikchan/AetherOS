@@ -1,20 +1,51 @@
 [workspace]
 resolver = "2"
 # P0-T05 skeleton: one crate per planned system component.
-# `apps/` joins the workspace when the first default app starts (P4).
+# P4 (S3) adds `ui/` (shared design system) and the default app crates under
+# `apps/`. `apps/pkg`, `apps/store`, `apps/sandbox` and `apps/runner` belong to
+# the P6 app platform (session S4) and join the workspace when that work starts.
 members = [
     "compositor",
     "shell",
+    "ui",
     "lifecycled",
     "powerd",
     "installer",
+    "apps/text",
+    "apps/calculator",
+    "apps/files",
+    "apps/images",
+    "apps/documents",
+    "apps/player",
+    "apps/terminal",
+    "apps/calendar",
+    "apps/archive",
+    "apps/browser",
     "apps/taskmanager",
+    "apps/pkg",
+    "apps/sandbox",
+    "apps/runner",
 ]
 
 [workspace.package]
 version = "0.1.0"
 edition = "2021"
 license = "MIT"
+
+# P4: one pinned Slint version for the shell, the design system and every app.
+# Default features are deliberately narrow: software rendering + std only, so
+# the whole workspace builds and tests headlessly on the macOS dev host and on
+# the Linux CI runner. The interactive window backend is opt-in (`winit`
+# feature per crate) and the on-device layer-shell platform lands with P3-T02.
+[workspace.dependencies]
+slint = { version = "1.19.0", default-features = false, features = [
+    "compat-1-18",
+    "renderer-software",
+    "software-renderer-systemfonts",
+    "std",
+] }
+slint-build = "1.19.0"
+aether-ui = { path = "ui" }
 
 [profile.release]
 lto = true
