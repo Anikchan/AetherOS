@@ -221,6 +221,16 @@ resume without duplication.
   `kernel-config` CI job remains authoritative once billing is restored. No
   further startable S1 tasks remain (P1 verification needs billing; P2-T01/P0-T10
   need S2 hardware). Parallel WIP from S2/S3/S4 left untouched.
+- 2026-11-23: **S1 UEFI fix + P2 defconfig merge complete.** Root cause of UEFI
+  block: GRUB2 (2.06 on CI runner) autoloaded `linuxefi.mod` at runtime but it
+  wasn't on the ESP; the `linux` command in grub.cfg triggered the autoload.
+  Fix: prefer `linuxefi` over `linux` in `post-image.sh` grub-mkimage module
+  list. Verified by CI run 45141636923 (S_UEFI_BOOT_OK, 33 s TCG). P1-T05 → Done,
+  M1 achieved. P2 defconfig merge (Mesa/Vulkan/PipeWire/ALSA/BlueZ/libinput/
+  firmware) pushed (ec4199a); CI verified (image 27 MB, all boot chains green,
+  run 45155405768). P0-T10, P2-T01, P2-T07, P2-T08, P2-T02 all Done. Remaining
+  S1 work: P2-T03..T06 (Wi-Fi/BT, audio, input, sleep/resume) need bare-metal
+  AetherOS on the Dell. Dell ready (Ubuntu, SSH, runner, reserved IP).
 
 - 2026-11-20: Session S4 (tooling & infra) completed autonomously: hardened boot-test.sh; added disk-image-test.sh; added os-build/Makefile and os-build/scripts/* (type-check, fetch-kernel, ci-local, metrics-export, artifact-clean, kernel-config-check) with README; added metrics/TEMPLATE.txt; updated ci.yml (concurrency, cargo cache, timeouts, artifact retention, optional notify-on-failure) and added artifact-cleanup.yml; added concurrency to coverage-sample, graphics-spikes, init-compare, wine-spike; updated os-build/README.md. Out-of-territory items recorded as proposals for S1/S2.
 
