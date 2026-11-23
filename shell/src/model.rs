@@ -226,6 +226,45 @@ pub fn constant_time_eq(left: &str, right: &str) -> bool {
     diff == 0
 }
 
+/// A daily Focus window (F1 SHL-05). Minutes are since midnight; a window that
+/// wraps past midnight (for example 22:00 to 07:00) is supported.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FocusSchedule {
+    pub start_minute: u16,
+    pub end_minute: u16,
+}
+
+impl FocusSchedule {
+    pub fn new(start_minute: u16, end_minute: u16) -> FocusSchedule {
+        FocusSchedule {
+            start_minute: start_minute % 1440,
+            end_minute: end_minute % 1440,
+        }
+    }
+
+    pub fn active_at(&self, minute_of_day: u16) -> bool {
+        let now = minute_of_day % 1440;
+        if self.start_minute == self.end_minute {
+            return false;
+        }
+        if self.start_minute < self.end_minute {
+            (self.start_minute..self.end_minute).contains(&now)
+        } else {
+            now >= self.start_minute || now < self.end_minute
+        }
+    }
+
+    pub fn label(&self) -> String {
+        format!(
+            "{:02}:{:02}–{:02}:{:02}",
+            self.start_minute / 60,
+            self.start_minute % 60,
+            self.end_minute / 60,
+            self.end_minute % 60
+        )
+    }
+}
+
 /// The whole shell model. Only `crate::app` mutates it in response to UI
 /// callbacks; tests drive it directly.
 #[derive(Debug, Clone)]
@@ -236,6 +275,9 @@ pub struct ShellState {
     pub wifi: bool,
     pub bluetooth: bool,
     pub focus_until: Option<String>,
+    pub focus_schedule: Option<FocusSchedule>,
+    /// Minutes since midnight; refreshed by the host's minute timer.
+    pub now_minute: u16,
     pub night_light: bool,
     pub volume: f32,
     pub brightness: f32,
@@ -267,6 +309,8 @@ impl Default for ShellState {
             wifi: true,
             bluetooth: true,
             focus_until: None,
+            focus_schedule: None,
+            now_minute: 9 * 60 + 41,
             night_light: false,
             volume: 0.62,
             brightness: 0.8,
@@ -319,7 +363,19 @@ impl ShellState {
     }
 
     pub fn focus_active(&self) -> bool {
-        self.focus_until.is_some()
+        if self.focus_until.is_some() {
+            return true;
+        }
+        self.focus_schedule
+            .is_some_and(|schedule| schedule.active_at(self.now_minute))
+    }
+
+    /// Label for the Focus banner: the manual end time or the schedule.
+    pub fn focus_label(&self) -> Option<String> {
+        if let Some(until) = &self.focus_until {
+            return Some(until.clone());
+        }
+        self.focus_schedule.map(|schedule| schedule.label())
     }
 
     pub fn unread_count(&self) -> usize {
@@ -547,6 +603,43 @@ mod tests {
             });
         }
         assert_eq!(state.unread_badge(), "9+");
+    }
+
+    #[test]
+    fn focus_schedule_handles_daytime_and_overnight_windows() {
+        let work = FocusSchedule::new(9 * 60, 17 * 60);
+        assert!(work.active_at(12 * 60));
+        assert!(!work.active_at(8 * 60 + 59));
+        assert!(!work.active_at(17 * 60));
+        let night = FocusSchedule::new(22 * 60, 7 * 60);
+        assert!(night.active_at(23 * 60));
+        assert!(night.active_at(6 * 60));
+        assert!(!night.active_at(12 * 60));
+        assert!(!FocusSchedule::new(60, 60).active_at(60), "empty window is never active");
+        assert_eq!(work.label(), "09:00–17:00");
+    }
+
+    #[test]
+    fn scheduled_focus_suppresses_without_a_manual_toggle() {
+        let mut state = ShellState::default();
+        state.notifications.push(Notification {
+            id: "n1".into(),
+            app: "Mail".into(),
+            title: "Hello".into(),
+            body: String::new(),
+            time: "now".into(),
+            icon: IconKind::Bell,
+            unread: true,
+        });
+        state.now_minute = 10 * 60;
+        state.focus_schedule = Some(FocusSchedule::new(9 * 60, 12 * 60));
+        assert!(state.focus_active());
+        assert!(state.visible_notifications().is_empty());
+        assert_eq!(state.unread_badge(), "");
+        assert_eq!(state.focus_label().as_deref(), Some("09:00–12:00"));
+        state.now_minute = 12 * 60;
+        assert!(!state.focus_active());
+        assert_eq!(state.visible_notifications().len(), 1);
     }
 
     #[test]

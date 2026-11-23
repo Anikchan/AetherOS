@@ -5,6 +5,7 @@
 //! with `MockServices` and a temporary config root, then drive it through the
 //! headless element queries.
 
+use chrono::{Datelike, Timelike};
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -800,6 +801,7 @@ impl ShellController {
             let mut state = self.state.borrow_mut();
             state.clock = model::format_clock(now);
             state.date_label = model::format_date(now);
+            state.now_minute = (now.hour() * 60 + now.minute()) as u16;
         }
         self.ui.set_clock(model::format_clock(now).into());
         self.ui.set_date_label(model::format_date(now).into());

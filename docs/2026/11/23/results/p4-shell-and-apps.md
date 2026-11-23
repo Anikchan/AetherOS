@@ -40,19 +40,44 @@ design system so the shell and every app look like one product.
 
 ### Default apps (P4-T08, T10..T18)
 
-See the app table in `apps/README.md`. Each app has a tested core module and a
-window driven from Rust (no logic in `.slint`).
+Each app has a Slint-free core module with unit tests, a controller that owns
+the window, and a `--render` entry point for evidence screenshots.
+
+| Task | Crate | Core (tested) | Unit tests | UI test | Screenshot |
+| --- | --- | --- | --- | --- | --- |
+| P4-T08 | `apps/files` | Sandboxed listing, navigation, sorting, search, multi-select, copy/cut/paste, rename, trash, traversal + symlink escape guards | 11 | yes | `app-files.png` |
+| P4-T10 | `apps/text` | Char-indexed buffer, bounded undo/redo, unicode counts, find/replace, UTF-8 load/save, autosave, recent files | 10 | yes | `app-text.png` |
+| P4-T11 | `apps/calculator` | Recursive-descent evaluator (precedence, right-assoc `^`, functions, typed errors), history, memory | 11 | yes | `app-calculator.png` |
+| P4-T12 | `apps/images` | Decode png/jpeg/gif/bmp, metadata, fit/zoom clamp, lossless rotate/flip, folder order, thumbnail cache | 9 | yes | `app-images.png` |
+| P4-T13 | `apps/documents` | Markdown block+inline parser, line-budget pagination, zoom, search with page mapping, poppler adapter (detect/commands, NotAvailable when absent) | 15 | yes | `app-documents.png`, `app-documents-page2.png` |
+| P4-T14 | `apps/player` | Queue, seeded shuffle, repeat modes, transport with auto-advance, seek/volume, GStreamer adapter + codec policy | 11 | yes | `app-player.png` |
+| P4-T15 | `apps/terminal` | VT100/ANSI parser (cursor, erase, SGR, scrollback, UTF-8 across reads), forkpty session (unix) | 13 | yes | `app-terminal.png` |
+| P4-T16 | `apps/calendar` | Month grid (Monday-first, leap years, year rollover), event store (atomic JSON), clock/analog angles, stopwatch, timer | 14 | yes | `app-calendar.png`, `app-calendar-clock.png` |
+| P4-T17 | `apps/archive` | Format detection, entry listing, extract/create with zip-slip and tar-slip guards, rebuild delete, permissions | 9 | yes | `app-archive.png` |
+| P4-T18 | `apps/browser` | URL/search parsing, tab stacks, bookmarks, history de-duplication, downloads, private isolation, session restore | 38 | yes | `app-browser.png` |
 
 ## 2. Verification (performed in this session)
 
 Commands and results:
 
 ```text
-cargo test -p aether-ui -p aether-shell     # 45 + 5 unit tests, 1 interaction test — PASS
-cargo test --workspace                      # see section 3
-cargo run -p aether-shell -- --render docs/2026/11/23/results/screenshots
-cargo run -p aether-browser -- --render docs/2026/11/23/results/screenshots
+cargo test --workspace --exclude aether-compositor   # 88 test binaries, 0 failures
+cargo test -p aether-ui -p aether-shell              # 5 + 47 unit, 1 interaction
+cargo test -p aether-text -p aether-calculator -p aether-terminal
+cargo test -p aether-files -p aether-archive -p aether-images
+cargo test -p aether-calendar -p aether-documents -p aether-player
+cargo test -p aether-browser
+cargo run -p <crate> -- --render docs/2026/11/23/results/screenshots
 ```
+
+Totals: **193 unit tests + 11 headless interaction tests**, all green. The
+`aether-compositor` crate is excluded on the macOS host because Smithay links
+`libxkbcommon`, which only the Linux CI image provides; CI runs the full
+workspace.
+
+Note from the P4 T05 work: Focus now supports a daily schedule
+(`FocusSchedule`, overnight windows included) in addition to the manual toggle,
+so SHL-AC-05's "scheduled time" behaviour is implemented and unit-tested.
 
 The interaction test is not a smoke test: it clicks real widgets through the
 Slint testing backend and asserts model, UI and file effects —
@@ -80,7 +105,10 @@ All rendered headlessly with the software renderer (`aether-ui::render`):
 - `screenshots/shell-settings.png` — settings app with file/key mapping
 - `screenshots/shell-lock.png` — lock screen
 - `screenshots/shell-overview.png` — overview with workspaces
-- `screenshots/app-*.png` — one per default app
+- `screenshots/app-browser.png`, `app-text.png`, `app-calculator.png`,
+  `app-terminal.png`, `app-files.png`, `app-archive.png`, `app-images.png`,
+  `app-calendar.png`, `app-calendar-clock.png`, `app-documents.png`,
+  `app-documents-page2.png`, `app-player.png`
 
 ## 4. Acceptance status
 
@@ -93,8 +121,15 @@ All rendered headlessly with the software renderer (`aether-ui::render`):
 | P4-T05 notifications | Implemented, headless-verified | Grouping/Focus rules tested; real D-Bus notifications arrive with the session |
 | P4-T06 lock screen | Implemented, headless-verified | greetd/PAM integration is the remaining on-device step |
 | P4-T07 settings | Implemented + verified | "Every setting maps to a file key" shown in the UI and asserted by tests |
-| P4-T08 files | See app table | Core FS operations tested against temp trees |
-| P4-T10..T17 apps | See app table | Each app's core logic tested; UI rendered |
+| P4-T08 files | Implemented, verified | Sandbox escape + symlink tests; copy/move/rename/trash on temp trees |
+| P4-T10 AetherPad | Implemented, verified | Undo/redo, counts, find/replace, save/load round trip (UTF-8 scope) |
+| P4-T11 Calculator | Implemented, verified | Precedence, `^` associativity, domain errors, history cap, memory |
+| P4-T12 Images | Implemented, verified | Decode/metadata/rotate/zoom on generated fixtures |
+| P4-T13 Documents | Implemented, verified (PDF env-gated) | Markdown + pagination + search tested; poppler adapter reports NotAvailable when absent |
+| P4-T14 Player | Implemented, verified (audio env-gated) | Playlist/shuffle/repeat/transport tested; GStreamer shell-out is the adapter, mock in tests |
+| P4-T15 Terminal | Implemented, verified (host-gated PTY) | VT parser tested; forkpty session tested on unix, not pumped from an event loop yet |
+| P4-T16 Calendar/Clock | Implemented, verified | Leap year, month navigation, event CRUD + JSON round trip, hand angles, stopwatch/timer |
+| P4-T17 Archive | Implemented, verified | Malicious tar/zip member rejection, extract/create/delete round trip |
 | P4-T18 browser core | Implemented, verified | Tabs/bookmarks/history/downloads/private/session tested; WebKitGTK embedding awaits graphics bring-up |
 | P4-T18a browser media | Decision recorded | Royalty-free codecs only; H.264/AAC path documented, DRM off by default |
 | P4-T18b browser data | Implemented, verified | History de-duplication, cap, downloads, session restore |

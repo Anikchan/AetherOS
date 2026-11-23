@@ -338,3 +338,15 @@ resume without duplication.
   back on the 4th boot. RAUC image wiring and real boot-failure detection stay
   pending (S1 image work). Evidence:
   `docs/2026/11/23/results/p9-ab-updates.md`.
+
+- 2026-11-23: **P4 app batches integrated.** Three parallel developer sessions
+  delivered the nine default apps; each was verified by this session with
+  `cargo test -p <crate>` and by opening its rendered screenshot. Totals now:
+  193 unit tests + 11 headless interaction tests, `cargo test --workspace
+  --exclude aether-compositor` green (compositor needs libxkbcommon, present in
+  CI and on Linux). Review fixes applied here: archive toolbar overflow, clipped
+  archive path field, calendar event-dot placement, calendar field placeholders.
+  The shell gained a daily Focus schedule (`FocusSchedule`, overnight windows
+  supported) on top of the manual toggle.
+  Remaining P4 work is on-device acceptance (layer-shell host, greetd/PAM,
+  poppler, GStreamer) — recorded in `docs/2026/11/23/results/p4-shell-and-apps.md`.
