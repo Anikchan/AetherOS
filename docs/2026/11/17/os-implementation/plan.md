@@ -262,3 +262,13 @@ resume without duplication.
   Ctrl+Shift+Esc, confirmation dialogs, G-TM1/G-TM2 and TM-AC-04/05/06/07 stay
   pending UI/hardware. Evidence:
   `docs/2026/11/23/results/p5-t07-activity-manager.md`.
+- 2026-11-23: **S4** P6 app-platform core landed: `apps/pkg` (manifest +
+  per-file SHA-256 + atomic install/rollback + registry), `apps/sandbox`
+  (permission broker with persistent denial, profiles from grants, mandatory
+  bwrap enforcement, capability probe), `apps/runner` (engine registry,
+  sandboxed launch plans, Windows prefix manager, 40-slot compatibility DB,
+  sample generator), `apps/store` (repo scan/search/install/update/remove).
+  Verified: 47 tests pass across the four crates; CLI flow samples → verify →
+  install → plan → store list/install works; macOS correctly refuses
+  unsandboxed launch. Windows engine packaging and the 40-app test results stay
+  pending. Evidence: `docs/2026/11/23/results/p6-app-platform.md`.

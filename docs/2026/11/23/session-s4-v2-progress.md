@@ -40,14 +40,14 @@ Must NOT touch: `os-build/kernel/`, `os-build/buildroot/`, `compositor/`,
 | 15 | P5-T15 Energy-impact column | API Done (2026-11-23); column with P5-T07 | `energy_by_app` |
 | 16 | P5-T16 Battery analytics (spike S8) | Done (2026-11-23) | cycle count fallback tested; hardware check pending |
 | 17 | P5-T17 Screen time (basic) | Done (2026-11-23) | screen-on/per-app/pickups/notifications/gaps |
-| 18 | P6-T01 Package format + manifest inspector | Not started | |
-| 19 | P6-T02 Native bundle install & run | Not started | |
-| 20 | P6-T03 AppImage runner | Not started | |
-| 21 | P6-T04 Sandbox + permission broker | Not started | |
-| 22 | P6-T05/T06 Windows engine packaging + installer flow | Not started | |
-| 23 | P6-T07/T08 Cross-platform bundles, macOS detector | Not started | |
-| 24 | P6-T09 Software app (basic) | Not started | |
-| 25 | P6-T10 Compatibility database | Not started | |
+| 18 | P6-T01 Package format + manifest inspector | Done (2026-11-23) | `apps/pkg`; checksums + inspector |
+| 19 | P6-T02 Native bundle install & run | Core Done (2026-11-23) | atomic install/registry; sandboxed launch on AetherOS |
+| 20 | P6-T03 AppImage runner | Core Done (2026-11-23) | inferred manifest + exec bit + plan |
+| 21 | P6-T04 Sandbox + permission broker | Core Done (2026-11-23) | bwrap enforcement, denied persists; Landlock follow-up |
+| 22 | P6-T05/T06 Windows engine packaging + installer flow | Partial (2026-11-23) | discovery, prefixes, payload install; engine packaging pending |
+| 23 | P6-T07/T08 Cross-platform bundles, macOS detector | Done (2026-11-23) | `aether-samples` 3 bundles verified; macOS alternative message |
+| 24 | P6-T09 Software app (basic) | Core Done (2026-11-23) | scan/search/install/update/remove; UI = S3 |
+| 25 | P6-T10 Compatibility database | Schema+gate Done; results untested (2026-11-23) | 40 slots, gate A/B>=30 OPEN |
 | 26 | P7/P8/P9/P10 startable items | Not started | after P5/P6 |
 | 27 | Docs & design pass (D3/D5/D8/D10, feature docs, README) | Continuous | |
 
@@ -79,5 +79,14 @@ Must NOT touch: `os-build/kernel/`, `os-build/buildroot/`, `compositor/`,
   fixture trees validate Pass/Partial/Fail parsers. Slint window + shortcut +
   dialogs remain a UI binding; G-TM1/G-TM2 need the Dell. Evidence:
   `docs/2026/11/23/results/p5-t07-activity-manager.md`.
+- 2026-11-23: P6 app platform core Done: `apps/pkg` (manifest/checksum/atomic
+  install/registry), `apps/sandbox` (permission broker, profiles, bwrap
+  enforcement, capabilities), `apps/runner` (engines, sandboxed launch plans,
+  Windows prefixes, compatibility DB, samples), `apps/store` (repo scan/search/
+  install/update/remove). 47 tests pass. End-to-end CLI verified: samples →
+  verify → install → plan → store list/install. On macOS the sandbox doctor and
+  launcher correctly refuse to run unsandboxed. Windows engine packaging and
+  the 40-app results remain pending. Evidence:
+  `docs/2026/11/23/results/p6-app-platform.md`.
   Cargo.toml committed via index surgery with only S4 members (powerd,
   apps/taskmanager) because S3's ui/apps members are still in flight.

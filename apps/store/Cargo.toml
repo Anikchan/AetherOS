@@ -1,0 +1,13 @@
+[package]
+name = "aether-store"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "AetherOS Software app core: repository index, install/update/remove (P6-T09, D8)"
+
+[dependencies]
+aether-pkg = { path = "../pkg" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+walkdir = "2"
