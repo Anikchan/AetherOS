@@ -1,50 +1,83 @@
 #!/bin/sh
-# P1-T05: UEFI boot chain — systemd-boot + unified kernel image (UKI), D4 §3.
+# P1-T05: UEFI boot chain — GRUB2 (x86_64-efi) for UEFI disks, D4 §3.
 #
 # Runs as a Buildroot post-image script (env: BINARIES_DIR, TARGET_DIR,
 # HOST_DIR). Produces ${BINARIES_DIR}/aetheros-efi.img:
-#   p1  EFI system partition (FAT): systemd-boot + UKI with embedded cmdline
+#   p1  EFI system partition (FAT): GRUB2 + bzImage + grub.cfg
 #   p2  rootfs.squashfs (read-only root, P1-T03)
 # Ensure mtools (mcopy) is on PATH for genimage's vfat step.
 export PATH="/usr/bin:/bin:${PATH}"
 
 : "${BINARIES_DIR:?}" "${TARGET_DIR:?}" "${HOST_DIR:?}"
 BOARD_DIR="$(dirname "$0")"
-STUB="${TARGET_DIR}/usr/lib/systemd/boot/efi/linuxx64.efi.stub"
-SD_BOOT="${TARGET_DIR}/usr/lib/systemd/boot/efi/systemd-bootx64.efi"
 
-[ -f "${SD_BOOT}" ] || { echo "ERROR: systemd-boot not found at ${SD_BOOT}"; exit 1; }
+# --- Locate GRUB2 modules directory and the linux module name ---
+# Ubuntu 22.04 (GRUB 2.06) provides linuxefi.mod; 24.04+ (GRUB 2.12+) provides
+# linux.mod. grub-mkimage fails if a listed module does not exist, so pick the
+# one that is actually present.
+GRUBMOD_DIR=""
+for d in "${HOST_DIR}/lib/grub/x86_64-efi" /usr/lib/grub/x86_64-efi; do
+    if [ -d "$d" ]; then GRUBMOD_DIR="$d"; break; fi
+done
+[ -n "$GRUBMOD_DIR" ] || { echo "ERROR: GRUB2 modules directory not found"; exit 1; }
+
+LINUX_MOD=""
+for m in linux linuxefi; do
+    if [ -f "${GRUBMOD_DIR}/${m}.mod" ]; then LINUX_MOD="$m"; break; fi
+done
+[ -n "$LINUX_MOD" ] || { echo "ERROR: neither linux nor linuxefi module found in $GRUBMOD_DIR"; exit 1; }
 
 # --- Stage ESP contents for genimage ---
 mkdir -p "${BINARIES_DIR}/efi-part/EFI/BOOT" \
-         "${BINARIES_DIR}/efi-part/loader/entries"
-cp "${SD_BOOT}" "${BINARIES_DIR}/efi-part/EFI/BOOT/BOOTX64.EFI"
+         "${BINARIES_DIR}/efi-part/boot/grub"
+
+# GRUB2 EFI binary (standalone, with embedded modules).
+if [ -f "${GRUBMOD_DIR}/grubx64.efi" ]; then
+    cp "${GRUBMOD_DIR}/grubx64.efi" "${BINARIES_DIR}/efi-part/EFI/BOOT/BOOTX64.EFI"
+else
+    # Build a standalone EFI binary with grub-mkimage.
+    grub-mkimage -O x86_64-efi \
+        -o "${BINARIES_DIR}/efi-part/EFI/BOOT/BOOTX64.EFI" \
+        -p /boot/grub \
+        normal "$LINUX_MOD" boot part_gpt part_msdos ext2 fat iso9660 \
+        configfile search search_fs_uuid terminal serial all_video efi_gop \
+        echo ls cat test true sleep reboot halt help loadenv \
+        2>/dev/null || \
+    grub-mkimage -O x86_64-efi \
+        -o "${BINARIES_DIR}/efi-part/EFI/BOOT/BOOTX64.EFI" \
+        -p /boot/grub \
+        normal "$LINUX_MOD" boot part_gpt part_msdos fat configfile search \
+        2>/dev/null
+fi
+
+# Verify the GRUB2 EFI binary was actually produced.
+[ -f "${BINARIES_DIR}/efi-part/EFI/BOOT/BOOTX64.EFI" ] && [ -s "${BINARIES_DIR}/efi-part/EFI/BOOT/BOOTX64.EFI" ] || {
+    echo "ERROR: BOOTX64.EFI was not created (grub-mkimage failed and no grubx64.efi found)"
+    exit 1
+}
+
+# Kernel + GRUB config on the ESP.
 cp "${BINARIES_DIR}/bzImage" "${BINARIES_DIR}/efi-part/bzImage"
-
-# systemd-boot loader entry (traditional, no UKI) — avoids objcopy/ukify.
-mkdir -p "${BINARIES_DIR}/efi-part/loader/entries"
-cat > "${BINARIES_DIR}/efi-part/loader/loader.conf" <<'EOF'
-default aetheros
-timeout 3
-EOF
-cat > "${BINARIES_DIR}/efi-part/loader/entries/aetheros.conf" <<'EOF'
-title AetherOS
-linux /bzImage
-options root=/dev/vda2 rootfstype=squashfs console=ttyS0 net.ifnames=0 biosdevname=0
+cat > "${BINARIES_DIR}/efi-part/boot/grub/grub.cfg" <<'EOF'
+set timeout=3
+set default=0
+serial --unit=0 --speed=115200
+terminal_input serial console
+terminal_output serial console
+menuentry "AetherOS" {
+    linux /bzImage root=/dev/vda2 rootfstype=squashfs console=ttyS0,115200n8 net.ifnames=0 biosdevname=0
+}
 EOF
 
-# --- Create ESP vfat image manually (genimage's mcopy can't find mtools) ---
+# --- Create ESP vfat image manually ---
 export PATH="/usr/bin:/bin:${PATH}"
 mkdir -p "${BINARIES_DIR}" || { echo "ERROR: cannot create ${BINARIES_DIR}"; exit 1; }
-ls -ld "${BINARIES_DIR}" || { echo "ERROR: ${BINARIES_DIR} does not exist"; exit 1; }
 VFA="${BINARIES_DIR}/efi-part.vfat"
 rm -f "${VFA}"
-# Create the file first (mkdosfs on this version can't create it)
 truncate -s 64M "${VFA}" || dd if=/dev/zero of="${VFA}" bs=1M count=64
 mkdosfs -F 32 -n "AETHEROS" "${VFA}" || { echo "ERROR: mkdosfs failed"; exit 1; }
-# Copy ESP contents into the vfat image (avoid . and .. entries)
 MTOOLS_SKIP_CHECK=1 mcopy -s -i "${VFA}" "${BINARIES_DIR}/efi-part/EFI" "::/"
-MTOOLS_SKIP_CHECK=1 mcopy -s -i "${VFA}" "${BINARIES_DIR}/efi-part/loader" "::/"
+MTOOLS_SKIP_CHECK=1 mcopy -s -i "${VFA}" "${BINARIES_DIR}/efi-part/boot" "::/"
 MTOOLS_SKIP_CHECK=1 mcopy -i "${VFA}" "${BINARIES_DIR}/efi-part/bzImage" "::/"
 
 # --- Assemble the bootable UEFI disk image ---

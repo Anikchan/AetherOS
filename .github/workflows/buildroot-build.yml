@@ -76,7 +76,7 @@ jobs:
           export TRANSCRIPT=$(mktemp)
           expect os-build/test/ci-boot-bios.exp | tee boot-bios.log
           grep -q 'S_BIOS_BOOT_OK' boot-bios.log || { echo "FAIL: BIOS boot chain failed"; exit 1; }
-      - name: UEFI boot test — systemd-boot + UKI (P1-T05)
+      - name: UEFI boot test — GRUB2 (x86_64-efi) (P1-T05)
         timeout-minutes: 15
         run: |
           export DISK=os-build/buildroot/buildroot/output/images/aetheros-efi.img
@@ -84,10 +84,10 @@ jobs:
           # Debug: list ESP contents
           echo "=== ESP contents ==="
           mdir -i os-build/buildroot/buildroot/output/images/efi-part.vfat :: 2>/dev/null || echo "mdir failed"
-          echo "=== loader entries ==="
-          mtype -i os-build/buildroot/buildroot/output/images/efi-part.vfat ::/loader/entries/aetheros.conf 2>/dev/null || echo "mtype failed"
-          echo "=== loader.conf ==="
-          mtype -i os-build/buildroot/buildroot/output/images/efi-part.vfat ::/loader/loader.conf 2>/dev/null || echo "mtype failed"
+          echo "=== boot/grub/grub.cfg ==="
+          mtype -i os-build/buildroot/buildroot/output/images/efi-part.vfat ::/boot/grub/grub.cfg 2>/dev/null || echo "mtype failed"
+          echo "=== EFI/BOOT ==="
+          mdir -i os-build/buildroot/buildroot/output/images/efi-part.vfat ::/EFI/BOOT 2>/dev/null || echo "mdir failed"
           export OVMF=/usr/share/OVMF/OVMF_CODE.fd
           cp /usr/share/OVMF/OVMF_VARS.fd ./OVMF_VARS.fd
           export OVMF_VARS=$PWD/OVMF_VARS.fd
