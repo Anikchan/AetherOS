@@ -23,12 +23,13 @@ pub enum Category {
     Keyboard,
     Mouse,
     Apps,
+    Notifications,
     Privacy,
     About,
 }
 
 impl Category {
-    pub const ALL: [Category; 10] = [
+    pub const ALL: [Category; 11] = [
         Category::Appearance,
         Category::Display,
         Category::Sound,
@@ -37,6 +38,7 @@ impl Category {
         Category::Keyboard,
         Category::Mouse,
         Category::Apps,
+        Category::Notifications,
         Category::Privacy,
         Category::About,
     ];
@@ -51,6 +53,7 @@ impl Category {
             Category::Keyboard => "Keyboard",
             Category::Mouse => "Mouse & touchpad",
             Category::Apps => "Apps",
+            Category::Notifications => "Notifications",
             Category::Privacy => "Privacy",
             Category::About => "About",
         }
@@ -66,6 +69,7 @@ impl Category {
             Category::Keyboard => IconKind::Keyboard,
             Category::Mouse => IconKind::Mouse,
             Category::Apps => IconKind::Apps,
+            Category::Notifications => IconKind::Bell,
             Category::Privacy => IconKind::Shield,
             Category::About => IconKind::Info,
         }
@@ -158,6 +162,14 @@ pub const SETTINGS: &[SettingDef] = &[
     SettingDef { key: "apps.default-terminal", label: "Default terminal", file: "apps/defaults.toml", kind: SettingKind::Value, default: "aether-terminal", category: Category::Apps },
     SettingDef { key: "apps.default-text-editor", label: "Default text editor", file: "apps/defaults.toml", kind: SettingKind::Value, default: "aether-text", category: Category::Apps },
     SettingDef { key: "apps.default-player", label: "Default player", file: "apps/defaults.toml", kind: SettingKind::Value, default: "aether-player", category: Category::Apps },
+
+    // Notifications and Focus (F1 SHL-05). A schedule is a daily window; the
+    // shell suppresses notification cards while it is active.
+    SettingDef { key: "notifications.focus-enabled", label: "Focus schedule", file: "notifications.toml", kind: SettingKind::Toggle, default: "false", category: Category::Notifications },
+    SettingDef { key: "notifications.focus-start", label: "Focus starts", file: "notifications.toml", kind: SettingKind::Value, default: "09:00", category: Category::Notifications },
+    SettingDef { key: "notifications.focus-end", label: "Focus ends", file: "notifications.toml", kind: SettingKind::Value, default: "17:00", category: Category::Notifications },
+    SettingDef { key: "notifications.show-previews", label: "Show message previews", file: "notifications.toml", kind: SettingKind::Toggle, default: "true", category: Category::Notifications },
+    SettingDef { key: "notifications.dnd-until", label: "Do not disturb until", file: "notifications.toml", kind: SettingKind::Value, default: "18:00", category: Category::Notifications },
 
     // Privacy and security.
     SettingDef { key: "privacy.screen-lock-timeout", label: "Lock after (seconds)", file: "privacy.toml", kind: SettingKind::Value, default: "300", category: Category::Privacy },

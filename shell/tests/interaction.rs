@@ -208,6 +208,15 @@ fn shell_surfaces_are_interactive() {
         assert_eq!(controller.state().notifications.len(), before - 1);
         controller.open(Overlay::Notifications); // close
         controller.set_toggle("focus", true);
+        assert_eq!(
+            controller
+                .store()
+                .load("notifications.focus-enabled")
+                .unwrap()
+                .and_then(|value| value.as_bool()),
+            Some(true),
+            "Focus is persisted to notifications.toml"
+        );
         assert_eq!(ui.get_unread().to_string(), "");
         assert_eq!(ui.get_notifications().row_count(), 0);
         assert!(controller.state().notifications.len() >= 1, "Focus hides, never deletes");

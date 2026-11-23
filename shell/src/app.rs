@@ -249,6 +249,25 @@ impl ShellController {
         state.volume = read_float("sound.output-volume", state.volume);
         state.brightness = read_float("display.brightness", state.brightness);
         state.night_light = read_bool("display.night-light", state.night_light);
+        // Focus: an optional daily window from notifications.toml.
+        let focus_enabled = read_bool("notifications.focus-enabled", false);
+        let focus_start = self
+            .store
+            .load("notifications.focus-start")
+            .ok()
+            .flatten()
+            .and_then(|value| value.as_str().map(model::parse_hhmm).flatten())
+            .unwrap_or(9 * 60);
+        let focus_end = self
+            .store
+            .load("notifications.focus-end")
+            .ok()
+            .flatten()
+            .and_then(|value| value.as_str().map(model::parse_hhmm).flatten())
+            .unwrap_or(17 * 60);
+        if focus_enabled {
+            state.focus_schedule = Some(model::FocusSchedule::new(focus_start, focus_end));
+        }
         if let Ok(Some(toml::Value::String(mode))) = self.store.load("power.power-mode") {
             if let Some(mode) = PowerMode::parse(&mode) {
                 state.power_mode = mode;
@@ -598,6 +617,35 @@ impl ShellController {
 
     fn quick_toggle(&self, id: &str, value: bool) {
         self.state.borrow_mut().set_toggle(id, value);
+        if id == "focus" {
+            // Focus is a real setting: persist the toggle and keep the parsed
+            // schedule (the shell falls back to "until 18:00" without one).
+            let _ = self.store.save(
+                "notifications.focus-enabled",
+                toml::Value::Boolean(value),
+            );
+            let start = self
+                .store
+                .load("notifications.focus-start")
+                .ok()
+                .flatten()
+                .and_then(|value| value.as_str().map(model::parse_hhmm).flatten());
+            let end = self
+                .store
+                .load("notifications.focus-end")
+                .ok()
+                .flatten()
+                .and_then(|value| value.as_str().map(model::parse_hhmm).flatten());
+            if let (Some(start), Some(end)) = (start, end) {
+                let mut state = self.state.borrow_mut();
+                state.focus_schedule = if value {
+                    Some(model::FocusSchedule::new(start, end))
+                } else {
+                    None
+                };
+                state.focus_until = None;
+            }
+        }
         let keyed = match id {
             "wifi" => Some(("network.wifi", "wifi")),
             "bluetooth" => Some(("network.bluetooth", "bluetooth")),

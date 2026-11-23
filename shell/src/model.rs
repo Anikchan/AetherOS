@@ -265,6 +265,17 @@ impl FocusSchedule {
     }
 }
 
+/// Parse a `HH:MM` clock string into minutes since midnight.
+pub fn parse_hhmm(text: &str) -> Option<u16> {
+    let (hour, minute) = text.trim().split_once(':')?;
+    let hour: u16 = hour.trim().parse().ok()?;
+    let minute: u16 = minute.trim().parse().ok()?;
+    if hour > 23 || minute > 59 {
+        return None;
+    }
+    Some(hour * 60 + minute)
+}
+
 /// The whole shell model. Only `crate::app` mutates it in response to UI
 /// callbacks; tests drive it directly.
 #[derive(Debug, Clone)]
@@ -737,6 +748,17 @@ mod tests {
         assert_eq!(state.brightness, 0.0);
         state.set_brightness(f32::NAN);
         assert_eq!(state.brightness, 0.0);
+    }
+
+    #[test]
+    fn hhmm_parsing_is_strict() {
+        assert_eq!(parse_hhmm("09:00"), Some(540));
+        assert_eq!(parse_hhmm("23:59"), Some(1439));
+        assert_eq!(parse_hhmm(" 7:5 "), Some(425));
+        assert_eq!(parse_hhmm("24:00"), None);
+        assert_eq!(parse_hhmm("9"), None);
+        assert_eq!(parse_hhmm("nine:zero"), None);
+        assert_eq!(parse_hhmm("12:60"), None);
     }
 
     #[test]
