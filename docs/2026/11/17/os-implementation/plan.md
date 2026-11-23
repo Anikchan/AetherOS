@@ -313,3 +313,13 @@ resume without duplication.
   P7-T05 is deferred by the roadmap; P8-T01 (live image) and P8-T05 (Secure
   Boot) remain pending. Evidence:
   `docs/2026/11/23/results/p7-p8-config-installer.md`.
+- 2026-11-23: **S4** remaining startable items: Pack G storage analyzer
+  (`apps/storage-analyzer`, 5 tests, du comparison ≤ 1%), image checksum
+  script (`os-build/scripts/image-checksum.sh`, create/verify/tamper verified),
+  default-deny firewall rules (`os-build/security/aether-firewall.nft`; nft
+  syntax check pending AetherOS), and P10-T03 user/developer guides. Evidence:
+  `docs/2026/11/23/results/p9-p10-packs-docs.md`. All S4 crates green
+  (258 tests across 10 crates); workspace builds with
+  `LIBRARY_PATH=$(brew --prefix)/lib` (the compositor needs xkbcommon).
+  Remaining P8/P9/P10 tasks require the live image, RAUC, hardware, or the
+  30-day dogfood period.

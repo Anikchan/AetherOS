@@ -9,6 +9,7 @@
 | `artifact-clean.sh` | Remove local build artifacts and caches. |
 | `kernel-config-check.sh` | Cached reimplementation of the kernel-config workflow (optimization proposal for S1). |
 | `spike-runner.sh` | Reusable harness for running a spike script with timeout, log capture, and marker verification (supports S2). |
+| `image-checksum.sh` | Create/verify SHA-256 sidecar files for ISO/IMG artifacts (P9-T05; signing deferred to public release). |
 
 ## Local type-check recipe
 

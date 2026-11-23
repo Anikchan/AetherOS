@@ -1,0 +1,12 @@
+[package]
+name = "aether-storage-analyzer"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "AetherOS storage analyzer: disk usage map and large file finder (Pack G, P7-PK-T04)"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+walkdir = "2"

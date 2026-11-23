@@ -27,6 +27,7 @@ members = [
     "apps/sandbox",
     "apps/runner",
     "apps/store",
+    "apps/storage-analyzer",
 ]
 
 [workspace.package]

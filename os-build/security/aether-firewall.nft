@@ -1,0 +1,31 @@
+#!/usr/sbin/nft -f
+# AetherOS firewall defaults (P9-T04). Apply with:
+#   nft -f aether-firewall.nft
+# Default posture: deny inbound, allow established/related, allow outbound.
+
+table inet aether {
+    chain input {
+        type filter hook input priority 0; policy drop;
+
+        iif "lo" accept
+        ct state established,related accept
+        ct state invalid drop
+
+        # DHCPv6 client, DHCP client, mDNS discovery.
+        udp dport 546 accept
+        udp dport 68 accept
+        udp dport 5353 accept
+
+        # ICMP for path MTU discovery and diagnostics.
+        ip protocol icmp accept
+        ip6 nexthdr ipv6-icmp accept
+    }
+
+    chain forward {
+        type filter hook forward priority 0; policy drop;
+    }
+
+    chain output {
+        type filter hook output priority 0; policy accept;
+    }
+}
