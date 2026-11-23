@@ -984,7 +984,7 @@ export component Overview inherits Rectangle {
 
     VerticalLayout {
         padding: Tokens.space(8);
-        padding-bottom: Tokens.space(22);
+        padding-bottom: Tokens.space(24);
         spacing: Tokens.space(4);
 
         HorizontalLayout {
@@ -996,7 +996,7 @@ export component Overview inherits Rectangle {
         GridLayout {
             spacing: Tokens.space(4);
             for window-entry in root.windows : Rectangle {
-                height: 240px;
+                height: 300px;
                 border-radius: 14px;
                 background: Tokens.surface.with-alpha(0.92);
                 border-width: 1px;

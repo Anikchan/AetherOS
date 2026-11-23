@@ -156,6 +156,10 @@ impl ShellController {
     ) -> Rc<ShellController> {
         let mut state = ShellState::default();
         state.apps = desktop::merged_apps(desktop::scan_default());
+        // Start with the real time; the host's minute timer keeps it fresh.
+        let now = chrono::Local::now();
+        state.clock = model::format_clock(&now);
+        state.date_label = model::format_date(&now);
 
         let controller = Rc::new(ShellController {
             state: RefCell::new(state),
@@ -192,6 +196,9 @@ impl ShellController {
             }
             state.settings_page = 1;
             state.settings_rows = controller.store.rows_for(Category::Display);
+            // Deterministic clock for reproducible evidence screenshots.
+            state.clock = "09:41".to_string();
+            state.date_label = "Monday, 23 November".to_string();
         }
         controller.sync();
         controller
