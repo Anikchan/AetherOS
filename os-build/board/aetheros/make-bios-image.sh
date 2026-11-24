@@ -29,6 +29,7 @@ dd if=/dev/zero of="${IMG}" bs=1M count=512 status=none
 # MBR partition table: p1 bootable ext4, p2 squashfs root.
 sfdisk -q "${IMG}" <<EOF
 label: dos
+label-id: 0xa37e5c21
 ${P1_START},131072,83,*
 ${P2_START},,83
 EOF

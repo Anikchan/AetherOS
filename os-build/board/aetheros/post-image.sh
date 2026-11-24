@@ -68,7 +68,7 @@ serial --unit=0 --speed=115200
 terminal_input serial console
 terminal_output serial console
 menuentry "AetherOS" {
-    linux /bzImage root=/dev/vda2 rootfstype=squashfs earlycon=efi console=tty0 console=ttyS0,115200n8 net.ifnames=0 biosdevname=0
+    linux /bzImage root=PARTUUID=9f8e7d6c-1a2b-4c3d-8e4f-5a6b7c8d9e0f rootfstype=squashfs earlycon=efi console=tty0 console=ttyS0,115200n8 net.ifnames=0 biosdevname=0
 }
 EOF
 
