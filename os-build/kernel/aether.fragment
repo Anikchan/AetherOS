@@ -43,6 +43,11 @@ CONFIG_DRM=y
 CONFIG_DRM_I915=y
 CONFIG_DRM_AMDGPU=y
 CONFIG_FB=y
+# Virtual terminal + framebuffer console (needed for bare-metal display output)
+CONFIG_VT=y
+CONFIG_VT_CONSOLE=y
+CONFIG_FRAMEBUFFER_CONSOLE=y
+CONFIG_FRAMEBUFFER_CONSOLE_DETECT_PRIMARY=y
 
 # --- Power: tickless idle, runtime power management, suspend (F7, D5) ---
 CONFIG_NO_HZ_IDLE=y
