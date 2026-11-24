@@ -35,7 +35,7 @@ CONFIG_SERIAL_8250_CONSOLE=y
 # Fallback command line for UEFI (systemd-boot may not pass options correctly).
 # Not forced: the bootloader's -append/cmdline takes precedence when present
 # (direct BIOS boot uses root=/dev/vda via -append).
-CONFIG_CMDLINE="root=PARTUUID=9f8e7d6c-1a2b-4c3d-8e4f-5a6b7c8d9e0f rootfstype=squashfs console=tty0 console=ttyS0,115200n8 earlycon=efi net.ifnames=0 biosdevname=0"
+CONFIG_CMDLINE="root=PARTUUID=9f8e7d6c-1a2b-4c3d-8e4f-5a6b7c8d9e0f rootfstype=squashfs rootwait console=tty0 console=ttyS0,115200n8 earlycon=efi net.ifnames=0 biosdevname=0"
 # CONFIG_CMDLINE_FORCE is not set
 
 # --- Graphics: kernel mode setting for Intel and AMD (P2-T02) ---
@@ -70,6 +70,19 @@ CONFIG_VIRTIO_BLK=y
 CONFIG_VIRTIO_NET=y
 CONFIG_VIRTIO_MMIO=y
 CONFIG_VIRTIO_BALLOON=y
+
+# --- USB storage: needed to boot from a USB stick on bare metal ---
+# Built-in (not modules) because there is no initramfs to load modules
+# before the root filesystem is mounted. rootwait in the cmdline handles
+# USB enumeration delay.
+CONFIG_USB=y
+CONFIG_USB_XHCI_HCD=y
+CONFIG_USB_EHCI_HCD=y
+CONFIG_USB_OHCI_HCD=y
+CONFIG_USB_UHCI_HCD=y
+CONFIG_USB_STORAGE=y
+CONFIG_SCSI=y
+CONFIG_BLK_DEV_SD=y
 
 # --- Android container (P6-AND, D9): binder IPC on the host kernel ---
 CONFIG_ANDROID=y
