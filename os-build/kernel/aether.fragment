@@ -113,8 +113,10 @@ CONFIG_CFG80211=y
 CONFIG_MAC80211=y
 CONFIG_RFKILL=y
 CONFIG_IWLWIFI=y
-CONFIG_ATH10K=y
-CONFIG_ATH10K_PCI=y
+# ath10k must be a module so udev loads it after the rootfs is mounted;
+# as a built-in it probes before rootfs and cannot read the firmware.
+CONFIG_ATH10K=m
+CONFIG_ATH10K_PCI=m
 
 # --- Bluetooth (P2-T03) ---
 CONFIG_BT=y
@@ -130,6 +132,15 @@ CONFIG_HID_MULTITOUCH=y
 CONFIG_LEDS_CLASS=y
 CONFIG_BACKLIGHT_CLASS_DEVICE=y
 CONFIG_ACPI_VIDEO=y
+# Touchpad: I2C HID (Dell Inspiron touchpad) + I2C designware platform
+CONFIG_I2C=y
+CONFIG_I2C_HID=y
+CONFIG_I2C_HID_ACPI=y
+CONFIG_I2C_DESIGNWARE_PLATFORM=y
+# Webcam: USB Video Class
+CONFIG_MEDIA_SUPPORT=y
+CONFIG_MEDIA_USB_SUPPORT=y
+CONFIG_USB_VIDEO_CLASS=y
 
 # --- Sleep and resume (P2-T06) ---
 CONFIG_HIBERNATION=y
