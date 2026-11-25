@@ -1,0 +1,11 @@
+[Unit]
+Description=Show network addresses on tty1 for headless testing
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/bin/sh -c 'ip -br addr > /dev/tty1; ip route > /dev/tty1'
+
+[Install]
+WantedBy=multi-user.target

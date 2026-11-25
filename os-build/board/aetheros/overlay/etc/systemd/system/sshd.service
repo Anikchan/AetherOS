@@ -1,0 +1,14 @@
+[Unit]
+Description=OpenSSH server daemon (AetherOS)
+After=network.target
+Wants=network.target
+
+[Service]
+Type=simple
+# Rootfs is read-only; generate the host key into /var (tmpfs) at boot.
+ExecStartPre=/bin/sh -c 'mkdir -p /var/lib/ssh && chmod 700 /var/lib/ssh && [ -f /var/lib/ssh/ssh_host_ed25519_key ] || /usr/bin/ssh-keygen -t ed25519 -f /var/lib/ssh/ssh_host_ed25519_key -N "" -C aetheros'
+ExecStart=/usr/sbin/sshd -D -e -f /etc/ssh/sshd_config
+ExecReload=/bin/kill -HUP $MAINPID
+
+[Install]
+WantedBy=multi-user.target

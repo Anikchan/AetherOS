@@ -1,8 +1,11 @@
 [Match]
-Name=eth0
+Name=eth* en*
 
 [Network]
 DHCP=yes
+# Static fallback so the test machine is reachable at a known address
+# even if DHCP is slow/unavailable (home LAN 192.168.68.0/24).
+Address=192.168.68.150/24
 
 [DHCPv4]
 RouteMetric=100

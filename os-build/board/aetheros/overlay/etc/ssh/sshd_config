@@ -1,0 +1,12 @@
+# AetherOS minimal sshd config for hardware validation.
+# Host key lives in /var (tmpfs) because the rootfs is read-only.
+Port 22
+HostKey /var/lib/ssh/ssh_host_ed25519_key
+PermitRootLogin prohibit-password
+PubkeyAuthentication yes
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+UsePAM no
+X11Forwarding no
+AllowTcpForwarding yes
+Subsystem sftp internal-sftp
