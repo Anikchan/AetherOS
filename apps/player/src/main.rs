@@ -8,6 +8,7 @@
 
 use std::path::PathBuf;
 
+use aether_player::codec::GstDiscoverer;
 use aether_player::engine::{Engine, GStreamerEngine, MockEngine};
 use aether_player::{demo_playlist, PlayerApp, PlayerController};
 
@@ -51,8 +52,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 Ok(engine) => format!("gstreamer ({})", engine.program().display()),
                 Err(error) => error.message(),
             };
+            let discoverer = match GstDiscoverer::detect() {
+                Ok(discoverer) => format!("gst-discoverer-1.0 ({})", discoverer.program().display()),
+                Err(error) => error.message(),
+            };
             let playlist = demo_playlist(7);
             println!("backend: {backend}");
+            println!("discoverer: {discoverer}");
+            println!("restricted-codecs: H.264, H.265/HEVC, AAC (optional bundle, P0-T03)");
             println!("engine-name: {}", MockEngine::new().name());
             println!("tracks: {}", playlist.len());
             println!("total: {}", playlist.total_label());

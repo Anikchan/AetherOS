@@ -10,7 +10,8 @@ use std::time::Duration;
 
 use slint::{ModelRc, VecModel};
 
-use crate::engine::{Engine, MockEngine};
+use crate::codec::{CodecPolicy, MediaProbe, NoProbe};
+use crate::engine::{Engine, EngineError, MockEngine};
 use crate::playlist::{Playlist, Repeat, Track};
 use crate::transport::{PlaybackState, TickOutcome, Transport};
 use crate::{PlayerApp, TrackView};
@@ -20,6 +21,8 @@ pub struct PlayerController {
     playlist: RefCell<Playlist>,
     transport: RefCell<Transport>,
     engine: RefCell<Box<dyn Engine>>,
+    /// Media probe used before playback to apply the codec policy (P4-T14).
+    probe: RefCell<Box<dyn MediaProbe>>,
     status: RefCell<String>,
 }
 
@@ -29,17 +32,44 @@ impl PlayerController {
         playlist: Playlist,
         engine: Box<dyn Engine>,
     ) -> Rc<PlayerController> {
+        PlayerController::new_with_probe(ui, playlist, engine, Box::new(NoProbe))
+    }
+
+    /// Same, with a media probe for the codec policy. The binary uses
+    /// `GstDiscoverer`; tests use a scripted probe or `NoProbe`.
+    pub fn new_with_probe(
+        ui: PlayerApp,
+        playlist: Playlist,
+        engine: Box<dyn Engine>,
+        probe: Box<dyn MediaProbe>,
+    ) -> Rc<PlayerController> {
         let controller = Rc::new(PlayerController {
             ui,
             playlist: RefCell::new(playlist),
             transport: RefCell::new(Transport::new()),
             engine: RefCell::new(engine),
+            probe: RefCell::new(probe),
             status: RefCell::new(String::new()),
         });
         controller.wire();
         controller.load_current(false);
         controller.sync();
         controller
+    }
+
+    /// Controller for a real session: the GStreamer engine and discoverer when
+    /// installed, with the codec policy active. Rendering never calls `play`,
+    /// so no audio process starts at startup.
+    pub fn from_environment(ui: PlayerApp, playlist: Playlist) -> Rc<PlayerController> {
+        let engine: Box<dyn Engine> = match crate::engine::GStreamerEngine::detect() {
+            Ok(engine) => Box::new(engine),
+            Err(_) => Box::new(MockEngine::new()),
+        };
+        let probe: Box<dyn MediaProbe> = match crate::codec::GstDiscoverer::detect() {
+            Ok(discoverer) => Box::new(discoverer),
+            Err(_) => Box::new(NoProbe),
+        };
+        PlayerController::new_with_probe(ui, playlist, engine, probe)
     }
 
     /// Demo content for the screenshot renderer: six tracks, mid-track
@@ -77,11 +107,21 @@ impl PlayerController {
         self.status.borrow().clone()
     }
 
+    /// Backend name for diagnostics (`gst-discoverer-1.0`, `none`, ...).
+    pub fn probe_name(&self) -> String {
+        self.probe.borrow().name().to_string()
+    }
+
     pub fn current_title(&self) -> Option<String> {
         self.playlist
             .borrow()
             .current()
             .map(|track| track.title.clone())
+    }
+
+    /// Start playback of the current track (the Play button calls this).
+    pub fn play(&self) {
+        self.play_current();
     }
 
     /// Advance playback; the UI calls this from a timer, tests call it
@@ -105,6 +145,26 @@ impl PlayerController {
         let Some(uri) = uri else {
             return;
         };
+        // Codec policy (P0-T03): inspect the file before a pipeline is started.
+        match self.probe.borrow().probe(&uri) {
+            Ok(info) => {
+                if let CodecPolicy::NeedsCodecBundle { .. } = info.codec_policy() {
+                    let message = info
+                        .blocked_message()
+                        .unwrap_or_else(|| "codec not available".into());
+                    *self.status.borrow_mut() = message;
+                    // Do not start playback or a transport that pretends to play.
+                    self.transport.borrow_mut().pause();
+                    return;
+                }
+                if let Some(duration) = info.duration {
+                    self.transport.borrow_mut().set_duration(duration);
+                }
+            }
+            // No discoverer: let the engine decide, and report its error.
+            Err(EngineError::NotAvailable(_)) => {}
+            Err(error) => *self.status.borrow_mut() = format!("Could not inspect media: {}", error.message()),
+        }
         self.transport.borrow_mut().play();
         let mut engine = self.engine.borrow_mut();
         match engine.play(&uri) {

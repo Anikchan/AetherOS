@@ -76,6 +76,15 @@ impl Transport {
         self.state = PlaybackState::Stopped;
     }
 
+    /// Replace the duration reported by media discovery. Keeps the position
+    /// inside the new length (a discoverer may report a longer file).
+    pub fn set_duration(&mut self, duration: Duration) {
+        self.duration = duration;
+        if self.position > duration {
+            self.position = duration;
+        }
+    }
+
     pub fn state(&self) -> PlaybackState {
         self.state
     }
