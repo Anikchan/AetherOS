@@ -7,6 +7,7 @@
 //!   aether-sandbox list APP-ID
 //!   aether-sandbox profile --manifest FILE --data DIR [--granted a,b] [--network]
 //!   aether-sandbox landlock --manifest FILE --data DIR [--granted a,b]
+//!   aether-sandbox seccomp [--arch x86_64|aarch64]
 
 use std::collections::BTreeSet;
 use std::path::PathBuf;
@@ -82,7 +83,7 @@ fn main() {
                 }
             }
             "-h" | "--help" => {
-                println!("usage: aether-sandbox <doctor|grant|revoke|list|profile> [args]");
+                println!("usage: aether-sandbox <doctor|grant|revoke|list|profile|landlock|seccomp> [args]");
                 return;
             }
             value => positional.push(value.to_string()),
@@ -94,6 +95,7 @@ fn main() {
         "doctor" => {
             let caps = aether_sandbox::SandboxCapabilities::detect();
             let landlock = aether_sandbox::landlock::probe();
+            let seccomp = aether_sandbox::seccomp::probe();
             println!(
                 "{}",
                 serde_json::to_string_pretty(&serde_json::json!({
@@ -102,8 +104,9 @@ fn main() {
                     "landlock": caps.landlock,
                     "landlock_status": landlock,
                     "landlock_shim": aether_sandbox::landlock::SHIM_PATH,
+                    "seccomp": seccomp,
                     "usable": caps.usable(),
-                    "strict_launch": caps.usable() && caps.landlock,
+                    "strict_launch": caps.usable() && caps.landlock && seccomp.available,
                     "note": if caps.usable() {
                         "namespace sandbox available; strict Landlock launch requires landlock_status = available"
                     } else {
@@ -166,6 +169,49 @@ fn main() {
                 }))
                 .unwrap_or_default()
             );
+        }
+        "seccomp" => {
+            let arch = match positional.first().map(String::as_str) {
+                Some("x86_64") => aether_sandbox::seccomp::SeccompArch::X86_64,
+                Some("aarch64") => aether_sandbox::seccomp::SeccompArch::Aarch64,
+                Some(other) => {
+                    eprintln!("unknown arch: {other} (x86_64 or aarch64)");
+                    std::process::exit(2);
+                }
+                None => match aether_sandbox::seccomp::SeccompArch::current() {
+                    Some(arch) => arch,
+                    None => {
+                        eprintln!("no seccomp support for this architecture");
+                        std::process::exit(1);
+                    }
+                },
+            };
+            match aether_sandbox::seccomp::plan(
+                &aether_sandbox::seccomp::standard_policy(),
+                arch,
+            ) {
+                Ok(plan) => {
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(&serde_json::json!({
+                            "arch": arch.label(),
+                            "audit_arch": arch.audit_arch(),
+                            "denied": plan.denied.iter().map(|(name, number)| serde_json::json!({
+                                "syscall": name,
+                                "number": number,
+                            })).collect::<Vec<_>>(),
+                            "instructions": plan.instructions.len(),
+                            "probe": aether_sandbox::seccomp::probe(),
+                        }))
+                        .unwrap_or_default()
+                    );
+                    println!("SECCOMP_PLAN_OK");
+                }
+                Err(error) => {
+                    println!("SECCOMP_PLAN_REFUSED {error}");
+                    std::process::exit(1);
+                }
+            }
         }
         "landlock" => {
             let Some(manifest_path) = manifest_path else {

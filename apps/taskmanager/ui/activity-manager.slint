@@ -66,6 +66,16 @@ export struct SensorRowView {
     tone: string,
 }
 
+// One row in a generic table (App history, Startup apps, Users, Details,
+// Services). Cells are pre-formatted by Rust; the last cell takes `tone`.
+export struct TableRowView {
+    cells: [string],
+    tone: string,
+    hint: string,
+    action: string,
+    action_label: string,
+}
+
 // Design token name -> colour, so Rust can pass the contract's tone string.
 export global Tone {
     public pure function color(tone: string) -> color {
@@ -160,6 +170,180 @@ component MetricLineRow inherits Rectangle {
     }
 }
 
+// A generic table used by the tabs whose content is one data set
+// (App history, Startup apps, Users, Details, Services). Rust supplies the
+// headers, rows, summary and the honesty note; this file only lays them out.
+component DataTable inherits Rectangle {
+    in property <string> table-title: "";
+    in property <[string]> headers: [];
+    in property <[TableRowView]> rows: [];
+    in property <string> summary: "";
+    in property <string> note: "";
+    in property <string> empty-text: "";
+    callback row-action(string);
+
+    VerticalLayout {
+        spacing: 0;
+
+        Rectangle {
+            height: 40px;
+            background: Tokens.background;
+            HorizontalLayout {
+                padding-left: Tokens.space(3);
+                padding-right: Tokens.space(3);
+                spacing: Tokens.space(3);
+                SectionLabel { label: table-title; vertical-alignment: center; }
+                Text {
+                    text: summary;
+                    color: Tokens.text-muted;
+                    font-size: Tokens.font-small;
+                    vertical-alignment: center;
+                }
+                Rectangle { horizontal-stretch: 1; height: 1px; background: transparent; }
+            }
+        }
+        Divider {}
+
+        Rectangle {
+            height: 28px;
+            background: Tokens.surface-low;
+            HorizontalLayout {
+                padding-left: Tokens.space(3);
+                padding-right: Tokens.space(3);
+                spacing: Tokens.space(2);
+                Text {
+                    text: headers.length > 0 ? headers[0] : "";
+                    horizontal-stretch: 1;
+                    color: Tokens.text-faint;
+                    font-size: Tokens.font-small;
+                    font-weight: 600;
+                    vertical-alignment: center;
+                }
+                for header[idx] in headers : Text {
+                    visible: idx > 0;
+                    text: header;
+                    width: 116px;
+                    color: Tokens.text-faint;
+                    font-size: Tokens.font-small;
+                    font-weight: 600;
+                    vertical-alignment: center;
+                }
+            }
+        }
+        Divider {}
+
+        if rows.length == 0 : Rectangle {
+            vertical-stretch: 1;
+            background: Tokens.background;
+            VerticalLayout {
+                alignment: center;
+                spacing: Tokens.space(2);
+                Text {
+                    text: empty-text;
+                    color: Tokens.text-muted;
+                    font-size: Tokens.font-body;
+                    horizontal-alignment: center;
+                }
+                Text {
+                    text: note;
+                    color: Tokens.text-faint;
+                    font-size: Tokens.font-small;
+                    horizontal-alignment: center;
+                    wrap: word-wrap;
+                    width: 80%;
+                }
+            }
+        }
+
+        if rows.length > 0 : Flickable {
+            vertical-stretch: 1;
+            content-width: self.width;
+            content-height: table-content.preferred-height;
+            table-content := VerticalLayout {
+                padding-top: Tokens.space(2);
+                padding-bottom: Tokens.space(2);
+                padding-left: Tokens.space(2);
+                padding-right: Tokens.space(2);
+                spacing: 1px;
+                alignment: start;
+                for row in rows : Rectangle {
+                    height: row.hint == "" ? 34px : 46px;
+                    border-radius: Tokens.radius-button;
+                    background: row-ta.has-hover ? Tokens.hover : transparent;
+                    accessible-role: list-item;
+                    accessible-label: row.cells[0];
+                    HorizontalLayout {
+                        padding-left: Tokens.space(2);
+                        padding-right: Tokens.space(2);
+                        spacing: Tokens.space(2);
+                        // First column: primary cell plus an optional hint line.
+                        VerticalLayout {
+                            horizontal-stretch: 1;
+                            alignment: center;
+                            spacing: 1px;
+                            Text {
+                                text: row.cells[0];
+                                color: Tokens.text;
+                                font-size: Tokens.font-body;
+                                vertical-alignment: center;
+                                overflow: elide;
+                            }
+                            if row.hint != "" : Text {
+                                text: row.hint;
+                                color: Tokens.text-faint;
+                                font-size: Tokens.font-small;
+                                vertical-alignment: center;
+                                overflow: elide;
+                            }
+                        }
+                        // Remaining cells; the last one carries the row tone.
+                        for cell[idx] in row.cells : Rectangle {
+                            visible: idx > 0;
+                            width: 116px;
+                            background: transparent;
+                            Text {
+                                text: cell;
+                                width: parent.width;
+                                color: idx == row.cells.length - 1 && row.tone != ""
+                                    ? Tone.color(row.tone)
+                                    : Tokens.text-muted;
+                                font-size: Tokens.font-small;
+                                horizontal-alignment: right;
+                                vertical-alignment: center;
+                                overflow: elide;
+                            }
+                        }
+                        if row.action_label != "" : AetherButton {
+                            text: row.action_label;
+                            width: 92px;
+                            vertical-stretch: 0;
+                            clicked => { row-action(row.action); }
+                        }
+                    }
+                    row-ta := TouchArea {}
+                }
+            }
+        }
+
+        Divider {}
+        Rectangle {
+            height: 30px;
+            background: Tokens.surface-low;
+            HorizontalLayout {
+                padding-left: Tokens.space(3);
+                padding-right: Tokens.space(3);
+                Text {
+                    text: note;
+                    color: Tokens.text-faint;
+                    font-size: Tokens.font-small;
+                    vertical-alignment: center;
+                    overflow: elide;
+                }
+            }
+        }
+    }
+}
+
 export component ActivityManagerApp inherits Window {
     title: "Activity Manager";
     width: 1080px;
@@ -213,6 +397,14 @@ export component ActivityManagerApp inherits Window {
     in property <[string]> sensor_alerts: [];
     in property <[string]> sensor_unavailable: [];
 
+    // Generic table tabs: App history, Startup apps, Users, Details, Services.
+    in property <string> table_title: "";
+    in property <[string]> table_headers: [];
+    in property <[TableRowView]> table_rows: [];
+    in property <string> table_summary: "";
+    in property <string> table_note: "";
+    in property <string> table_empty_text: "No rows reported.";
+
     // End-task / force-quit dialog (TM-02, TM-AC-03)
     in property <bool> dialog_visible: false;
     in property <string> dialog_title: "";
@@ -231,6 +423,8 @@ export component ActivityManagerApp inherits Window {
     callback shortcut_activated();
     // 0 = cancel, 1 = end task (SIGTERM), 2 = force quit (SIGKILL).
     callback dialog_choice(int);
+    // Row action id from a generic table (for example a .desktop path).
+    callback row_action(string);
 
     init => { root_focus.focus(); }
 
@@ -822,11 +1016,25 @@ export component ActivityManagerApp inherits Window {
                         }
                     }
 
+                    // ---------------- Generic table tabs --------------------
+                    // App history, Startup apps, Users, Details, Services:
+                    // one data set each, rendered by DataTable.
+                    if root.active_tab == "table" : DataTable {
+                        table-title: root.table_title;
+                        headers: root.table_headers;
+                        rows: root.table_rows;
+                        summary: root.table_summary;
+                        note: root.table_note;
+                        empty-text: root.table_empty_text;
+                        row-action(action) => { root.row_action(action); }
+                    }
+
                     // ---------------- Tabs without a rendered view ----------
                     if root.active_tab != "processes"
                         && root.active_tab != "performance"
                         && root.active_tab != "battery"
-                        && root.active_tab != "sensors" : Rectangle {
+                        && root.active_tab != "sensors"
+                        && root.active_tab != "table" : Rectangle {
                         background: Tokens.background;
                         VerticalLayout {
                             alignment: center;

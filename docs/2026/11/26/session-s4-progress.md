@@ -119,14 +119,31 @@ Must NOT touch: `os-build/kernel/`, `os-build/buildroot/`, `os-build/board/`,
   44 tests, sandbox 30 (incl. 3 shim integration tests), runner 45.
   Evidence: `docs/2026/11/27/results/p5-t07-tabs-p6-t04-landlock-s4.md`.
 
+- 2026-11-27 (round 2, P5-T07 tables + P6-T04 seccomp): the remaining
+  Activity Manager tabs now render from `src/tabs.rs` view models — App history
+  (24 h + 7-day energy per app with the P5-T15 levels), Startup apps (scope,
+  state, honest "Not measured" impact, per-row Enable/Disable action wired to
+  `set_startup_enabled`), Users ("This session" marker), Details (PID/PPID/user/
+  threads/files, command hint, sandbox level from the cgroup) and Services
+  (load/active/sub with tones, read-only) — through one generic `DataTable`
+  component; `--tab` accepts all five keys and `--render` writes nine PNGs.
+  Seccomp is the final P6-T04 layer: `src/seccomp.rs` builds a classic-BPF
+  filter (arch mismatch → KILL_PROCESS, 36 denied syscalls → EPERM, else ALLOW),
+  the shim applies it with `--seccomp` after Landlock and exits 126 without
+  exec'ing on any failure, and `Enforcer::command_strict` /
+  `Runner::require_strict_layers` require namespaces + Landlock + seccomp with
+  no weaker fallback. Verified: taskmanager 51 tests, sandbox 40 (incl. new
+  seccomp integration tests), runner 45. Evidence:
+  `docs/2026/11/27/results/p5-t07-tables-p6-t04-seccomp-s4.md`.
+
 ## Blockers (unchanged, owner/hardware)
 
 - 72-hour soak, real G-PM1/B2/B6 values, G-BAT*, G-TM*, AP-AC-03/04 and the live
   USB stick boot need AetherOS on the Dell (hardware paused).
-- Activity Manager window: Processes/Performance/Battery/Sensors bound; the
-  remaining tabs (App history, Startup apps, Users, Details, Services,
-  Android) are placeholders. Global Ctrl+Shift+Esc registration is the
-  compositor/shell's, and the hung flag comes from the P3-T08 watchdog.
+- Activity Manager window: all nine tabs render; only the Android tab (Pack A)
+  has no view, and Services start/stop/restart still need the permission
+  prompt. Global Ctrl+Shift+Esc registration is the compositor/shell's, and the
+  hung flag comes from the P3-T08 watchdog.
 - Landlock kernel allow/deny runs and the `/usr/libexec/aether-landlock`
   install need the Linux image (S1 packaging).
 - Live persistence service and the BIOS live path are image-overlay/S1 work.

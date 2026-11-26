@@ -19,12 +19,14 @@ pub use manager::{
 };
 pub use shortcut::{KeyChord, KeyName, ShortcutBinding};
 pub use tabs::{
-    battery_report, battery_view, performance_report, performance_view, sensors_report,
-    sensors_view, BatteryAppRow, BatteryTabView, GraphCard, MetricLine, PerformanceView,
-    SensorRowView, SensorsTabView,
+    app_history_view, battery_report, battery_view, details_view, performance_report,
+    performance_view, sandbox_level, sensors_report, sensors_view, services_view, startup_view,
+    table_report, users_view, BatteryAppRow, BatteryTabView, GraphCard, MetricLine,
+    PerformanceView, SensorRowView, SensorsTabView, TableRow, TableView,
 };
 pub use window::{
-    demo_history, demo_rows, demo_sensors, demo_system, ActivityManagerWindow, ProcessRowView,
+    demo_history, demo_rows, demo_sensors, demo_services, demo_startup, demo_system,
+    demo_users, ActivityManagerWindow, ProcessRowView,
 };
 pub use model::{
     BatteryView, Column, EnergyColumnContract, EnergyImpact, EnergyLevelSpec, EnergySourceSpec,

@@ -352,6 +352,8 @@ fn apply_plan(plan: &LandlockPlan) -> Result<LandlockApplied, SandboxError> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ShimInvocation {
     pub policy: LandlockPolicy,
+    /// The shim also installs the standard seccomp filter before exec.
+    pub seccomp: bool,
     pub program: PathBuf,
     pub args: Vec<String>,
 }
@@ -359,9 +361,14 @@ pub struct ShimInvocation {
 /// Parse shim arguments: `[--ro PATH]... [--rw PATH]... -- PROGRAM [ARGS]...`.
 pub fn parse_shim_args(args: &[String]) -> Result<ShimInvocation, String> {
     let mut policy = LandlockPolicy::default();
+    let mut seccomp = false;
     let mut index = 0;
     while index < args.len() {
         match args[index].as_str() {
+            "--seccomp" => {
+                seccomp = true;
+                index += 1;
+            }
             "--ro" | "--rw" => {
                 let read_write = args[index] == "--rw";
                 let Some(value) = args.get(index + 1) else {
@@ -388,6 +395,7 @@ pub fn parse_shim_args(args: &[String]) -> Result<ShimInvocation, String> {
                 cleaned.rules.dedup_by(|a, b| a.path == b.path);
                 return Ok(ShimInvocation {
                     policy: cleaned,
+                    seccomp,
                     program: PathBuf::from(program),
                     args: args[index + 2..].to_vec(),
                 });
@@ -674,6 +682,7 @@ mod tests {
         let mut args = shim_arguments(&policy, Path::new("/data/app/bin/app"));
         args.extend(["--flag".to_string(), "value".to_string()]);
         let invocation = parse_shim_args(&args).unwrap();
+        assert!(!invocation.seccomp, "seccomp is opt-in per invocation");
         assert_eq!(invocation.program, PathBuf::from("/data/app/bin/app"));
         assert_eq!(invocation.args, vec!["--flag".to_string(), "value".to_string()]);
         assert_eq!(invocation.policy.rules.len(), 4);
@@ -687,6 +696,25 @@ mod tests {
             .rules
             .iter()
             .any(|rule| rule.path == Path::new("/usr") && !rule.writable()));
+    }
+
+    #[test]
+    fn shim_parser_reads_the_seccomp_switch() {
+        let mut args = vec!["--seccomp".to_string()];
+        args.extend(shim_arguments(
+            &LandlockPolicy::from_profile(&profile()),
+            Path::new("/data/app/bin/app"),
+        ));
+        let invocation = parse_shim_args(&args).unwrap();
+        assert!(invocation.seccomp);
+        assert_eq!(invocation.policy.rules.len(), 4);
+        // The flag may also follow the rules.
+        let mut args = shim_arguments(
+            &LandlockPolicy::from_profile(&profile()),
+            Path::new("/data/app/bin/app"),
+        );
+        args.insert(0, "--seccomp".to_string());
+        assert!(parse_shim_args(&args).unwrap().seccomp);
     }
 
     #[test]

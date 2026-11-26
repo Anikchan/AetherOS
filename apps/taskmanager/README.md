@@ -16,11 +16,11 @@ and reads the Energy column from the contract — see Status.
 | TM-09 GPU detail | Busy % and VRAM where the driver reports them; per-process GPU is Pack D |
 | TM-10 Sensors | Core + window: hwmon + thermal + fans sorted by name, 85 °C warning / 95 °C danger tones and alert lines, GPU engine/VRAM; explicit "Not reported" fallbacks instead of fake zeros |
 | TM-11 Battery tab | Core + window: live `powerd` `PowerStatus`/sysfs values plus the F14 history (health trend sparkline, per-app energy for 24 h using the P5-T15 energy levels) |
-| TM-12 App history | Battery analytics energy by app (last 24 h / 7 days) |
-| TM-13 Startup apps | Lists user + system autostart entries; enable/disable persists in the `.desktop` file |
-| TM-14 Users | `loginctl list-users` |
-| TM-16 Details tab | Same process table with PPID, user, threads, open files, command |
-| TM-17 Services | `systemctl list-units --type=service` |
+| TM-12 App history | Core + window: per-app energy for the last 24 h and 7 days from the F14 store, with the P5-T15 impact level and share; CPU time and per-app network are not collected yet and the table says so |
+| TM-13 Startup apps | Core + window: lists user + system autostart entries with an Enable/Disable row action that persists `Hidden=` in the `.desktop` file; startup impact reads "Not measured" instead of a guess |
+| TM-14 Users | Core + window: `loginctl list-users` with seat and a "This session" marker |
+| TM-16 Details | Core + window: PID/PPID/user/threads/open files/command plus the sandbox level derived from the cgroup (app scope vs system) |
+| TM-17 Services | Core + window: `systemctl list-units --type=service` with load/active/sub state and a read-only note (start/stop/restart need the permission prompt) |
 | TM-19 Export | CSV, JSON and text |
 | TM-AC-01 shortcut | Contract + matcher: `Ctrl+Shift+Esc` (Windows profile) and `Super+Escape` (default); the window accepts both while focused and `--shortcut` publishes the binding for the shell to register globally |
 | TM-20 Alerts / TM-21 menu-bar indicator | v1, not started |
@@ -70,7 +70,8 @@ aether-taskmanager --startup-disable ~/.config/autostart/mail.desktop
 aether-taskmanager --services
 aether-taskmanager --energy-contract      # JSON binding for the Energy column
 aether-taskmanager --shortcut [--windows-profile]  # shortcut binding for the shell
-aether-taskmanager --tab performance      # text view of one tab (also battery/sensors/processes)
+aether-taskmanager --tab performance      # text view of one tab
+                                          # (processes|performance|battery|sensors|app-history|startup-apps|users|details|services)
 aether-taskmanager --render DIR           # draw every tab to DIR/activity-manager-<tab>.png
 ```
 
@@ -97,13 +98,16 @@ opt-in (`ProcessSampler::detailed`), matching the F13 §6 overhead rules.
   sensors.
 - G-TM1 (overhead) and G-TM2 (accuracy vs reference tools) need the reference
   machines; TM-AC-04/05/06 need real hardware.
-- The window covers Processes, Performance, Battery and Sensors. App history,
-  Startup apps, Users, Details, Services and Android still show a placeholder
-  ("not rendered yet"); their data is available from the CLI.
+- The window covers Processes, Performance, Battery, Sensors and the five table
+  tabs (App history, Startup apps, Users, Details, Services). The Android tab is
+  hidden unless Pack A is installed and has no view yet.
+- Services is read-only in the window: start/stop/restart need the permission
+  prompt (TM-17) and are not wired.
 - The window accepts the shortcut only while focused. Registering it globally
   is the compositor/shell's job; `--shortcut` prints the exact binding, and the
   hung flag for the Force Quit wording must come from the compositor's no-hang
   watchdog (P3-T08), not guessed.
 - `tests/ui.rs` pins the contract binding of the Processes tab; `tests/tabs.rs`
-  pins the tab models, the shortcut hint and the dialog-to-signal mapping. The
-  screenshot path is `--render`.
+  pins the tab models, the shortcut hint and the dialog-to-signal mapping;
+  `tests/tables.rs` pins the five table tabs and the startup row action. The
+  screenshot path is `--render` (one PNG per tab).

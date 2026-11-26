@@ -135,8 +135,9 @@ taskmanager 42 + 1 + 1, sandbox 27 + 3 → 74 passed, 0 failed
   `/usr/libexec/aether-landlock` in the image (image packaging is S1's
   `os-build/buildroot/`).
 - G-TM1/G-TM2, TM-AC-05/06 and the 72-hour soak on the reference machines.
-- The remaining tabs (App history, Startup apps, Users, Details, Services,
-  Android) still show a placeholder in the window; their data is available from
-  the CLI.
+- ~~The remaining tabs show a placeholder~~ — resolved later the same day:
+  see `p5-t07-tables-p6-t04-seccomp-s4.md` (App history, Startup apps, Users,
+  Details, Services render; only the Android tab has no view). Seccomp is now
+  the final P6-T04 layer in the same round-2 record.
 - `Cargo.lock` gained the `libc` edge for `aether-sandbox`; the lock file is
   shared with the other sessions and is left to S1's merge pass.

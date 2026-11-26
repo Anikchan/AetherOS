@@ -2,11 +2,14 @@
 //!
 //! Usage:
 //!   aether-landlock --probe [--json]
-//!   aether-landlock [--ro PATH]... [--rw PATH]... -- PROGRAM [ARGS]...
+//!   aether-landlock [--seccomp] [--ro PATH]... [--rw PATH]... -- PROGRAM [ARGS]...
 //!
-//! Fail-closed: when Landlock is unavailable or a rule is rejected, the shim
-//! prints one line and exits 126 **without running the program**. It never
-//! executes the app unsandboxed.
+//! `--seccomp` additionally installs the standard seccomp filter (P6-T04)
+//! before the exec, so the same shim applies both kernel-enforced layers.
+//!
+//! Fail-closed: when Landlock or seccomp is unavailable, or a rule/filter is
+//! rejected, the shim prints one line and exits 126 **without running the
+//! program**. It never executes the app unsandboxed.
 
 use std::ffi::CString;
 
@@ -18,7 +21,16 @@ fn main() {
     if args.first().map(String::as_str) == Some("--probe") {
         let status = landlock::probe();
         if args.iter().any(|arg| arg == "--json") {
-            println!("{}", serde_json::to_string_pretty(&status).unwrap_or_default());
+            let seccomp = aether_sandbox::seccomp::probe();
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&serde_json::json!({
+                    "landlock": status,
+                    "seccomp": seccomp,
+                    "shim": "aether-landlock (applies both layers)",
+                }))
+                .unwrap_or_default()
+            );
         } else {
             match &status {
                 landlock::LandlockStatus::Available { abi } => println!("LANDLOCK_ABI {abi}"),
@@ -34,7 +46,7 @@ fn main() {
     if args.first().map(String::as_str) == Some("-h")
         || args.first().map(String::as_str) == Some("--help")
     {
-        println!("usage: aether-landlock [--ro PATH]... [--rw PATH]... -- PROGRAM [ARGS]...");
+        println!("usage: aether-landlock [--seccomp] [--ro PATH]... [--rw PATH]... -- PROGRAM [ARGS]...");
         println!("       aether-landlock --probe [--json]");
         return;
     }
@@ -55,6 +67,22 @@ fn main() {
             // Fail-closed: the program is never exec'd.
             eprintln!("aether-landlock: refusing to start the app: {error}");
             std::process::exit(SHIM_REFUSED_EXIT);
+        }
+    }
+
+    if invocation.seccomp {
+        match aether_sandbox::seccomp::apply(&aether_sandbox::seccomp::standard_policy()) {
+            Ok(applied) => eprintln!(
+                "aether-landlock: seccomp filter installed ({} denials, {} instructions, {})",
+                applied.denied,
+                applied.instructions,
+                applied.arch.label()
+            ),
+            Err(error) => {
+                // Fail-closed: the program is never exec'd.
+                eprintln!("aether-landlock: refusing to start the app: {error}");
+                std::process::exit(SHIM_REFUSED_EXIT);
+            }
         }
     }
 

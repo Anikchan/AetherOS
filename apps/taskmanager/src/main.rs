@@ -290,7 +290,9 @@ fn main() {
 
     if let Some(name) = args.tab.as_deref() {
         let tab = aether_taskmanager::model::Tab::from_key(name).unwrap_or_else(|| {
-            eprintln!("unknown tab: {name} (processes, performance, battery, sensors)");
+            eprintln!(
+                "unknown tab: {name} (processes, performance, battery, sensors, app-history, startup-apps, users, details, services)"
+            );
             std::process::exit(2);
         });
         // On hosts without /proc (the macOS dev host) the tab still prints its
@@ -339,7 +341,10 @@ fn main() {
                 let view = aether_taskmanager::sensors_view(&sensors, &system);
                 print!("{}", aether_taskmanager::sensors_report(&view));
             }
-            other => println!("{} tab has no rendered view yet (core data is sampled).", other.label()),
+            other => {
+                let view = table_for(&manager, other, &rows, analytics.as_ref());
+                print!("{}", aether_taskmanager::table_report(&view));
+            }
         }
         return;
     }
@@ -445,6 +450,39 @@ fn main() {
     }
 }
 
+/// Logged-in UID, used to mark "This session" in the Users tab.
+fn current_uid() -> u32 {
+    #[cfg(unix)]
+    unsafe {
+        libc::geteuid() as u32
+    }
+    #[cfg(not(unix))]
+    {
+        0
+    }
+}
+
+/// Build the generic table behind App history, Startup apps, Users, Details and
+/// Services from the data the Activity Manager already collects.
+fn table_for(
+    manager: &ActivityManager,
+    tab: aether_taskmanager::model::Tab,
+    rows: &[aether_taskmanager::ProcessRow],
+    analytics: Option<&BatteryAnalytics>,
+) -> aether_taskmanager::TableView {
+    use aether_taskmanager::model::Tab;
+    match tab {
+        Tab::AppHistory => {
+            aether_taskmanager::app_history_view(analytics, epoch_ms() / 1000)
+        }
+        Tab::StartupApps => aether_taskmanager::startup_view(&manager.startup_items()),
+        Tab::Users => aether_taskmanager::users_view(&manager.users(), current_uid()),
+        Tab::Details => aether_taskmanager::details_view(rows),
+        Tab::Services => aether_taskmanager::services_view(&manager.services()),
+        _ => aether_taskmanager::TableView::default(),
+    }
+}
+
 fn truncate(value: &str, max: usize) -> String {
     if value.chars().count() <= max {
         return value.to_string();
@@ -523,12 +561,46 @@ fn render_window(dir: &Path, args: &Args, manager: &mut ActivityManager) {
         }
     };
 
+    let startup = {
+        let live = manager.startup_items();
+        if live.is_empty() {
+            aether_taskmanager::demo_startup()
+        } else {
+            live
+        }
+    };
+    let services = {
+        let live = manager.services();
+        if live.is_empty() {
+            aether_taskmanager::demo_services()
+        } else {
+            live
+        }
+    };
+    let (users, users_current_uid) = {
+        let live = manager.users();
+        if live.is_empty() {
+            let demo = aether_taskmanager::demo_users();
+            // Mark the demo's first session as the current one so the evidence
+            // render shows that state.
+            let uid = demo.first().map(|session| session.uid).unwrap_or(0);
+            (demo, uid)
+        } else {
+            (live, current_uid())
+        }
+    };
+
     let mut rendered = Vec::new();
     for tab in [
         aether_taskmanager::model::Tab::Processes,
         aether_taskmanager::model::Tab::Performance,
         aether_taskmanager::model::Tab::Battery,
         aether_taskmanager::model::Tab::Sensors,
+        aether_taskmanager::model::Tab::AppHistory,
+        aether_taskmanager::model::Tab::StartupApps,
+        aether_taskmanager::model::Tab::Users,
+        aether_taskmanager::model::Tab::Details,
+        aether_taskmanager::model::Tab::Services,
     ] {
         let window = match ActivityManagerWindow::new() {
             Ok(window) => window,
@@ -560,7 +632,27 @@ fn render_window(dir: &Path, args: &Args, manager: &mut ActivityManager) {
                     &sample_system,
                 ));
             }
-            _ => {}
+            other => {
+                let view = match other {
+                    aether_taskmanager::model::Tab::AppHistory => {
+                        aether_taskmanager::app_history_view(analytics.as_ref(), epoch_ms() / 1000)
+                    }
+                    aether_taskmanager::model::Tab::StartupApps => {
+                        aether_taskmanager::startup_view(&startup)
+                    }
+                    aether_taskmanager::model::Tab::Users => {
+                        aether_taskmanager::users_view(&users, users_current_uid)
+                    }
+                    aether_taskmanager::model::Tab::Details => {
+                        aether_taskmanager::details_view(&rows)
+                    }
+                    aether_taskmanager::model::Tab::Services => {
+                        aether_taskmanager::services_view(&services)
+                    }
+                    _ => aether_taskmanager::TableView::default(),
+                };
+                window.bind_table(&view);
+            }
         }
 
         let path = dir.join(format!("activity-manager-{}.png", tab.key()));

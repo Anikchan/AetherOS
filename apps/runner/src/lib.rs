@@ -297,11 +297,17 @@ impl Runner {
         self
     }
 
-    /// Require Landlock on top of the namespace sandbox (P6-T04 follow-up).
-    /// When the kernel cannot enforce it, launch fails closed.
-    pub fn require_landlock(mut self, required: bool) -> Self {
+    /// Require every kernel-enforced layer on top of the namespace sandbox:
+    /// Landlock and seccomp (P6-T04). When either cannot be enforced, launch
+    /// fails closed instead of falling back to a weaker sandbox.
+    pub fn require_strict_layers(mut self, required: bool) -> Self {
         self.strict_landlock = required;
         self
+    }
+
+    /// Backwards-compatible name for [`Self::require_strict_layers`].
+    pub fn require_landlock(self, required: bool) -> Self {
+        self.require_strict_layers(required)
     }
 
     /// Test seam for the sandbox capabilities.
@@ -387,7 +393,7 @@ impl Runner {
         let enforcer = self.enforcer()?;
         let program = plan.program.clone();
         let mut command = if self.strict_landlock {
-            enforcer.command_with_landlock(
+            enforcer.command_strict(
                 &plan.profile,
                 &program,
                 Path::new(aether_sandbox::landlock::SHIM_PATH),
@@ -538,7 +544,7 @@ mod tests {
     }
 
     #[test]
-    fn strict_landlock_is_fail_closed() {
+    fn strict_layers_are_fail_closed() {
         let root = temp_root("strict-ll");
         let (paths, id) = make_bundle(&root, PackageKind::NativeBundle);
         let landlock = aether_sandbox::landlock::probe().is_available();
@@ -548,16 +554,21 @@ mod tests {
                 user_namespaces: true,
                 landlock,
             })
-            .require_landlock(true)
+            .require_strict_layers(true)
             .dry_run();
+        let seccomp = aether_sandbox::seccomp::probe().available;
         match runner.launch(&id) {
             Ok(handle) => {
-                assert!(landlock, "strict launch only succeeds where Landlock exists");
+                assert!(
+                    landlock && seccomp,
+                    "a strict launch only succeeds where both kernel layers exist"
+                );
                 assert_eq!(handle.pid, 0);
             }
             Err(LaunchError::SandboxFailed(message)) => {
+                let message = message.to_ascii_lowercase();
                 assert!(
-                    message.to_ascii_lowercase().contains("landlock"),
+                    message.contains("landlock") || message.contains("seccomp"),
                     "unexpected refusal: {message}"
                 );
             }

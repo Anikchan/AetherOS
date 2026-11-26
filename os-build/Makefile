@@ -25,6 +25,10 @@ build: ## Build the Rust workspace
 test: ## Run the Rust workspace tests
 	cd $(ROOT_DIR) && cargo test --workspace
 
+.PHONY: seccomp-plan
+seccomp-plan: ## Print the seccomp filter plan (works on any host; pure plan)
+	cargo run -q -p aether-sandbox --bin aether-sandbox -- seccomp
+
 .PHONY: landlock-probe
 landlock-probe: ## Probe Landlock on this host (exit 126 = unavailable, fail-closed)
 	cargo run -q -p aether-sandbox --bin aether-landlock -- --probe

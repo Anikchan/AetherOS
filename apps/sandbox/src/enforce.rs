@@ -26,6 +26,10 @@ pub enum SandboxError {
     LandlockRule { path: String, reason: String },
     #[error("Landlock could not be applied: {0}")]
     LandlockFailed(String),
+    #[error("seccomp filtering is unavailable: {0}")]
+    SeccompUnavailable(String),
+    #[error("seccomp could not be applied: {0}")]
+    SeccompFailed(String),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -122,6 +126,46 @@ impl Enforcer {
             ));
         }
 
+        self.shim_command(profile, entry, shim, false)
+    }
+
+    /// Strict launch: namespaces + Landlock + seccomp (P6-T04).
+    ///
+    /// Every layer must be available and enforceable; otherwise this returns an
+    /// error and **nothing is started**. There is no fallback to a weaker
+    /// sandbox and no unsandboxed exec.
+    pub fn command_strict(
+        &self,
+        profile: &SandboxProfile,
+        entry: &Path,
+        shim: &Path,
+    ) -> Result<Command, SandboxError> {
+        if !self.capabilities.landlock {
+            return Err(SandboxError::LandlockUnavailable(
+                "Landlock is not enabled on this kernel; the app will not start unsandboxed".into(),
+            ));
+        }
+        let landlock_policy = crate::landlock::LandlockPolicy::from_profile(profile);
+        crate::landlock::plan(&crate::landlock::probe(), &landlock_policy)?;
+        let arch = crate::seccomp::SeccompArch::current().ok_or_else(|| {
+            SandboxError::SeccompUnavailable(format!(
+                "seccomp filtering is not implemented for this architecture ({}); the app will not start",
+                std::env::consts::ARCH
+            ))
+        })?;
+        crate::seccomp::plan(&crate::seccomp::standard_policy(), arch)?;
+        self.shim_command(profile, entry, shim, true)
+    }
+
+    /// Wrap the entry point with the launch shim inside the namespace sandbox.
+    fn shim_command(
+        &self,
+        profile: &SandboxProfile,
+        entry: &Path,
+        shim: &Path,
+        seccomp: bool,
+    ) -> Result<Command, SandboxError> {
+        let policy = crate::landlock::LandlockPolicy::from_profile(profile);
         let command = self.command(profile, entry)?;
         // Replace the trailing entry point with the shim invocation so the
         // namespace sandbox still wraps the whole chain.
@@ -129,6 +173,9 @@ impl Enforcer {
             command.get_args().map(|arg| arg.to_os_string()).collect();
         args.pop();
         args.push(shim.as_os_str().to_os_string());
+        if seccomp {
+            args.push("--seccomp".into());
+        }
         for arg in crate::landlock::shim_arguments(&policy, entry) {
             args.push(arg.into());
         }
@@ -236,6 +283,19 @@ impl Enforcer {
             "Landlock available: {} (namespace enforcement via bwrap)",
             self.capabilities.landlock
         ));
+        let seccomp = crate::seccomp::probe();
+        lines.push(if seccomp.available {
+            format!(
+                "Seccomp filtering: {} denials on {} (fail-closed)",
+                seccomp.denials,
+                seccomp.arch.unwrap_or_else(|| "unknown".into())
+            )
+        } else {
+            format!(
+                "Seccomp filtering: {}; strict launches are refused",
+                seccomp.reason.unwrap_or_else(|| "unavailable".into())
+            )
+        });
         if let Some(abi) = crate::landlock::probe().abi() {
             lines.push(format!(
                 "Landlock enforcement: ABI {abi}, applied by {SHIM_PATH} (fail-closed)",

@@ -575,6 +575,359 @@ pub fn sensors_report(view: &SensorsTabView) -> String {
     out
 }
 
+/// One row in a generic Activity Manager table (TM-12/13/14/16/17).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TableRow {
+    pub cells: Vec<String>,
+    /// Design token name for the status cell (last column).
+    pub tone: String,
+    /// Secondary line under the first cell (command, description, exec).
+    pub hint: String,
+    /// Row action id (for example the `.desktop` path); empty when read-only.
+    pub action: String,
+    pub action_label: String,
+}
+
+impl TableRow {
+    pub fn new(cells: Vec<String>) -> Self {
+        Self {
+            cells,
+            tone: String::new(),
+            hint: String::new(),
+            action: String::new(),
+            action_label: String::new(),
+        }
+    }
+
+    pub fn with_tone(mut self, tone: &str) -> Self {
+        self.tone = tone.to_string();
+        self
+    }
+
+    pub fn with_hint(mut self, hint: impl Into<String>) -> Self {
+        self.hint = hint.into();
+        self
+    }
+
+    pub fn with_action(mut self, id: impl Into<String>, label: impl Into<String>) -> Self {
+        self.action = id.into();
+        self.action_label = label.into();
+        self
+    }
+}
+
+/// A whole tab rendered as one table (App history, Startup apps, Users,
+/// Details, Services).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TableView {
+    pub title: String,
+    pub headers: Vec<String>,
+    pub rows: Vec<TableRow>,
+    pub summary: String,
+    /// Honesty note about what the table does and does not show.
+    pub note: String,
+    pub empty_text: String,
+}
+
+impl Default for TableView {
+    fn default() -> Self {
+        Self {
+            title: String::new(),
+            headers: Vec::new(),
+            rows: Vec::new(),
+            summary: String::new(),
+            note: String::new(),
+            empty_text: "No rows reported.".into(),
+        }
+    }
+}
+
+/// Highest number of rows the generic tables render.
+pub const TABLE_ROWS: usize = 25;
+
+/// App history (TM-12): per-app energy for the last 24 hours and 7 days from
+/// the F14 analytics store. CPU time and per-app network are not collected yet
+/// and the table says so instead of inventing numbers.
+pub fn app_history_view(analytics: Option<&BatteryAnalytics>, now_epoch_secs: u64) -> TableView {
+    let contract = EnergyColumnContract::default();
+    let mut view = TableView {
+        title: "APP HISTORY".into(),
+        headers: vec![
+            "App".into(),
+            "24 hours".into(),
+            "7 days".into(),
+            "Impact".into(),
+            "Share".into(),
+        ],
+        note: "Energy is measured by powerd (F14). Per-app CPU time and network totals are not collected yet (Pack D)."
+            .into(),
+        empty_text: "No battery history: pass --power-history (powerd battery-history.json).".into(),
+        ..Default::default()
+    };
+
+    let Some(analytics) = analytics else {
+        return view;
+    };
+    let day = analytics.energy_by_app(now_epoch_secs, 1);
+    let week = analytics.energy_by_app(now_epoch_secs, 7);
+    if week.is_empty() {
+        view.empty_text = "No per-app energy recorded in the last 7 days.".into();
+        return view;
+    }
+    let day_by_app: std::collections::BTreeMap<&str, f64> = day
+        .iter()
+        .map(|(app, wh)| (app.as_str(), *wh))
+        .collect();
+    let max_week = week.first().map(|(_, wh)| *wh).unwrap_or(0.0);
+    let total: f64 = week.iter().map(|(_, wh)| *wh).sum();
+
+    view.rows = week
+        .iter()
+        .take(TABLE_ROWS)
+        .map(|(app, wh)| {
+            let share = if max_week > 0.0 { wh / max_week } else { 0.0 };
+            let level = contract.level_for(share, *wh);
+            let day_wh = day_by_app.get(app.as_str()).copied().unwrap_or(0.0);
+            TableRow::new(vec![
+                app.clone(),
+                format!("{day_wh:.2} Wh"),
+                format!("{wh:.2} Wh"),
+                contract.label_for(level),
+                format!("{:.0}%", share * 100.0),
+            ])
+            .with_tone(&contract.tone_for(level))
+        })
+        .collect();
+    view.summary = format!(
+        "{} apps · {total:.1} Wh in 7 days · top consumer shown at 100% share",
+        view.rows.len()
+    );
+    view
+}
+
+/// Startup apps (TM-13): autostart entries with an honest impact column and a
+/// per-row enable/disable action (the caller persists it).
+pub fn startup_view(items: &[crate::model::StartupItem]) -> TableView {
+    let mut view = TableView {
+        title: "STARTUP APPS".into(),
+        headers: vec![
+            "Name".into(),
+            "Scope".into(),
+            "State".into(),
+            "Startup impact".into(),
+        ],
+        note: "Startup impact needs a boot trace and currently reads \"Not measured\" instead of a guess. Enabling or disabling writes Hidden= in the .desktop file (TM-13)."
+            .into(),
+        empty_text: "No autostart entries found (~/.config/autostart and /etc/xdg/autostart)."
+            .into(),
+        ..Default::default()
+    };
+    let enabled = items.iter().filter(|item| item.enabled).count();
+    view.rows = items
+        .iter()
+        .take(TABLE_ROWS)
+        .map(|item| {
+            TableRow::new(vec![
+                item.name.clone(),
+                match item.scope {
+                    crate::model::StartupScope::User => "User".into(),
+                    crate::model::StartupScope::System => "System".into(),
+                },
+                if item.enabled {
+                    "Enabled".into()
+                } else {
+                    "Disabled".into()
+                },
+                "Not measured".into(),
+            ])
+            .with_tone(if item.enabled { "success" } else { "text_muted" })
+            .with_hint(&item.exec)
+            .with_action(
+                &item.desktop_file,
+                if item.enabled { "Disable" } else { "Enable" },
+            )
+        })
+        .collect();
+    view.summary = format!(
+        "{enabled} of {} enabled · user and system autostart",
+        items.len()
+    );
+    view
+}
+
+/// Logged-in users (TM-14) from `loginctl list-users`.
+pub fn users_view(sessions: &[crate::model::UserSession], current_uid: u32) -> TableView {
+    let mut view = TableView {
+        title: "USERS".into(),
+        headers: vec![
+            "User".into(),
+            "UID".into(),
+            "Seat".into(),
+            "Session".into(),
+        ],
+        note: "From loginctl list-users (systemd-logind). A missing seat means the session is not attached to a graphical seat.".into(),
+        empty_text: "No logged-in users reported (is logind running?).".into(),
+        ..Default::default()
+    };
+    view.rows = sessions
+        .iter()
+        .take(TABLE_ROWS)
+        .map(|session| {
+            let current = session.uid == current_uid;
+            TableRow::new(vec![
+                session.user.clone(),
+                session.uid.to_string(),
+                session.seat.clone().unwrap_or_else(|| "—".into()),
+                if current { "This session" } else { "Active" }.into(),
+            ])
+            .with_tone(if current { "accent" } else { "" })
+        })
+        .collect();
+    view.summary = format!("{} logged-in users", view.rows.len());
+    view
+}
+
+/// Sandbox level for a process row, derived from its cgroup (TM-16).
+pub fn sandbox_level(row: &crate::model::ProcessRow) -> &'static str {
+    match row.cgroup.as_deref() {
+        Some(cgroup) if crate::manager::app_id_from_scope(cgroup).is_some() => "App scope",
+        Some(cgroup) if cgroup.contains("aether") => "Aether system scope",
+        Some(_) => "System",
+        None => "Unknown",
+    }
+}
+
+/// Details tab (TM-16): the Windows-style process table.
+pub fn details_view(rows: &[crate::model::ProcessRow]) -> TableView {
+    let mut view = TableView {
+        title: "DETAILS".into(),
+        headers: vec![
+            "Name".into(),
+            "PID".into(),
+            "PPID".into(),
+            "User".into(),
+            "Threads".into(),
+            "Files".into(),
+            "Sandbox".into(),
+        ],
+        note: "Private memory uses PSS where the sampler read smaps_rollup. The sandbox column is derived from the cgroup: aether-app-* scopes are sandboxed app scopes, system services are not.".into(),
+        empty_text: "No processes reported yet.".into(),
+        ..Default::default()
+    };
+    let mut sorted: Vec<&crate::model::ProcessRow> = rows.iter().collect();
+    sorted.sort_by(|a, b| {
+        b.cpu_percent
+            .partial_cmp(&a.cpu_percent)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    view.rows = sorted
+        .into_iter()
+        .take(TABLE_ROWS)
+        .map(|row| {
+            let level = sandbox_level(row);
+            TableRow::new(vec![
+                row.name.clone(),
+                row.pid.to_string(),
+                row.ppid.to_string(),
+                row.user
+                    .map(|uid| uid.to_string())
+                    .unwrap_or_else(|| "—".into()),
+                row.threads.to_string(),
+                row.open_files.to_string(),
+                level.into(),
+            ])
+            .with_tone(if level == "App scope" { "accent" } else { "text_muted" })
+            .with_hint(&row.command)
+        })
+        .collect();
+    view.summary = format!("{} processes · sorted by CPU", view.rows.len());
+    view
+}
+
+/// Services tab (TM-17): systemd units. Starting/stopping needs the permission
+/// prompt and is intentionally not wired here.
+pub fn services_view(services: &[crate::model::ServiceRow]) -> TableView {
+    let mut view = TableView {
+        title: "SERVICES".into(),
+        headers: vec![
+            "Unit".into(),
+            "Load".into(),
+            "Active".into(),
+            "Sub".into(),
+        ],
+        note: "Read-only in this round: start/stop/restart need the permission prompt (TM-17) and are not wired to the window."
+            .into(),
+        empty_text: "systemctl reported no services (this host may not use systemd).".into(),
+        ..Default::default()
+    };
+    let active = services
+        .iter()
+        .filter(|service| service.active == "active")
+        .count();
+    view.rows = services
+        .iter()
+        .take(TABLE_ROWS)
+        .map(|service| {
+            let tone = if service.active == "active" {
+                "success"
+            } else if service.active == "failed" {
+                "danger"
+            } else {
+                "text_muted"
+            };
+            TableRow::new(vec![
+                service.unit.clone(),
+                service.load.clone(),
+                service.active.clone(),
+                service.sub.clone(),
+            ])
+            .with_tone(tone)
+            .with_hint(&service.description)
+        })
+        .collect();
+    view.summary = format!("{active} active of {}", services.len());
+    view
+}
+
+/// Text form of a generic table, for the CLI and D6 logs.
+pub fn table_report(view: &TableView) -> String {
+    let mut out = String::new();
+    out.push_str(&format!("{}\n", view.title));
+    if !view.summary.is_empty() {
+        out.push_str(&format!("  {}\n", view.summary));
+    }
+    out.push('\n');
+    out.push_str(&format!("  {:<32}", view.headers.first().cloned().unwrap_or_default()));
+    for header in view.headers.iter().skip(1) {
+        out.push_str(&format!(" {:>14}", header));
+    }
+    out.push('\n');
+    if view.rows.is_empty() {
+        out.push_str(&format!("  {}\n", view.empty_text));
+    }
+    for row in &view.rows {
+        let mut cells = row.cells.iter();
+        out.push_str(&format!(
+            "  {:<32}",
+            cells.next().cloned().unwrap_or_default()
+        ));
+        for cell in cells {
+            out.push_str(&format!(" {:>14}", cell));
+        }
+        out.push('\n');
+        if !row.hint.is_empty() {
+            out.push_str(&format!("      {}\n", row.hint));
+        }
+        if !row.action_label.is_empty() {
+            out.push_str(&format!("      [{}] {}\n", row.action_label, row.action));
+        }
+    }
+    if !view.note.is_empty() {
+        out.push_str(&format!("\n  {}\n", view.note));
+    }
+    out
+}
+
 /// Peak value of a history series (0.0 when empty).
 pub fn peak(points: &[GraphPoint]) -> f32 {
     points
@@ -833,8 +1186,180 @@ mod tests {
     }
 
     #[test]
-    fn text_reports_name_every_section() {
-        let system = SystemSample {
+    fn app_history_merges_24_hour_and_week_totals() {
+        let mut analytics = BatteryAnalytics::new(64);
+        let now = 10 * 86_400;
+        analytics.record_app_energy(now - 60, "org.aether.Browser", 18.0);
+        analytics.record_app_energy(now - 2 * 86_400, "org.aether.Browser", 6.0);
+        analytics.record_app_energy(now - 60, "org.aether.Player", 2.0);
+        analytics.record_app_energy(now - 0, "org.aether.Player", 0.0);
+
+        let view = app_history_view(Some(&analytics), now);
+        assert_eq!(view.title, "APP HISTORY");
+        assert_eq!(view.headers[0], "App");
+        assert_eq!(view.rows.len(), 2);
+        assert_eq!(view.rows[0].cells[0], "org.aether.Browser");
+        assert_eq!(view.rows[0].cells[1], "18.00 Wh");
+        assert_eq!(view.rows[0].cells[2], "24.00 Wh");
+        assert_eq!(view.rows[0].cells[3], "High");
+        assert_eq!(view.rows[0].tone, "danger");
+        assert_eq!(view.rows[1].cells[3], "Low");
+        assert!(view.summary.contains("26.0 Wh in 7 days"));
+        assert!(view.note.contains("Pack D"));
+
+        // Without history the tab explains what to pass.
+        let empty = app_history_view(None, now);
+        assert!(empty.rows.is_empty());
+        assert!(empty.empty_text.contains("--power-history"));
+        // A store with only stale entries is reported as empty, not as zero.
+        let stale = app_history_view(Some(&BatteryAnalytics::new(8)), now);
+        assert!(stale.empty_text.contains("last 7 days"));
+    }
+
+    #[test]
+    fn startup_view_shows_state_and_toggle_actions() {
+        use crate::model::{StartupItem, StartupScope};
+        let items = vec![
+            StartupItem {
+                name: "Mail".into(),
+                exec: "aether-mail".into(),
+                desktop_file: "/home/u/.config/autostart/mail.desktop".into(),
+                enabled: true,
+                scope: StartupScope::User,
+            },
+            StartupItem {
+                name: "Backup".into(),
+                exec: "aether-backup".into(),
+                desktop_file: "/etc/xdg/autostart/backup.desktop".into(),
+                enabled: false,
+                scope: StartupScope::System,
+            },
+        ];
+        let view = startup_view(&items);
+        assert_eq!(view.rows.len(), 2);
+        assert_eq!(view.rows[0].cells, vec!["Mail", "User", "Enabled", "Not measured"]);
+        assert_eq!(view.rows[0].action_label, "Disable");
+        assert_eq!(view.rows[0].action, "/home/u/.config/autostart/mail.desktop");
+        assert_eq!(view.rows[0].tone, "success");
+        assert_eq!(view.rows[1].cells[1], "System");
+        assert_eq!(view.rows[1].action_label, "Enable");
+        assert_eq!(view.rows[1].tone, "text_muted");
+        assert!(view.summary.contains("1 of 2 enabled"));
+        assert!(view.note.contains("Not measured"));
+    }
+
+    #[test]
+    fn users_view_marks_the_current_session() {
+        use crate::model::UserSession;
+        let sessions = vec![
+            UserSession {
+                user: "anik".into(),
+                uid: 1000,
+                seat: Some("seat0".into()),
+            },
+            UserSession {
+                user: "builder".into(),
+                uid: 1001,
+                seat: None,
+            },
+        ];
+        let view = users_view(&sessions, 1000);
+        assert_eq!(view.rows[0].cells, vec!["anik", "1000", "seat0", "This session"]);
+        assert_eq!(view.rows[0].tone, "accent");
+        assert_eq!(view.rows[1].cells[3], "Active");
+        assert_eq!(view.rows[1].cells[2], "—");
+        assert!(view.summary.contains("2 logged-in users"));
+    }
+
+    #[test]
+    fn details_view_sorts_by_cpu_and_names_the_sandbox_level() {
+        use crate::model::{EnergyImpact, ProcessRow};
+        let row = |pid: u32, name: &str, cpu: f32, cgroup: Option<&str>| ProcessRow {
+            pid,
+            ppid: 1,
+            name: name.into(),
+            command: format!("/usr/bin/{name} --flag"),
+            user: Some(1000),
+            threads: 3,
+            open_files: 12,
+            state: 'S',
+            cpu_percent: cpu,
+            memory_bytes: 1024,
+            disk_read_bytes: 0,
+            disk_write_bytes: 0,
+            network_tx_bytes: 0,
+            network_rx_bytes: 0,
+            gpu_percent: None,
+            energy: EnergyImpact::Low,
+            wakeups: 0,
+            efficiency: false,
+            app_state: None,
+            band: None,
+            cgroup: cgroup.map(str::to_string),
+        };
+        let rows = vec![
+            row(10, "idle", 0.5, None),
+            row(11, "browser", 40.0, Some("/aether.slice/aether-app-org.aether.Browser-12345678.scope")),
+            row(12, "sshd", 1.0, Some("/system.slice/sshd.service")),
+        ];
+        let view = details_view(&rows);
+        assert_eq!(view.rows[0].cells[0], "browser");
+        assert_eq!(view.rows[0].cells[6], "App scope");
+        assert_eq!(view.rows[0].tone, "accent");
+        assert_eq!(view.rows[0].hint, "/usr/bin/browser --flag");
+        assert_eq!(view.rows[1].cells[0], "sshd");
+        assert_eq!(view.rows[1].cells[6], "System");
+        assert_eq!(view.rows[2].cells[6], "Unknown");
+        assert_eq!(view.rows[2].cells[3], "1000");
+    }
+
+    #[test]
+    fn services_view_counts_active_units() {
+        use crate::model::ServiceRow;
+        let services = vec![
+            ServiceRow {
+                unit: "aether-powerd.service".into(),
+                load: "loaded".into(),
+                active: "active".into(),
+                sub: "running".into(),
+                description: "AetherOS power daemon".into(),
+            },
+            ServiceRow {
+                unit: "aether-lifecycled.service".into(),
+                load: "loaded".into(),
+                active: "failed".into(),
+                sub: "failed".into(),
+                description: "AetherOS lifecycle daemon".into(),
+            },
+        ];
+        let view = services_view(&services);
+        assert_eq!(view.rows[0].cells[0], "aether-powerd.service");
+        assert_eq!(view.rows[0].tone, "success");
+        assert_eq!(view.rows[1].tone, "danger");
+        assert_eq!(view.rows[1].hint, "AetherOS lifecycle daemon");
+        assert!(view.summary.contains("1 active of 2"));
+        assert!(view.note.contains("Read-only"));
+    }
+
+    #[test]
+    fn table_report_renders_headers_rows_and_notes() {
+        use crate::model::UserSession;
+        let view = users_view(
+            &[UserSession {
+                user: "anik".into(),
+                uid: 1000,
+                seat: Some("seat0".into()),
+            }],
+            1000,
+        );
+        let report = table_report(&view);
+        assert!(report.contains("USERS"));
+        assert!(report.contains("This session"));
+        assert!(report.contains("loginctl"));
+    }
+
+    #[test]
+    fn text_reports_name_every_section() {        let system = SystemSample {
             mem_total_bytes: 2_048,
             mem_available_bytes: 1_024,
             ..Default::default()

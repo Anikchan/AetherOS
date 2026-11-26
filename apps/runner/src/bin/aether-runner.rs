@@ -3,7 +3,7 @@
 //! Usage:
 //!   aether-runner list [--root DIR]
 //!   aether-runner plan APP-ID [--root DIR]
-//!   aether-runner launch APP-ID [--root DIR] [--dry-run] [--strict-landlock]
+//!   aether-runner launch APP-ID [--root DIR] [--dry-run] [--strict-sandbox|--strict-landlock]
 //!   aether-runner engines [verify|package] [--engine-root DIR] [--from DIR] [--version V] [--name wine] [--arch x86_64]
 //!   aether-runner prefixes list|remove APP-ID [--root DIR]
 //!   aether-runner windows install --installer FILE [--id ID] [--entry REL] [--dry-run]
@@ -73,7 +73,7 @@ fn main() {
                 }
             }
             "--dry-run" => dry_run = true,
-            "--strict-landlock" => strict_landlock = true,
+            "--strict-landlock" | "--strict-sandbox" => strict_landlock = true,
             "--from" => {
                 index += 1;
                 from_dir = args.get(index).map(PathBuf::from);
@@ -130,7 +130,7 @@ fn main() {
             }
             "-h" | "--help" => {
                 println!("usage: aether-runner <list|plan|launch|engines|prefixes|windows|compat> [args]");
-                println!("       launch accepts --strict-landlock (fail-closed Landlock enforcement)");
+                println!("       launch accepts --strict-sandbox (fail-closed Landlock + seccomp enforcement)");
                 return;
             }
             value => positional.push(value.to_string()),
@@ -192,7 +192,7 @@ fn main() {
                 return;
             }
             let runner = if dry_run { runner.dry_run() } else { runner };
-            let runner = runner.require_landlock(strict_landlock);
+            let runner = runner.require_strict_layers(strict_landlock);
             match runner.launch(&id) {
                 Ok(mut handle) => {
                     println!(

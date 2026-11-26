@@ -21,7 +21,7 @@ use crate::model::{
     EnergyColumnContract, EnergyImpact, PerformanceHistory, ProcessRow, SystemSample, Tab,
 };
 use crate::shortcut::ShortcutBinding;
-use crate::tabs::{BatteryTabView, MetricLine, PerformanceView, SensorsTabView};
+use crate::tabs::{BatteryTabView, MetricLine, PerformanceView, SensorsTabView, TableView};
 
 /// Height/width used for the headless evidence render.
 pub const RENDER_WIDTH: u32 = 1080;
@@ -277,6 +277,49 @@ impl ActivityManagerWindow {
             .set_sensor_unavailable(ModelRc::new(VecModel::from(unavailable)));
     }
 
+    /// Bind a generic table tab (App history, Startup apps, Users, Details,
+    /// Services). Call `bind_tabs` first; this selects the shared table view.
+    pub fn bind_table(&self, view: &TableView) {
+        self.ui.set_table_title(view.title.clone().into());
+        let headers: Vec<slint::SharedString> =
+            view.headers.iter().map(|header| header.as_str().into()).collect();
+        self.ui
+            .set_table_headers(ModelRc::new(VecModel::from(headers)));
+        let rows: Vec<TableRowView> = view
+            .rows
+            .iter()
+            .map(|row| TableRowView {
+                cells: ModelRc::new(VecModel::from(
+                    row.cells
+                        .iter()
+                        .map(|cell| slint::SharedString::from(cell.as_str()))
+                        .collect::<Vec<_>>(),
+                )),
+                tone: row.tone.clone().into(),
+                hint: row.hint.clone().into(),
+                action: row.action.clone().into(),
+                action_label: row.action_label.clone().into(),
+            })
+            .collect();
+        self.ui.set_table_rows(ModelRc::new(VecModel::from(rows)));
+        self.ui
+            .set_table_summary(view.summary.clone().into());
+        self.ui.set_table_note(view.note.clone().into());
+        self.ui
+            .set_table_empty_text(view.empty_text.clone().into());
+        self.ui.set_active_tab("table".into());
+    }
+
+    /// Register the handler for a table row action (Startup apps enable/disable).
+    pub fn on_row_action<F>(&self, handler: F)
+    where
+        F: Fn(String) + 'static,
+    {
+        self.ui.on_row_action(move |action| {
+            handler(action.to_string());
+        });
+    }
+
     /// Show the end-task / force-quit dialog for `pid` (TM-02, TM-AC-03).
     pub fn show_dialog(&self, pid: u32, dialog: &ConfirmationDialog) {
         self.ui.set_dialog_pid(pid as i32);
@@ -420,9 +463,74 @@ pub fn demo_history(system: &SystemSample) -> PerformanceHistory {
     history
 }
 
-/// Sample sensors for `--render` on hosts without hwmon/thermal sysfs.
-pub fn demo_sensors() -> Vec<crate::model::SensorReading> {
+/// Sample autostart entries for `--render` (documented demo data).
+pub fn demo_startup() -> Vec<crate::model::StartupItem> {
+    use crate::model::{StartupItem, StartupScope};
     vec![
+        StartupItem {
+            name: "Aether Mail".into(),
+            exec: "aether-mail --background".into(),
+            desktop_file: "/home/demo/.config/autostart/aether-mail.desktop".into(),
+            enabled: true,
+            scope: StartupScope::User,
+        },
+        StartupItem {
+            name: "Backup".into(),
+            exec: "aether-backup --daily".into(),
+            desktop_file: "/etc/xdg/autostart/aether-backup.desktop".into(),
+            enabled: true,
+            scope: StartupScope::System,
+        },
+        StartupItem {
+            name: "Podcast sync".into(),
+            exec: "aether-podcasts --sync".into(),
+            desktop_file: "/home/demo/.config/autostart/podcasts.desktop".into(),
+            enabled: false,
+            scope: StartupScope::User,
+        },
+    ]
+}
+
+/// Sample systemd units for `--render` (documented demo data).
+pub fn demo_services() -> Vec<crate::model::ServiceRow> {
+    use crate::model::ServiceRow;
+    [
+        ("aether-powerd.service", "active", "running", "AetherOS power daemon"),
+        ("aether-lifecycled.service", "active", "running", "AetherOS lifecycle daemon"),
+        ("aether-compositor.service", "active", "running", "AetherOS Wayland compositor"),
+        ("aether-updated.service", "inactive", "dead", "AetherOS update service"),
+        ("systemd-timesyncd.service", "failed", "failed", "Network time synchronisation"),
+    ]
+    .into_iter()
+    .map(|(unit, active, sub, description)| ServiceRow {
+        unit: unit.into(),
+        load: "loaded".into(),
+        active: active.into(),
+        sub: sub.into(),
+        description: description.into(),
+    })
+    .collect()
+}
+
+/// Sample logind sessions for `--render` (documented demo data).
+pub fn demo_users() -> Vec<crate::model::UserSession> {
+    use crate::model::UserSession;
+    vec![
+        UserSession {
+            user: "demo".into(),
+            uid: 1000,
+            seat: Some("seat0".into()),
+        },
+        UserSession {
+            user: "build".into(),
+            uid: 1001,
+            seat: None,
+        },
+    ]
+}
+
+/// Sample sensors for `--render` on hosts without hwmon/thermal sysfs.
+pub fn demo_sensors() -> Vec<crate::model::SensorReading> {    vec![
         crate::model::SensorReading {
             name: "coretemp/Package id 0".into(),
             kind: crate::model::SensorKind::TemperatureC,
@@ -467,6 +575,19 @@ fn demo_row(
     energy: EnergyImpact,
     band: Option<Band>,
 ) -> ProcessRow {
+    // Deterministic demo cgroups: app rows look like sandboxed app scopes,
+    // service rows like system units, so the Details tab shows both levels.
+    let cgroup = if matches!(name, "aether-lifecycled" | "aether-bench") {
+        format!("/aether.slice/aether-system.slice/{name}.service")
+    } else {
+        let id = name.trim_start_matches("aether-");
+        let mut chars = id.chars();
+        let app = match chars.next() {
+            Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
+            None => id.to_string(),
+        };
+        format!("/aether.slice/aether-apps.slice/aether-app-org.aether.{app}-1a2b3c4d.scope")
+    };
     ProcessRow {
         pid,
         ppid: 1,
@@ -488,6 +609,6 @@ fn demo_row(
         efficiency: false,
         app_state: None,
         band,
-        cgroup: Some(format!("aether-{name}")),
+        cgroup: Some(cgroup),
     }
 }
