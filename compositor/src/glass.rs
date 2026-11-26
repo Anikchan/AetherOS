@@ -23,7 +23,10 @@
 //! **Hardware gap:** [`GpuProfile::reference`] is a *modelled* profile (pass
 //! throughput constants, `measured: false`). It answers "does the Full-tier
 //! plan fit the 16.67 ms frame budget" analytically; real GPU validation with
-//! three windows on the Dell is still pending the P2 graphics stack.
+//! three windows on the Dell is still pending the P2 graphics stack. The plan
+//! itself is no longer only modelled: [`crate::glass_shader`] turns it into the
+//! GLES program chain that `backend::glass_gles` runs on the DRM renderer (see
+//! `compositor/README.md`, "Glass shader passes").
 
 use crate::scheduling::union_area;
 use crate::wm::Rect;

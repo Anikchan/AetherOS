@@ -20,6 +20,10 @@
 #[cfg(all(target_os = "linux", feature = "drm"))]
 pub mod drm;
 
+/// P3-T05 GLES execution of the glass shader passes (drm feature only).
+#[cfg(all(target_os = "linux", feature = "drm"))]
+pub mod glass_gles;
+
 /// Environment variable that selects the output backend.
 pub const BACKEND_ENV: &str = "AETHER_COMPOSITOR_BACKEND";
 

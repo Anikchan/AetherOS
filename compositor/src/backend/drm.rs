@@ -28,6 +28,13 @@
 //!   into the Wayland seat created here; pointer hits pick the topmost
 //!   window/layer surface and a click moves keyboard focus to it.
 //!
+//! **Glass passes (P3-T05):** at every tier except `minimal` the backdrop under
+//! each window and shell-chrome surface is captured, blurred with the
+//! dual-Kawase chain and composited with the tint/edge/refraction shader
+//! ([`crate::backend::glass_gles`]) before the surface content is drawn on top.
+//! `minimal` runs the same composite program in `fill` mode (solid tinted
+//! panel, no backdrop sample).
+//!
 //! Markers: `AETHER_COMPOSITOR_DRM_SESSION`, `_DRM_PRIMARY_GPU`, `_DRM_DEVICE`,
 //! `_DRM_CONNECTOR`, `_DRM_RENDERER`, `_DRM_OUTPUT`, `_DRM_VBLANK`,
 //! `_DRM_SESSION_EVENT`, `_DRM_HOTPLUG`, `_DRM_STATS`, `_SEAT`, `_INPUT`,
@@ -57,6 +64,7 @@ use smithay::backend::renderer::element::surface::WaylandSurfaceRenderElement;
 use smithay::backend::renderer::element::Kind;
 use smithay::backend::renderer::gles::GlesRenderer;
 use smithay::backend::renderer::ImportDma;
+use smithay::backend::renderer::Renderer;
 use smithay::backend::session::libseat::LibSeatSession;
 use smithay::backend::session::{Event as SessionEvent, Session};
 use smithay::backend::udev::{primary_gpu, UdevBackend, UdevEvent};
@@ -76,8 +84,12 @@ use smithay::wayland::compositor::with_states;
 use smithay::wayland::shell::wlr_layer::{Anchor, Layer, LayerSurfaceCachedState};
 use smithay::wayland::socket::ListeningSocketSource;
 
+use crate::backend::glass_gles::{Backdrop, DrmRenderElement, GlassPasses};
 use crate::backend::layer_location;
-use crate::{AetherCompositor, ClientState, Frame, LayerSurfaceEntry, Rect, WindowId};
+use crate::glass_shader;
+use crate::{
+    AetherCompositor, ClientState, Frame, GlassSurface, LayerSurfaceEntry, Rect, WindowId,
+};
 
 /// Per-frame user data handed to KMS and returned by `frame_submitted`.
 #[derive(Debug, Clone, Copy)]
@@ -123,6 +135,9 @@ pub struct DrmBackend {
     pub frames_queued: u64,
     /// Frames presented straight from the client buffer (P3-T07).
     pub direct_frames: u64,
+    /// P3-T05 compiled glass shader programs; `None` when compilation failed,
+    /// in which case surfaces are composited without the glass passes.
+    pub glass: Option<GlassPasses>,
 }
 
 /// Run the compositor on the seat's primary DRM device.
@@ -376,6 +391,9 @@ pub fn run() -> Result<(), String> {
             drm.frames_queued, drm.vblanks, drm.direct_frames
         );
     }
+    if let Some(glass) = state.drm.as_ref().and_then(|drm| drm.glass.as_ref()) {
+        println!("AETHER_COMPOSITOR_GLASS_STATS: {}", glass.stats_line());
+    }
     println!(
         "AETHER_COMPOSITOR_FRAME_STATS: {}",
         state.frames.stats_line(Instant::now())
@@ -428,13 +446,28 @@ fn open_device(session: &mut LibSeatSession, path: &Path) -> Result<DrmBackend, 
         unsafe { EGLDisplay::new(gbm.clone()) }.map_err(|err| format!("EGLDisplay::new: {err}"))?;
     let egl_context =
         EGLContext::new(&egl_display).map_err(|err| format!("EGLContext::new: {err}"))?;
-    let renderer = unsafe { GlesRenderer::new(egl_context) }
+    let mut renderer = unsafe { GlesRenderer::new(egl_context) }
         .map_err(|err| format!("GlesRenderer::new: {err}"))?;
     let renderer_formats: Vec<_> = renderer.dmabuf_formats().iter().copied().collect();
     println!(
         "AETHER_COMPOSITOR_DRM_RENDERER: backend=gles render_formats={}",
         renderer_formats.len()
     );
+
+    // P3-T05: compile the glass programs once, on this EGL context. Failure is
+    // non-fatal: the compositor keeps running without the glass passes.
+    let glass = match GlassPasses::new(&mut renderer) {
+        Ok(glass) => {
+            println!(
+                "AETHER_COMPOSITOR_GLASS_SHADER: programs=3 backend=gles shaders=kawase-down,kawase-up,glass-composite"
+            );
+            Some(glass)
+        }
+        Err(err) => {
+            eprintln!("aether-compositor: glass shaders unavailable: {err:?}");
+            None
+        }
+    };
 
     // Advertising output: the connector's mode at scale 1.
     let output = Output::new(
@@ -490,6 +523,7 @@ fn open_device(session: &mut LibSeatSession, path: &Path) -> Result<DrmBackend, 
         vblanks: 0,
         frames_queued: 0,
         direct_frames: 0,
+        glass,
     })
 }
 
@@ -585,11 +619,76 @@ impl DrmBackend {
     fn present(&mut self, state: &mut AetherCompositor, frame: &Frame) -> Result<bool, String> {
         let output_size = self.logical_size();
         let scale = self.output.current_scale().fractional_scale();
-        let elements = collect_elements(&mut self.renderer, state, output_size, scale);
+        let tier = state.effects.tier();
 
         // P3-T07: a single opaque full-screen window with no shell overlay is
         // scanned out from the client buffer; no glass passes are planned.
-        if state.scanout.is_direct() {
+        let direct = state.scanout.is_direct();
+
+        // P3-T05: capture the backdrop once per frame, over the union of the
+        // glass surfaces. The Minimal tier needs no backdrop (fill mode).
+        let backdrop = if direct || !glass_shader::tier_blurs(tier) {
+            None
+        } else {
+            let background = collect_layers(
+                &mut self.renderer,
+                state,
+                output_size,
+                scale,
+                BACKDROP_LAYERS,
+            );
+            let surfaces = glass_surfaces(state, output_size);
+            match self.glass.as_mut() {
+                Some(glass) => glass.backdrop(
+                    &mut self.renderer,
+                    &background,
+                    &surfaces,
+                    scale,
+                    output_size,
+                ),
+                None => None,
+            }
+        };
+
+        let elements = collect_elements(
+            &mut self.renderer,
+            self.glass.as_mut(),
+            state,
+            output_size,
+            scale,
+            &frame.damage,
+            backdrop.as_ref(),
+        );
+
+        if frame.index <= 5 || frame.index % 120 == 0 {
+            let frosted = elements
+                .iter()
+                .filter(|element| matches!(element, DrmRenderElement::Frost(_)))
+                .count();
+            if let Some(glass) = self.glass.as_ref() {
+                println!(
+                    "AETHER_COMPOSITOR_GLASS_SHADER: tier={} blur={} frosted={} frosted_total={} damage_px={} backdrop={}",
+                    tier.name(),
+                    if glass_shader::tier_blurs(tier) {
+                        "dual-kawase"
+                    } else {
+                        "none"
+                    },
+                    frosted,
+                    glass.surfaces,
+                    frame.damage_pixels,
+                    backdrop
+                        .as_ref()
+                        .map(|backdrop| format!(
+                            "{}x{}",
+                            backdrop.region.size.w, backdrop.region.size.h
+                        ))
+                        .unwrap_or_else(|| "none".to_string()),
+                );
+            }
+        }
+
+        if direct {
             self.direct_frames += 1;
             if frame.index <= 5 || frame.index % 120 == 0 {
                 println!(
@@ -637,27 +736,32 @@ impl DrmBackend {
     }
 }
 
+/// Layer surfaces that form the backdrop of the glass surfaces.
+const BACKDROP_LAYERS: [Layer; 2] = [Layer::Background, Layer::Bottom];
+/// Layer surfaces drawn above the windows (shell chrome: panel, dock, …).
+const CHROME_LAYERS: [Layer; 2] = [Layer::Top, Layer::Overlay];
+
 /// Back-to-front render elements for the active workspace.
+///
+/// Windows and shell-chrome surfaces get a frosted backdrop element drawn
+/// underneath their content (P3-T05); everything else is composited plainly.
 fn collect_elements(
     renderer: &mut GlesRenderer,
+    mut glass: Option<&mut GlassPasses>,
     state: &AetherCompositor,
     output_size: (i32, i32),
     scale: f64,
-) -> Vec<WaylandSurfaceRenderElement<GlesRenderer>> {
+    damage: &[Rect],
+    backdrop: Option<&Backdrop>,
+) -> Vec<DrmRenderElement> {
     let mut elements = Vec::new();
 
     // 1. Background/bottom layer surfaces (wallpaper, backdrop).
-    for entry in state
-        .layer_surfaces
-        .iter()
-        .filter(|entry| matches!(entry.layer, Layer::Background | Layer::Bottom))
-    {
-        if let Some(element) = layer_element(renderer, entry, output_size, scale) {
-            elements.push(element);
-        }
+    for element in collect_layers(renderer, state, output_size, scale, BACKDROP_LAYERS) {
+        elements.push(DrmRenderElement::Surface(element));
     }
 
-    // 2. Managed windows of the active workspace.
+    // 2. Managed windows of the active workspace, frosted underneath.
     for (index, toplevel) in state.toplevels.iter().enumerate() {
         let Some(window) = state.wm.windows.get(&WindowId(index as u64)) else {
             continue;
@@ -665,13 +769,25 @@ fn collect_elements(
         if window.workspace != state.wm.active || !toplevel.alive() {
             continue;
         }
+        if let Some(glass) = glass.as_mut() {
+            push_frost(
+                renderer,
+                glass,
+                state,
+                window.rect,
+                damage,
+                scale,
+                backdrop,
+                &mut elements,
+            );
+        }
         if let Some(element) = surface_element(
             renderer,
             toplevel.wl_surface(),
             physical(window.rect.x, window.rect.y, scale),
             Kind::Unspecified,
         ) {
-            elements.push(element);
+            elements.push(DrmRenderElement::Surface(element));
         }
     }
 
@@ -679,10 +795,22 @@ fn collect_elements(
     for entry in state
         .layer_surfaces
         .iter()
-        .filter(|entry| matches!(entry.layer, Layer::Top | Layer::Overlay))
+        .filter(|entry| CHROME_LAYERS.contains(&entry.layer))
     {
+        if let Some(glass) = glass.as_mut() {
+            push_frost(
+                renderer,
+                glass,
+                state,
+                layer_rect(entry, output_size),
+                damage,
+                scale,
+                backdrop,
+                &mut elements,
+            );
+        }
         if let Some(element) = layer_element(renderer, entry, output_size, scale) {
-            elements.push(element);
+            elements.push(DrmRenderElement::Surface(element));
         }
     }
 
@@ -694,19 +822,78 @@ fn collect_elements(
             scale,
         );
         if let Some(element) = surface_element(renderer, surface, location, Kind::Cursor) {
-            elements.push(element);
+            elements.push(DrmRenderElement::Surface(element));
         }
     }
 
     elements
 }
 
-fn layer_element(
+/// Resolve the glass plan for one surface and push its frosted element.
+fn push_frost(
     renderer: &mut GlesRenderer,
-    entry: &LayerSurfaceEntry,
+    glass: &mut GlassPasses,
+    state: &AetherCompositor,
+    rect: Rect,
+    damage: &[Rect],
+    scale: f64,
+    backdrop: Option<&Backdrop>,
+    elements: &mut Vec<DrmRenderElement>,
+) {
+    let material = state.effects.material();
+    let surface = GlassSurface {
+        id: 0,
+        rect,
+        corner_radius: material.corner_radius,
+        opacity: 1.0,
+    };
+    let plan = state.effects.plan(&surface, Some(damage));
+    if let Some(frost) = glass.frost(renderer, backdrop, &material, &plan, rect, damage, scale) {
+        elements.push(frost.element(renderer.context_id()));
+    }
+}
+
+/// Logical rects of the surfaces that receive the glass material.
+fn glass_surfaces(state: &AetherCompositor, output_size: (i32, i32)) -> Vec<Rect> {
+    let mut rects = Vec::new();
+    for (index, toplevel) in state.toplevels.iter().enumerate() {
+        if !toplevel.alive() {
+            continue;
+        }
+        if let Some(window) = state.wm.windows.get(&WindowId(index as u64)) {
+            if window.workspace == state.wm.active {
+                rects.push(window.rect);
+            }
+        }
+    }
+    for entry in state
+        .layer_surfaces
+        .iter()
+        .filter(|entry| CHROME_LAYERS.contains(&entry.layer))
+    {
+        rects.push(layer_rect(entry, output_size));
+    }
+    rects
+}
+
+/// Elements of the layer surfaces in `layers`, back to front.
+fn collect_layers(
+    renderer: &mut GlesRenderer,
+    state: &AetherCompositor,
     output_size: (i32, i32),
     scale: f64,
-) -> Option<WaylandSurfaceRenderElement<GlesRenderer>> {
+    layers: [Layer; 2],
+) -> Vec<WaylandSurfaceRenderElement<GlesRenderer>> {
+    state
+        .layer_surfaces
+        .iter()
+        .filter(|entry| layers.contains(&entry.layer))
+        .filter_map(|entry| layer_element(renderer, entry, output_size, scale))
+        .collect()
+}
+
+/// Logical rect of a layer surface on the primary output.
+fn layer_rect(entry: &LayerSurfaceEntry, output_size: (i32, i32)) -> Rect {
     let surface = entry.surface.wl_surface();
     let cached = with_states(surface, |states| {
         states
@@ -717,7 +904,27 @@ fn layer_element(
     });
     let size = crate::layer_surface_size(&cached, Size::from(output_size));
     let (x, y) = layer_location(layer_anchors(cached.anchor), (size.w, size.h), output_size);
-    surface_element(renderer, surface, physical(x, y, scale), Kind::Unspecified)
+    Rect {
+        x,
+        y,
+        w: size.w,
+        h: size.h,
+    }
+}
+
+fn layer_element(
+    renderer: &mut GlesRenderer,
+    entry: &LayerSurfaceEntry,
+    output_size: (i32, i32),
+    scale: f64,
+) -> Option<WaylandSurfaceRenderElement<GlesRenderer>> {
+    let rect = layer_rect(entry, output_size);
+    surface_element(
+        renderer,
+        entry.surface.wl_surface(),
+        physical(rect.x, rect.y, scale),
+        Kind::Unspecified,
+    )
 }
 
 fn layer_anchors(anchor: Anchor) -> (bool, bool, bool, bool) {

@@ -75,11 +75,10 @@ build.
   window with no Top/Overlay layer surface is submitted as one element, letting
   `DrmCompositor` flip the client buffer on the primary plane (`passes=0`,
   `AETHER_COMPOSITOR_SCANOUT_FRAME`).
-- **Effects** (`glass::GlassPipeline`): the tier/pipeline plan, cost model and
-  marker stay wired (`AETHER_COMPOSITOR_GLASS_PLAN`, tier switches on frame
-  budget). The blur/refraction/shadow *shader* passes themselves are not yet
-  drawn by the GLES renderer — the DRM path currently composes client buffers
-  plus a solid clear colour. That is the remaining graphics work (see D1 §4).
+- **Effects** (`glass::GlassPipeline` + `glass_shader` + `backend::glass_gles`):
+  the tier resolves to a GLES program chain that runs on the KMS renderer —
+  dual-Kawase blur, tint, edge refraction, edge highlight, corner mask and the
+  Minimal-tier solid fallback. See "Glass shader passes (P3-T05)" below.
 - **Window management** (`wm`, `P3-T04`) and layer shell: toplevels are drawn at
   their managed rect, layer surfaces on their anchored edge
   (`backend::layer_location`), shell chrome above windows, cursor on top.
@@ -87,6 +86,61 @@ build.
   created by the backend; pointer motion does hit-testing (Top/Overlay layer
   surfaces first, then windows, topmost first), a click moves keyboard focus,
   and the client cursor surface is drawn as a software cursor.
+
+## Glass shader passes (P3-T05)
+
+`glass::GlassPipeline` resolves a tier into an `EffectPlan` (pass kinds, damaged
+pixels, modelled cost). `glass_shader` turns that plan into the concrete program
+sequence and uniform values, and `backend/glass_gles` runs it on the GLES
+renderer that drives the KMS primary plane. The split keeps the mapping pure and
+unit-tested on any host, while only the `drm` feature compiles the GL code.
+
+| Tier | Blur chain | Composite | Tint | Edge |
+|---|---|---|---|---|
+| Full | 5 down + 5 up, full resolution, radius 24 px | saturation 1.2, refraction band 24 px, 1 px rim | 18 % white/black | 40 % (+20 % on the top edge) |
+| Reduced | 4 down + 4 up, half resolution, radius 16 px | saturation 1.1, no refraction | same | 30 % |
+| Minimal | none | `fill` mode, no backdrop sample | solid 92 % panel | 20 % |
+
+Shader sources (`src/shaders/`, compiled by `GlesRenderer::compile_custom_texture_shader`):
+
+| File | Program | Uniforms |
+|---|---|---|
+| `glass_downsample.frag` | dual-Kawase down (5-tap) | `sample_step` |
+| `glass_upsample.frag` | dual-Kawase up (8-tap tent) | `sample_step` |
+| `glass_composite.frag` | saturation + tint + refraction + rim + corner mask + Minimal fill | `saturation`, `tint`, `edge`, `surface`, `region`, `refraction`, `fill` |
+
+Per frame the backend:
+
+1. renders the Background/Bottom layer surfaces (wallpaper) into one offscreen
+   backdrop texture covering the union of the glass surfaces;
+2. runs the blur chain per surface at the sizes the plan resolved;
+3. composites saturation/tint/edge/refraction into a frost texture and pushes it
+   as a `DrmRenderElement::Frost` element *under* the surface's own content;
+4. draws shell chrome (Top/Overlay layer surfaces) and windows through the same
+   path, so a translucent client buffer shows the frosted backdrop.
+
+Failure policy: if the programs fail to compile, or any pass fails at runtime,
+the surface is composited plainly for that frame and the failure is counted in
+`AETHER_COMPOSITOR_GLASS_STATS`. A broken shader must never take the desktop
+down.
+
+Damage scope (residual): `DrmCompositor::render_frame` renders every element
+into a fresh swapchain slot, so a frost element has to cover the whole surface —
+a strip-sized frost would leave the rest of the surface empty in the new slot.
+The damage region still decides whether a surface is frosted and is reported in
+the markers; scoping the blur to the damaged strip needs buffer-age tracking and
+belongs to the P3-T06 follow-up.
+
+### Checking the shaders without a GPU
+
+```sh
+./compositor/scripts/check-shaders.sh
+```
+
+Compiles and links all three fragment stages against the smithay texture vertex
+stage. On macOS it uses the system OpenGL framework (desktop GLSL 1.20 with the
+ES-only `precision` qualifiers stripped); on Linux it uses `glslangValidator`
+when installed. This proves syntax, declarations and types, not driver behaviour.
 
 ## Marker reference (DRM additions)
 
@@ -98,6 +152,9 @@ AETHER_COMPOSITOR_DRM_PRIMARY_GPU: path=/dev/dri/card0
 AETHER_COMPOSITOR_DRM_DEVICE: path=… atomic=true cursor=64x64
 AETHER_COMPOSITOR_DRM_CONNECTOR: name=eDP-1 mode=1920x1080@60000mhz crtc=…
 AETHER_COMPOSITOR_DRM_RENDERER: backend=gles render_formats=<n>
+AETHER_COMPOSITOR_GLASS_SHADER: programs=3 backend=gles shaders=kawase-down,kawase-up,glass-composite
+AETHER_COMPOSITOR_GLASS_SHADER: tier=… blur=dual-kawase|none frosted=<n> frosted_total=<n> damage_px=<n> backdrop=<WxH>|none
+AETHER_COMPOSITOR_GLASS_STATS: surfaces=… passes=… textures=… failures=…
 AETHER_COMPOSITOR_DRM_OUTPUT: connector=eDP-1 mode=1920x1080 refresh_mhz=60000
 AETHER_COMPOSITOR_DRM_VBLANK: n=<frame> time_ms=<t> total=<n>
 AETHER_COMPOSITOR_DRM_SESSION_EVENT: state=paused|active
@@ -125,4 +182,8 @@ Still to be validated on the Dell:
 6. Second KMS output / hotplug reconfiguration (headless already proves the
    two-output layout; the DRM path currently drives one connector).
 7. HiDPI on KMS (`output` scale is 1.0 today; the layout maths is scale-aware).
-8. The blur/tint/refraction shader passes of the glass pipeline.
+8. The glass shader chain on the real GPU: shader compilation through the i915
+   driver, the dual-Kawase chain's visual result (blur radius, tint, rim
+   highlight on the top edge, refraction band at Full tier), and the 60 fps
+   budget with three windows (`AETHER_COMPOSITOR_GLASS_SHADER`).
+   `./compositor/scripts/check-shaders.sh` only proves the sources compile.

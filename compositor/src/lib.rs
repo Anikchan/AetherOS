@@ -24,6 +24,11 @@
 //! (Dual Kawase blur levels + saturation + tint + edge refraction + edge
 //! highlight + shadow + composite), blur is only planned over the damaged
 //! region, and the modelled frame cost is checked against the 60 Hz budget.
+//! [`glass_shader`] maps that plan to the GLES program chain and the uniform
+//! values each pass needs, and `backend::glass_gles` runs it on the DRM
+//! renderer (dual-Kawase blur, tint, edge refraction/highlight and the
+//! Minimal-tier solid fallback), so the plan is drawn on hardware instead of
+//! only being modelled.
 //! Phase P3-T06 adds [`scheduling`]: damage tracking, frame pacing, frame
 //! callbacks and idle measurement.
 //! Phase P3-T07 adds [`scanout`]: a single full-screen opaque toplevel with no
@@ -62,6 +67,8 @@
 //!          `AETHER_COMPOSITOR_EFFECT_TIER_SWITCH: from=… to=… reason=…`,
 //!          `AETHER_COMPOSITOR_GLASS_GPU_PROFILE: name=… measured=false …`,
 //!          `AETHER_COMPOSITOR_GLASS_PLAN: tier=… windows=… passes=… est_ms=…`,
+//!          `AETHER_COMPOSITOR_GLASS_SHADER: tier=… frosted=… …`,
+//!          `AETHER_COMPOSITOR_GLASS_STATS: surfaces=… passes=… failures=…`,
 //!          `AETHER_COMPOSITOR_FRAME: n=… damage_px=… tier=… est_ms=…`,
 //!          `AETHER_COMPOSITOR_FRAME_CALLBACKS: n=…`,
 //!          `AETHER_COMPOSITOR_IDLE: idle_ms=… idle_pct=…`,
@@ -151,6 +158,8 @@ use smithay::wayland::shell::xdg::{
 use smithay::wayland::shm::{ShmHandler, ShmState};
 
 mod glass;
+/// P3-T05 GLES side of the glass pipeline: plan → shader stages + uniforms.
+pub mod glass_shader;
 mod hang;
 mod scanout;
 mod scheduling;
