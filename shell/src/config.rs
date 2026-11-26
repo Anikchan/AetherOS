@@ -127,6 +127,7 @@ pub const SETTINGS: &[SettingDef] = &[
     SettingDef { key: "theme.effects-tier", label: "Effects tier", file: "theme/tokens.toml", kind: SettingKind::Select(&["full", "reduced", "minimal"]), default: "full", category: Category::Appearance },
     SettingDef { key: "theme.reduce-transparency", label: "Reduce transparency", file: "theme/tokens.toml", kind: SettingKind::Toggle, default: "false", category: Category::Appearance },
     SettingDef { key: "theme.reduce-motion", label: "Reduce motion", file: "theme/tokens.toml", kind: SettingKind::Toggle, default: "false", category: Category::Appearance },
+    SettingDef { key: "theme.text-scale", label: "Text scale", file: "theme/tokens.toml", kind: SettingKind::Select(&["100%", "125%", "150%", "175%", "200%"]), default: "100%", category: Category::Appearance },
     SettingDef { key: "theme.wallpaper", label: "Wallpaper", file: "theme/tokens.toml", kind: SettingKind::Value, default: "gradient-default", category: Category::Appearance },
 
     // Display.

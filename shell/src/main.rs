@@ -36,6 +36,7 @@ fn usage() {
          \n\
          Usage:\n\
          \x20 aether-shell --render <dir>          render every surface to PNG\n\
+         \x20 aether-shell --render-a11y <dir>     render the 150 %/200 % and focus-ring evidence\n\
          \x20 aether-shell --status                print shell state as JSON-ish text\n\
          \x20 aether-shell --interactive [--journal <log>] [--frames <n>] [--frames-out <dir>]\n\
          \x20                            [--act wait|force-quit]\n\
@@ -45,6 +46,8 @@ fn usage() {
          \x20 aether-shell --effects-tier          print the effective glass tier\n\
          \x20 aether-shell --effects-env           print the compositor tier export\n\
          \x20 aether-shell --effects-check <log|-> verify the compositor's effect/frame markers\n\
+         \x20 aether-shell --a11y-status           printing accessibility + keyboard plan\n\
+         \x20 aether-shell --a11y-env              print the app accessibility exports\n\
          \x20 aether-shell --nohang-check <log|->  verify the no-hang markers and the G-NH2 bound\n\
          \x20 aether-shell --start-begin [log]     count a start (safe mode after 3 failed)\n\
          \x20 aether-shell --start-confirm         record that the session is ready\n\
@@ -96,6 +99,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 println!("AETHER_SHELL_RENDERED {name} -> {path}");
             }
             println!("AETHER_SHELL_RENDER_DONE");
+        }
+        Some("--render-a11y") => {
+            // F1 SHL-18 evidence: 150 % text and the focus ring.
+            let dir = args
+                .get(1)
+                .map(PathBuf::from)
+                .unwrap_or_else(|| PathBuf::from("screenshots"));
+            for (name, path) in render::render_a11y(&dir)? {
+                println!("AETHER_SHELL_RENDERED {name} -> {path}");
+            }
+            println!("AETHER_SHELL_RENDER_A11Y_DONE");
         }
         Some("--interactive") => {
             // G-NH2 / P4: the real shell host. The compositor journal is the
@@ -282,6 +296,37 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 ledger.attempts
             );
         }
+        Some("--a11y-status") => {
+            // F1 SHL-18: resolved accessibility switches, the focus indicator
+            // contract and the keyboard plan for every shell surface.
+            aether_ui::render::init()?;
+            let ui = ShellRoot::new()?;
+            let controller = ShellController::new(
+                ui,
+                Box::new(CommandServices::new()),
+                SettingsStore::at_default_location(),
+            );
+            print!("{}", controller.a11y_summary());
+        }
+        Some("--a11y-env") => {
+            // Sourced by the session launcher so apps follow the shell.
+            aether_ui::render::init()?;
+            let ui = ShellRoot::new()?;
+            let controller = ShellController::new(
+                ui,
+                Box::new(CommandServices::new()),
+                SettingsStore::at_default_location(),
+            );
+            let settings = controller.a11y();
+            println!(
+                "# a11y: reduce-motion={} text-scale={}%",
+                settings.reduce_motion,
+                settings.text_scale_percent()
+            );
+            for line in controller.a11y_env_lines() {
+                println!("export {line}");
+            }
+        }
         Some("--status") => {
             aether_ui::render::init()?;
             let ui = ShellRoot::new()?;
@@ -306,6 +351,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("effects-tier: {}", controller.effect_settings().requested.as_str());
             println!("effects-effective: {}", controller.effect_tier().as_str());
             println!("effects-env: {}", controller.effect_env_line());
+            println!("a11y-reduce-motion: {}", controller.a11y().reduce_motion);
+            println!("a11y-reduce-transparency: {}", controller.a11y().reduce_transparency);
+            println!("a11y-text-scale: {}%", controller.a11y().text_scale_percent());
+            println!("a11y-motion-ms: {}", controller.a11y().motion_ms());
+            println!("keyboard-focus: {}", controller.focus().line());
             println!("safe-mode: {}", controller.safe_mode());
             println!("start-attempts: {}", controller.startup().attempts);
             let nohang = controller

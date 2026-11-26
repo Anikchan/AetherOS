@@ -116,6 +116,50 @@ pub fn specs() -> Vec<SurfaceSpec> {
     ]
 }
 
+/// Render the accessibility evidence frames (F1 SHL-18, design D1 §9):
+/// 150 % text on the control centre and the 2 px focus ring on a dock item.
+pub fn render_a11y(out_dir: &Path) -> Result<Vec<(String, String)>, String> {
+    aether_ui::render::init()?;
+    std::fs::create_dir_all(out_dir)
+        .map_err(|error| format!("cannot create {}: {error}", out_dir.display()))?;
+
+    let ui = ShellRoot::new().map_err(|error| format!("create a11y shell: {error}"))?;
+    let store = SettingsStore::new(std::env::temp_dir().join("aether-shell-render-a11y"));
+    let controller = ShellController::with_demo_content(
+        ui,
+        Box::new(MockServices::with_battery(84, false)),
+        store,
+    );
+    controller.set_text_scale(150);
+
+    let mut written = Vec::new();
+    let mut write = |name: &str, width: u32, height: u32| -> Result<(), String> {
+        let path = out_dir.join(format!("{name}.png"));
+        let frame = aether_ui::render::render_png(controller.ui(), width, height, &path)?;
+        written.push((
+            name.to_string(),
+            format!("{} ({}x{})", path.display(), frame.width, frame.height),
+        ));
+        Ok(())
+    };
+
+    // Focus ring: Tab once reaches the dock and draws the 2 px accent outline.
+    controller.open(Overlay::None);
+    controller.handle_key("tab");
+    write("shell-a11y-focus-dock", 1440, 900)?;
+
+    // 150 % and 200 % text: the control centre, its tiles and rows scale with
+    // the tokens (the settings page scrolls, so it is checked in the test).
+    controller.open(Overlay::ControlCenter);
+    write("shell-a11y-text-150", 1440, 900)?;
+    controller.set_text_scale(200);
+    write("shell-a11y-text-200", 1440, 900)?;
+    controller.settings_category(Category::Appearance);
+    write("shell-a11y-settings-200", 1440, 900)?;
+
+    Ok(written)
+}
+
 /// Render every surface into `out_dir`. Returns `(name, path)` pairs.
 pub fn render_all(out_dir: &Path) -> Result<Vec<(String, String)>, String> {
     aether_ui::render::init()?;

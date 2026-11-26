@@ -11,13 +11,15 @@ use std::rc::Rc;
 use std::time::Instant;
 
 use crate::IconKind;
-use slint::{Model, ModelRc, VecModel};
+use slint::{ComponentHandle, Model, ModelRc, VecModel};
 
+use crate::a11y::{self, A11ySettings};
 use crate::auth::{self, AuthOutcome, Authenticator};
 use crate::config::{self, Category, SettingKind, SettingsStore};
 use crate::desktop;
 use crate::effects::{self, EffectSettings};
 use crate::features::FeaturesPage;
+use crate::kbdnav::{self, Focus, Surface, Tray};
 use crate::model::{self, Notification, Overlay, PowerMode, SearchKind, ShellState, Window};
 use crate::nohang::{self, DialogAction, DialogEvent, HangEvent, NoHangDialog, StartLedger, StartOutcome};
 use crate::services::{Battery, Services};
@@ -159,6 +161,10 @@ pub struct ShellController {
     features: RefCell<FeaturesPage>,
     /// Effect tier: the persisted request and the resolved tier (P4-T04).
     effects: RefCell<EffectSettings>,
+    /// F1 SHL-18: reduce motion, reduce transparency and text scaling.
+    a11y: RefCell<A11ySettings>,
+    /// F1 SHL-18: keyboard focus (surface + item) and ring visibility.
+    keyboard: RefCell<Focus>,
     /// G-NH2: the "Not responding" dialog (P3-T08 markers).
     nohang: RefCell<NoHangDialog>,
     /// G-NH2: consecutive starts / safe mode, persisted across restarts.
@@ -182,6 +188,8 @@ impl ShellController {
         let features_path = store.root().join("features").join("features.toml");
         // P4-T04: the effect tier is a settings value the control centre owns.
         let effects = EffectSettings::load(&store);
+        // F1 SHL-18: the accessibility switches share `theme/tokens.toml`.
+        let a11y = A11ySettings::load(&store);
         // G-NH2: read-only here; `--start-begin` owns the counting so a render
         // or `--status` never looks like a shell start.
         let startup = StartLedger::load(&StartLedger::path(&store));
@@ -194,6 +202,8 @@ impl ShellController {
             authenticator: RefCell::new(auth::default_authenticator()),
             features: RefCell::new(FeaturesPage::load(features_path)),
             effects: RefCell::new(effects),
+            a11y: RefCell::new(a11y),
+            keyboard: RefCell::new(Focus::default()),
             nohang: RefCell::new(NoHangDialog::with_default_grace()),
             startup: RefCell::new(startup),
             log: RefCell::new(Vec::new()),
@@ -538,6 +548,27 @@ impl ShellController {
             self.ui
                 .set_effects_tier(effective.as_str().into());
             self.ui.set_effects_note(effects.subtitle().into());
+        }
+        // F1 SHL-18: text scaling and reduce motion reach every widget through
+        // the Tokens globals (`ui/design.slint`).
+        {
+            let a11y = self.a11y.borrow();
+            self.ui.set_text_scale(a11y.text_scale);
+            self.ui.set_reduce_motion(a11y.reduce_motion);
+            let tokens = self.ui.global::<crate::Tokens>();
+            tokens.set_text_scale(a11y.text_scale);
+            tokens.set_reduce_motion(a11y.reduce_motion);
+        }
+        // F1 SHL-18: keyboard focus (surface + item). The index is clamped to
+        // the current list so a shrinking dock or launcher never leaves focus
+        // on a missing item.
+        {
+            let counts = kbdnav::counts(&state, menus_for().len());
+            let mut focus = self.keyboard.borrow_mut();
+            focus.clamp(&counts);
+            self.ui.set_focus_surface(focus.surface.code());
+            self.ui.set_focus_index(focus.index as i32);
+            self.ui.set_focus_visible(focus.visible);
         }
         // G-NH2: the "Not responding" dialog and the safe-mode banner.
         {
@@ -955,7 +986,36 @@ impl ShellController {
         if overlay == Overlay::Settings {
             self.refresh_settings_rows();
         }
+        self.focus_overlay();
         self.sync();
+    }
+
+    /// F1 SHL-18: an opened surface takes the keyboard focus, and a closed one
+    /// returns it to the menu bar. Visibility stays as it was, so a mouse-only
+    /// session draws no ring until the first Tab.
+    fn focus_overlay(&self) {
+        let overlay = self.state.borrow().overlay;
+        let mut focus = self.keyboard.borrow_mut();
+        match overlay {
+            Overlay::Launcher => {
+                focus.surface = Surface::Launcher;
+                focus.index = 0;
+            }
+            Overlay::ControlCenter => {
+                focus.surface = Surface::ControlCenter;
+                focus.index = 0;
+            }
+            Overlay::Notifications => {
+                focus.surface = Surface::Notifications;
+                focus.index = 0;
+            }
+            // No overlay (and Settings, overview, lock which are not one of the
+            // five navigable surfaces): the stop is the always-visible menu bar.
+            _ => {
+                focus.surface = Surface::Menubar;
+                focus.index = kbdnav::MENU_LOGO;
+            }
+        }
     }
 
     pub fn open_settings_category(&self, category: Category) {
@@ -1173,6 +1233,18 @@ impl ShellController {
         // Reduce transparency forces the Minimal tier (D1 section 9).
         if key == effects::SETTING_REDUCE_TRANSPARENCY {
             *self.effects.borrow_mut() = EffectSettings::load(&self.store);
+            *self.a11y.borrow_mut() = A11ySettings::load(&self.store);
+        }
+        // Reduce motion collapses slides to a 120 ms fade (D1 section 8).
+        if key == a11y::SETTING_REDUCE_MOTION {
+            let settings = A11ySettings::load(&self.store);
+            self.log.borrow_mut().push(format!(
+                "AETHER_SHELL_A11Y: reduce-motion={} text-scale={}% motion_ms={}",
+                settings.reduce_motion as u8,
+                settings.text_scale_percent(),
+                settings.motion_ms()
+            ));
+            *self.a11y.borrow_mut() = settings;
         }
         self.refresh_settings_rows();
         self.sync();
@@ -1227,6 +1299,16 @@ impl ShellController {
                         "effects tier={} source=settings",
                         self.effects.borrow().requested.as_str()
                     ));
+                }
+                if key == a11y::SETTING_TEXT_SCALE {
+                    // The Appearance row cycles 100 % → 200 %; the surfaces read
+                    // the clamped factor from the accessibility settings.
+                    let settings = A11ySettings::load(&self.store);
+                    self.log.borrow_mut().push(format!(
+                        "AETHER_SHELL_A11Y: text-scale={}% source=settings",
+                        settings.text_scale_percent()
+                    ));
+                    *self.a11y.borrow_mut() = settings;
                 }
             }
             SettingKind::Value => {
@@ -1361,23 +1443,300 @@ impl ShellController {
                 self.request_overlay(Overlay::None);
                 true
             }
-            "arrow-down" | "down" => {
-                self.state.borrow_mut().move_selection(1);
-                self.sync();
+            // F1 SHL-18: Tab/arrows/Enter/Space are the keyboard navigation
+            // entry point; the shell host feeds raw keysyms here too.
+            _ => self.handle_key(shortcut),
+        }
+    }
+
+    /// Keyboard navigation across the shell surfaces (F1 SHL-18, D1 section 9).
+    ///
+    /// Tab / Shift+Tab change surface, the arrows move and wrap inside one, and
+    /// Enter or Space activates the focused item through the same handler a
+    /// click uses. Returns `false` for keys the shell does not own so the
+    /// compositor can pass them to the focused app.
+    pub fn handle_key(&self, key: &str) -> bool {
+        let key = key.trim().to_ascii_lowercase();
+        let overlay = self.state.borrow().overlay;
+        match key.as_str() {
+            "tab" => {
+                let counts = self.keyboard_counts();
+                self.keyboard.borrow_mut().cycle(&counts, 1);
+                self.after_focus();
                 true
             }
-            "arrow-up" | "up" => {
-                self.state.borrow_mut().move_selection(-1);
-                self.sync();
+            "shift+tab" | "backtab" => {
+                let counts = self.keyboard_counts();
+                self.keyboard.borrow_mut().cycle(&counts, -1);
+                self.after_focus();
                 true
             }
-            "enter" | "return" => {
-                let selected = self.state.borrow().search_selected;
-                self.accept_search(selected);
+            "left" | "arrow-left" => {
+                self.step_focus(-1);
+                true
+            }
+            "right" | "arrow-right" => {
+                self.step_focus(1);
+                true
+            }
+            "up" | "arrow-up" | "down" | "arrow-down" => {
+                let delta = if key.contains("up") { -1 } else { 1 };
+                if overlay == Overlay::Launcher {
+                    // The launcher keeps its own selection; Enter opens it and
+                    // the focus ring follows the highlighted row.
+                    self.state.borrow_mut().move_selection(delta);
+                    let selected = self.state.borrow().search_selected;
+                    let mut focus = self.keyboard.borrow_mut();
+                    focus.surface = Surface::Launcher;
+                    focus.index = selected;
+                    focus.visible = true;
+                    drop(focus);
+                    self.sync();
+                } else {
+                    self.step_focus(delta);
+                }
+                true
+            }
+            "enter" | "return" | "space" => {
+                self.activate_focus();
+                true
+            }
+            "escape" | "esc" => {
+                self.request_overlay(Overlay::None);
                 true
             }
             _ => false,
         }
+    }
+
+    fn step_focus(&self, delta: i32) {
+        let surface = self.keyboard.borrow().surface;
+        let count = self
+            .keyboard_counts()
+            .into_iter()
+            .find(|(candidate, _)| *candidate == surface)
+            .map(|(_, count)| count)
+            .unwrap_or(0);
+        self.keyboard.borrow_mut().move_within(count, delta);
+        self.after_focus();
+    }
+
+    fn after_focus(&self) {
+        self.sync();
+        let line = self.keyboard.borrow().line();
+        self.log.borrow_mut().push(line);
+    }
+
+    /// Focusable counts per surface, in Tab order.
+    pub fn keyboard_counts(&self) -> Vec<(Surface, usize)> {
+        let state = self.state.borrow();
+        kbdnav::counts(&state, menus_for().len())
+    }
+
+    /// The current keyboard focus (tests and the host log).
+    pub fn focus(&self) -> Focus {
+        *self.keyboard.borrow()
+    }
+
+    /// `--a11y-status` keyboard section: one line per surface.
+    pub fn keyboard_plan(&self) -> String {
+        let focus = self.focus();
+        let mut out = String::new();
+        for (surface, count) in self.keyboard_counts() {
+            let marker = if surface == focus.surface { " *" } else { "" };
+            out.push_str(&format!(
+                "A11Y_KEYBOARD: surface={} items={}{marker}\n",
+                surface.as_str(),
+                count
+            ));
+        }
+        out
+    }
+
+    /// Enter/Space on the focused item: the same handlers the pointer uses.
+    fn activate_focus(&self) {
+        let focus = self.focus();
+        match focus.surface {
+            Surface::Menubar => self.activate_menubar(focus.index),
+            Surface::Dock => {
+                let id = {
+                    let state = self.state.borrow();
+                    state.dock_apps().get(focus.index).map(|app| app.id.clone())
+                };
+                if let Some(id) = id {
+                    self.dock_chosen(&id);
+                }
+            }
+            Surface::Launcher => {
+                if focus.index < self.state.borrow().search_results.len() {
+                    self.accept_search(focus.index);
+                }
+            }
+            Surface::ControlCenter => self.activate_control_center(focus.index),
+            Surface::Notifications => self.activate_notification(focus.index),
+        }
+    }
+
+    fn activate_menubar(&self, index: usize) {
+        let menus = menus_for();
+        if index == kbdnav::MENU_LOGO {
+            self.request_overlay(Overlay::Settings);
+            return;
+        }
+        if index >= 1 && index <= menus.len() {
+            let open = (index - 1) as i32;
+            self.ui.set_menu_open(open);
+            self.log
+                .borrow_mut()
+                .push(format!("keyboard menu={}", menus[index - 1].title));
+            self.sync();
+            return;
+        }
+        let tray = index - kbdnav::tray_start(menus.len());
+        match Tray::ALL.get(tray) {
+            Some(Tray::Wifi) => {
+                let value = !self.state.borrow().wifi;
+                self.quick_toggle("wifi", value);
+            }
+            Some(Tray::Bluetooth) => {
+                let value = !self.state.borrow().bluetooth;
+                self.quick_toggle("bluetooth", value);
+            }
+            Some(Tray::Sound) | Some(Tray::Battery) => {
+                self.request_overlay(Overlay::ControlCenter);
+            }
+            Some(Tray::Notifications) => self.request_overlay(Overlay::Notifications),
+            Some(Tray::Clock) => {
+                self.log.borrow_mut().push("keyboard clock".to_string());
+            }
+            None => {}
+        }
+    }
+
+    fn activate_control_center(&self, index: usize) {
+        use kbdnav::control_center as item;
+        match index {
+            item::WIFI => {
+                let value = !self.state.borrow().wifi;
+                self.quick_toggle("wifi", value);
+            }
+            item::BLUETOOTH => {
+                let value = !self.state.borrow().bluetooth;
+                self.quick_toggle("bluetooth", value);
+            }
+            item::FOCUS => {
+                let value = !self.state.borrow().focus_active();
+                self.quick_toggle("focus", value);
+            }
+            item::NIGHT_LIGHT => {
+                let value = !self.state.borrow().night_light;
+                self.quick_toggle("night-light", value);
+            }
+            item::VOLUME => {
+                // Enter nudges a slider by 10 % and wraps at the top.
+                let value = self.state.borrow().volume;
+                self.apply_volume(if value >= 0.95 { 0.0 } else { value + 0.1 });
+            }
+            item::BRIGHTNESS => {
+                let value = self.state.borrow().brightness;
+                self.apply_brightness(if value >= 0.95 { 0.0 } else { value + 0.1 });
+            }
+            item::POWER_MODE => {
+                let next = self.state.borrow().power_mode.next();
+                self.apply_power_mode(next.as_str());
+            }
+            item::EFFECTS => {
+                let next = effects::next(self.effects.borrow().requested);
+                self.apply_effect_tier(next.as_str());
+            }
+            item::SETTINGS => self.request_overlay(Overlay::Settings),
+            item::LOCK => self.request_overlay(Overlay::Lock),
+            _ => {}
+        }
+    }
+
+    fn activate_notification(&self, index: usize) {
+        if index == kbdnav::NOTIFICATIONS_CLEAR_ALL {
+            self.state.borrow_mut().clear_notifications();
+            self.sync();
+            return;
+        }
+        let notifications: Vec<String> = self
+            .state
+            .borrow()
+            .visible_notifications()
+            .iter()
+            .map(|notification| notification.id.clone())
+            .collect();
+        if let Some(id) = notifications.get(index - 1) {
+            // Enter marks the card read; the dismiss button is the mouse path.
+            self.state.borrow_mut().mark_read(id);
+            self.sync();
+            return;
+        }
+        // Last item: Focus settings.
+        self.open_settings_category(Category::Notifications);
+    }
+
+    // -------------------------------------------------------- accessibility ---
+
+    /// F1 SHL-18: resolved reduce-motion / reduce-transparency / text scale.
+    pub fn a11y(&self) -> A11ySettings {
+        *self.a11y.borrow()
+    }
+
+    /// Change the text scale (clamped to 100 – 200 %), persist it and resync.
+    pub fn set_text_scale(&self, percent: u32) {
+        match A11ySettings::save_text_scale(&self.store, percent) {
+            Ok(settings) => {
+                self.log.borrow_mut().push(format!(
+                    "AETHER_SHELL_A11Y: text-scale={}% motion_ms={}",
+                    settings.text_scale_percent(),
+                    settings.motion_ms()
+                ));
+                *self.a11y.borrow_mut() = settings;
+            }
+            Err(error) => self.log.borrow_mut().push(format!("a11y: {error}")),
+        }
+        self.refresh_settings_rows();
+        self.sync();
+    }
+
+    /// Toggle reduce motion, persist it and resync (slides collapse to a fade).
+    pub fn set_reduce_motion(&self, reduce_motion: bool) {
+        match A11ySettings::save_reduce_motion(&self.store, reduce_motion) {
+            Ok(settings) => {
+                self.log.borrow_mut().push(format!(
+                    "AETHER_SHELL_A11Y: reduce-motion={} slide_ms={} fade_ms={}",
+                    settings.reduce_motion as u8,
+                    settings.slide_ms(),
+                    settings.fade_ms()
+                ));
+                *self.a11y.borrow_mut() = settings;
+            }
+            Err(error) => self.log.borrow_mut().push(format!("a11y: {error}")),
+        }
+        self.refresh_settings_rows();
+        self.sync();
+    }
+
+    /// Environment lines the session launcher exports for apps.
+    pub fn a11y_env_lines(&self) -> Vec<String> {
+        self.a11y.borrow().env_lines()
+    }
+
+    /// `--a11y-status`: settings summary plus the keyboard plan. The OK marker
+    /// closes the whole report (the settings summary carries its own).
+    pub fn a11y_summary(&self) -> String {
+        let mut out = self.a11y.borrow().summary();
+        if let Some(position) = out.rfind("AETHER_SHELL_A11Y_OK") {
+            out.truncate(position);
+        }
+        out.push_str(&self.keyboard_plan());
+        out.push_str(&self.focus().line());
+        out.push('\n');
+        out.push_str("AETHER_SHELL_A11Y_OK\n");
+        out
     }
 
     /// Items currently rendered in the launcher (used by tests).

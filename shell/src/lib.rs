@@ -9,6 +9,9 @@
 //! * [`config`] — F4 settings schema and layered TOML persistence.
 //! * [`effects`] — effect-tier control and the compositor's tier/frame markers
 //!   (P4-T04 ↔ P3-T05).
+//! * `a11y` — accessibility settings: reduce motion, reduce transparency and
+//!   text scaling (F1 SHL-18).
+//! * `kbdnav` — keyboard focus across the shell surfaces (F1 SHL-18).
 //! * [`desktop`] — `.desktop` discovery for the dock and the launcher.
 //! * [`services`] — nmcli / bluetoothctl / wpctl / brightnessctl / sysfs battery
 //!   adapters, with a mock for tests.
@@ -32,6 +35,7 @@
 slint::include_modules!();
 
 pub mod app;
+pub mod a11y;
 pub mod auth;
 pub mod config;
 pub mod desktop;
@@ -40,6 +44,7 @@ pub mod features;
 pub mod greetd;
 pub mod greeter;
 pub mod host;
+pub mod kbdnav;
 pub mod layers;
 pub mod greeter_app;
 pub mod model;

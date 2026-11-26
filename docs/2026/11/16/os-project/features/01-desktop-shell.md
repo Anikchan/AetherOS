@@ -65,6 +65,7 @@ Priority key: MVP (needed for the first daily-driver build), v1 (needed for rele
 | SHL-AC-09 | Every settings category opens and every change is written to the config file | Implemented, headless-verified — categories switch the page (clicked in the test), rows are generated from the F4 schema, each shows file+key, and writes are atomic and read back from disk |
 | SHL-AC-10 | Two monitors with different scales work without restart | Partially verified (headless, 2026-11-26) — the compositor's `p3_t02_headless` test asserts two outputs at 1× and 1.5× including the logical layout, and the shell verifies the configure size per output with `aether-shell --host-check` (menubar 1920×28 on a 1.5×/1920-logical panel). Live re-scale on a real second monitor pending the on-device run |
 | SHL-AC-11 | Screen reader announces menu bar items and launcher results | Partially verified — every interactive element sets an accessible role/label (asserted by the headless tests); AT-SPI session pending |
+| SHL-AC-12 | Reduce motion, reduce transparency and text scale apply to every shell surface; every shell surface is reachable by keyboard and the focus indicator is always visible | Implemented, headless-verified (2026-11-27) — `theme.reduce-motion` collapses slides to a 120 ms fade, `theme.reduce-transparency` forces Minimal (SHL-AC-07) and `theme.text-scale` (100–200 %) scales the font tokens, menu bar and row heights; Tab/Shift+Tab reach the menu bar, dock, launcher, control centre and notifications with a 2 px accent ring. On-device visual confirmation and AT-SPI announcement pending |
 
 Evidence: `docs/2026/11/23/results/p4-shell-and-apps.md` and
 `docs/2026/11/23/results/screenshots/`.
@@ -86,6 +87,9 @@ Status values: Not tested, Pass (date and evidence), Fail (ticket ID).
   (notifications), Super+C (control centre), Super+L (lock), Super+F (Focus),
   arrows + Enter in the launcher, Esc closes any overlay. Names match the
   `input/keybindings.toml` keys.
+- Keyboard navigation (SHL-18): Tab/Shift+Tab move between the menu bar, dock,
+  launcher, control centre and notifications; arrows wrap inside a surface;
+  Enter/Space activate; the focused item shows a 2 px accent ring (see §13).
 - The on-device gate for this document's acceptance table is the layer-shell
   host from P3-T02 plus greetd/PAM for the lock screen.
 
@@ -289,5 +293,64 @@ Hardware-gated: the layer-shell `Platform` that maps these surfaces on a real
 output, and the compositor's side of the terminate intent, still need the image;
 the loop itself, the ledger and every marker are covered headlessly. Evidence:
 `docs/2026/11/27/results/g-nh2-shell-host.md`.
+
+## 13. Accessibility: motion, transparency, text scale, keyboard (SHL-18, 2026-11-27)
+
+Design D1 sections 8–9 define the contract; `shell/src/a11y.rs` resolves it and
+`shell/src/kbdnav.rs` owns keyboard navigation. Three settings keys, all in
+`theme/tokens.toml`, drive the surfaces:
+
+| Key | Values | Effect |
+| --- | --- | --- |
+| `theme.reduce-motion` | `true` / `false` | Slides and spring-like moves collapse to `0 ms`; every remaining transition is a **120 ms fade** (`motion-slide`, `motion-base`, `motion-fade` in `ui/design.slint`) |
+| `theme.reduce-transparency` | `true` / `false` | Forces the **Minimal** glass tier over any requested tier (SHL-AC-07, D1 §9) |
+| `theme.text-scale` | `100%` … `200%` (25 % steps, arbitrary values clamped) | Scales every font token, the menu bar height and the row heights the shell owns |
+
+- **One token binding.** `ui/design.slint` computes `font-*` and
+  `menubar-height` from `Tokens.text-scale` and `motion-*` from
+  `Tokens.reduce-motion`; `ShellController::sync` sets both globals
+  (`ui.global::<Tokens>()`), so no surface threads accessibility properties by
+  hand. A fresh shell reads the persisted values before the first frame.
+- **Settings app.** `Appearance` gains a "Text scale" select row next to
+  "Reduce motion"; both write the same keys the control centre and the CLI read,
+  so the settings app, the session environment and the harness agree.
+- **Keyboard navigation.** Tab / Shift+Tab move between the menu bar, dock,
+  launcher, control centre and notifications (empty surfaces are skipped); the
+  arrows move and wrap inside one surface; Enter/Space activate the focused item
+  through the same handler as a click; Escape closes the overlay. In the
+  launcher the arrows move the search selection and the focus ring follows it.
+  Enter on a notification marks it read (the dismiss button stays the mouse
+  path); Enter on a settings value cycles it; Enter on a slider nudges it 10 %.
+- **Focus indicator.** Exactly one item is focused; the focused widget draws the
+  D1 §9 outline — `Tokens.focus-ring` (2 px) in `Tokens.focus-ring-color`
+  (`#4C8DFF`) — and exposes `accessible-description: "Focused"` so AT-SPI and
+  the headless tests see the same state. The shell reports
+  `focus-ring-width` / `focus-ring-color` on `ShellRoot` so the harness can
+  assert the contract without reading pixels.
+
+```sh
+aether-shell --a11y-status                     # resolved settings + keyboard plan
+eval "$(aether-shell --a11y-env)"              # export AETHER_SHELL_* for apps
+aether-shell --render-a11y <dir>               # 150 %/200 % and focus-ring evidence
+cargo test -p aether-shell --lib a11y          # 6 unit tests (settings, clamp, markers)
+cargo test -p aether-shell --lib kbdnav        # 5 unit tests (order, wrap, skip)
+cargo test -p aether-shell --test a11y         # 2 command tests (status + env)
+cargo test -p aether-shell --test a11y_ui      # settings + keyboard + focus ring in the widget tree
+```
+
+Environment contract for apps (the shell publishes, the app honours):
+
+| Variable | Meaning |
+| --- | --- |
+| `AETHER_SHELL_REDUCE_MOTION` | `1` when motion is reduced |
+| `AETHER_SHELL_REDUCE_TRANSPARENCY` | `1` when panels must be solid |
+| `AETHER_SHELL_TEXT_SCALE` | factor, `1.00`–`2.00` |
+| `AETHER_SHELL_MOTION_MS` / `_FADE_MS` | resolved durations |
+| `AETHER_SHELL_FOCUS_RING_PX` | always `2` |
+
+Status: headless-verified on the development host at 100–200 % and with motion
+reduced. Hardware-gated: the visual check of the ring and the 2× layout on the
+Dell panel, plus the AT-SPI announcement of the focused item (needs the image's
+AT-SPI session). Evidence: `docs/2026/11/27/results/shl-18-accessibility.md`.
 
 

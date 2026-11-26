@@ -107,23 +107,39 @@ export global Tokens {
     out property <length> radius-button: 8px;
     out property <length> radius-pill: 999px;
 
-    out property <length> menubar-height: 28px;
+    out property <length> menubar-height: 28px * text-scale;
     out property <length> dock-height: 64px;
     out property <length> titlebar-height: 38px;
     out property <length> controlcenter-width: 340px;
     out property <length> notification-width: 360px;
     out property <length> launcher-width: 640px;
 
-    out property <length> font-body: 13px;
-    out property <length> font-small: 11px;
-    out property <length> font-title: 15px;
-    out property <length> font-large: 20px;
-    out property <length> font-hero: 28px;
+    // Accessibility (F1 SHL-18, design D1 section 9). The shell binds both from
+    // its settings; every widget reads the resulting tokens, so one switch
+    // reaches every surface without threading properties through each panel.
+    in-out property <bool> reduce-motion: false;
+    in-out property <float> text-scale: 1.0;
+
+    // Text scaling: 100 % to 200 % (D1 section 9). The shell clamps the value
+    // before pushing it here.
+    out property <length> font-body: 13px * text-scale;
+    out property <length> font-small: 11px * text-scale;
+    out property <length> font-title: 15px * text-scale;
+    out property <length> font-large: 20px * text-scale;
+    out property <length> font-hero: 28px * text-scale;
     out property <string> font-family: "Inter";
     out property <string> font-family-mono: "JetBrains Mono";
 
     out property <duration> motion-fast: 120ms;
-    out property <duration> motion-base: 180ms;
+    out property <duration> motion-base: reduce-motion ? 120ms : 180ms;
+    // Reduce motion replaces movement with a fade (D1 section 8): slides and
+    // spring-like moves collapse, the fade keeps its 120 ms duration.
+    out property <duration> motion-slide: reduce-motion ? 0ms : 180ms;
+    out property <duration> motion-fade: 120ms;
+
+    // Focus indicator: 2 px accent outline, always visible (D1 section 9).
+    out property <length> focus-ring: 2px;
+    out property <color> focus-ring-color: accent;
 
     // 4 px grid (D1 section 3).
     public pure function space(n: int) -> length {
@@ -270,6 +286,8 @@ export component AetherButton inherits Rectangle {
     in property <bool> enabled: true;
     in property <IconKind> icon: IconKind.info;
     in property <bool> show-icon: false;
+    // Keyboard focus indicator (D1 section 9): a 2 px accent outline.
+    in property <bool> focus-ring: false;
     callback clicked();
 
     height: 32px;
@@ -278,8 +296,8 @@ export component AetherButton inherits Rectangle {
     background: !enabled ? Tokens.surface-high.with-alpha(0.5)
         : primary ? (ta.pressed ? Tokens.accent-strong : (ta.has-hover ? Tokens.accent-strong : Tokens.accent))
         : (ta.pressed ? Tokens.pressed : (ta.has-hover ? Tokens.hover : Tokens.surface-high));
-    border-width: primary ? 0px : 1px;
-    border-color: Tokens.divider;
+    border-width: root.focus-ring ? Tokens.focus-ring : (primary ? 0px : 1px);
+    border-color: root.focus-ring ? Tokens.focus-ring-color : Tokens.divider;
     accessible-role: button;
     accessible-label: root.text;
     accessible-enabled: root.enabled;
@@ -320,12 +338,15 @@ export component IconButton inherits Rectangle {
     in property <bool> enabled: true;
     in property <length> button-size: 24px;
     in property <length> icon-size: 15px;
+    in property <bool> focus-ring: false;
     callback clicked();
 
     width: button-size;
     height: button-size;
     border-radius: Tokens.radius-button;
     background: ta.pressed ? Tokens.pressed : (root.toggled ? Tokens.accent-soft : (ta.has-hover ? Tokens.hover : transparent));
+    border-width: root.focus-ring ? Tokens.focus-ring : 0px;
+    border-color: Tokens.focus-ring-color;
     accessible-role: button;
     accessible-label: root.label;
     accessible-enabled: root.enabled;
@@ -369,7 +390,7 @@ export component ToggleSwitch inherits Rectangle {
         x: root.checked ? root.width - self.width - 2px : 2px;
         border-radius: Tokens.radius-pill;
         background: root.checked ? Tokens.text : Tokens.text-muted;
-        animate x { duration: Tokens.motion-base; easing: ease-out; }
+        animate x { duration: Tokens.motion-slide; easing: ease-out; }
     }
 
     ta := TouchArea {
@@ -385,9 +406,13 @@ export component AetherSlider inherits Rectangle {
     in-out property <float> value: 0.5;
     in property <string> label: "";
     in property <bool> enabled: true;
+    in property <bool> focus-ring: false;
     callback changed(float);
 
     height: 20px;
+    border-radius: Tokens.radius-button;
+    border-width: root.focus-ring ? Tokens.focus-ring : 0px;
+    border-color: Tokens.focus-ring-color;
     accessible-role: slider;
     accessible-label: root.label;
     accessible-value: root.value * 100;
@@ -433,13 +458,14 @@ export component AetherSlider inherits Rectangle {
 export component SegmentedControl inherits Rectangle {
     in property <[string]> items: [];
     in-out property <int> current: 0;
+    in property <bool> focus-ring: false;
     callback selected(int);
 
     height: 28px;
     background: Tokens.surface-low;
     border-radius: Tokens.radius-button;
-    border-width: 1px;
-    border-color: Tokens.divider;
+    border-width: root.focus-ring ? Tokens.focus-ring : 1px;
+    border-color: root.focus-ring ? Tokens.focus-ring-color : Tokens.divider;
 
     HorizontalLayout {
         padding: 2px;
@@ -475,7 +501,7 @@ export component SearchField inherits Rectangle {
     callback edited(string);
     callback accepted();
 
-    height: 40px;
+    height: 40px * Tokens.text-scale;
     background: Tokens.surface-low;
     border-radius: Tokens.radius-button;
     border-width: 1px;
@@ -513,7 +539,7 @@ export component ListRow inherits Rectangle {
     in property <bool> selected: false;
     callback clicked();
 
-    height: 36px;
+    height: 36px * Tokens.text-scale;
     border-radius: Tokens.radius-button;
     background: root.selected ? Tokens.accent-soft : (ta.has-hover ? Tokens.hover : transparent);
     accessible-role: list-item;
@@ -601,7 +627,7 @@ export component MenuItem inherits Rectangle {
     in property <bool> enabled: true;
     callback clicked();
 
-    height: 28px;
+    height: 28px * Tokens.text-scale;
     border-radius: 6px;
     background: ta.has-hover ? Tokens.accent : transparent;
     accessible-role: list-item;

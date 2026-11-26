@@ -16,6 +16,10 @@ import {
     Pill, Divider, SectionLabel, MenuItem,
 } from "../../ui/design.slint";
 
+// Re-exported so the Rust side can set the accessibility tokens
+// (`ui.global::<Tokens>()`) when the settings change (F1 SHL-18).
+export { Tokens } from "../../ui/design.slint";
+
 export struct AppEntry {
     id: string,
     name: string,
@@ -198,6 +202,11 @@ export component Menubar inherits Rectangle {
     in property <bool> charging: false;
     in property <string> unread: "";
     in property <GlassTier> tier: GlassTier.full;
+    // Keyboard focus (F1 SHL-18): the shell host moves `focus-index` across
+    // the logo, the menu titles and the tray; the focused item shows the 2 px
+    // accent ring from design D1 section 9.
+    in property <int> focus-index: -1;
+    in property <bool> focus-visible: false;
     in-out property <int> open-menu: -1;
 
     callback menu-clicked(int, int);
@@ -224,6 +233,8 @@ export component Menubar inherits Rectangle {
             height: 20px;
             border-radius: 6px;
             background: @linear-gradient(135deg, Tokens.accent 0%, #8B6CFF 100%);
+            border-width: root.focus-visible && root.focus-index == 0 ? Tokens.focus-ring : 0px;
+            border-color: Tokens.focus-ring-color;
             accessible-role: button;
             accessible-label: "AetherOS menu";
             logo-ta := TouchArea {
@@ -253,6 +264,8 @@ export component Menubar inherits Rectangle {
             width: menu-text.preferred-width + 12px;
             border-radius: 5px;
             background: menu-ta.has-hover || root.open-menu == idx + 1 ? Tokens.hover : transparent;
+            border-width: root.focus-visible && root.focus-index == idx + 1 ? Tokens.focus-ring : 0px;
+            border-color: Tokens.focus-ring-color;
             accessible-role: button;
             accessible-label: group.title;
             menu-text := Text {
@@ -276,6 +289,7 @@ export component Menubar inherits Rectangle {
             label: root.wifi ? "Wi-Fi on" : "Wi-Fi off";
             button-size: 20px;
             icon-size: 14px;
+            focus-ring: root.focus-visible && root.focus-index == root.menus.length + 1;
             clicked => { root.tray-clicked("wifi"); }
         }
         IconButton {
@@ -283,6 +297,7 @@ export component Menubar inherits Rectangle {
             label: root.bluetooth ? "Bluetooth on" : "Bluetooth off";
             button-size: 20px;
             icon-size: 14px;
+            focus-ring: root.focus-visible && root.focus-index == root.menus.length + 2;
             clicked => { root.tray-clicked("bluetooth"); }
         }
         IconButton {
@@ -290,12 +305,15 @@ export component Menubar inherits Rectangle {
             label: "Sound";
             button-size: 20px;
             icon-size: 14px;
+            focus-ring: root.focus-visible && root.focus-index == root.menus.length + 3;
             clicked => { root.tray-clicked("sound"); }
         }
         Rectangle {
             width: 28px;
             height: 20px;
             border-radius: 5px;
+            border-width: root.focus-visible && root.focus-index == root.menus.length + 4 ? Tokens.focus-ring : 0px;
+            border-color: Tokens.focus-ring-color;
             background: battery-ta.has-hover ? Tokens.hover : transparent;
             accessible-role: button;
             accessible-label: "Battery " + root.battery + "%";
@@ -320,6 +338,8 @@ export component Menubar inherits Rectangle {
             width: 22px;
             height: 20px;
             border-radius: 5px;
+            border-width: root.focus-visible && root.focus-index == root.menus.length + 5 ? Tokens.focus-ring : 0px;
+            border-color: Tokens.focus-ring-color;
             background: bell-ta.has-hover ? Tokens.hover : transparent;
             accessible-role: button;
             accessible-label: "Notifications";
@@ -338,14 +358,23 @@ export component Menubar inherits Rectangle {
             bell-ta := TouchArea { clicked => { root.tray-clicked("notifications"); } }
         }
         Rectangle { width: 4px; background: transparent; }
-        Text {
-            text: root.clock;
-            color: Tokens.text;
-            font-size: Tokens.font-small;
-            font-weight: 600;
-            vertical-alignment: center;
+        Rectangle {
+            width: clock-text.preferred-width + 8px;
+            height: 20px;
+            border-radius: 5px;
+            border-width: root.focus-visible && root.focus-index == root.menus.length + 6 ? Tokens.focus-ring : 0px;
+            border-color: Tokens.focus-ring-color;
             accessible-role: button;
             accessible-label: "Clock " + root.clock;
+            clock-text := Text {
+                text: root.clock;
+                color: Tokens.text;
+                font-size: Tokens.font-small;
+                font-weight: 600;
+                vertical-alignment: center;
+                horizontal-alignment: center;
+                width: parent.width;
+            }
         }
     }
 
@@ -385,6 +414,8 @@ export component Dock inherits Rectangle {
     in property <[AppEntry]> apps: [];
     in property <bool> auto-hide: true;
     in property <GlassTier> tier: GlassTier.full;
+    in property <int> focus-index: -1;
+    in property <bool> focus-visible: false;
     in-out property <bool> hovered: false;
 
     callback app-clicked(string);
@@ -397,7 +428,9 @@ export component Dock inherits Rectangle {
     border-color: Tokens.glass-edge;
     drop-shadow-blur: 24px;
     drop-shadow-color: #00000044;
-    animate y { duration: Tokens.motion-base; easing: ease-out; }
+    // Reduce motion (D1 section 8): the slide collapses to a 120 ms fade.
+    animate y { duration: Tokens.motion-slide; easing: ease-out; }
+    animate opacity { duration: Tokens.motion-fade; }
 
     // Hover sensor, declared first so it sits under the app buttons and never
     // swallows their clicks; the layer-shell host feeds pointer enter/leave too.
@@ -408,13 +441,14 @@ export component Dock inherits Rectangle {
     HorizontalLayout {
         padding: 8px;
         spacing: 10px;
-        for app in root.apps : Rectangle {
+        for app[idx] in root.apps : Rectangle {
             width: 56px;
             height: 48px;
             background: transparent;
             accessible-role: button;
             accessible-label: app.name;
-            accessible-description: app.running ? "Running" : "Not running";
+            accessible-description: (root.focus-visible && root.focus-index == idx ? "Focused. " : "")
+                + (app.running ? "Running" : "Not running");
 
             Rectangle {
                 x: 4px;
@@ -423,8 +457,8 @@ export component Dock inherits Rectangle {
                 height: 48px;
                 border-radius: 12px;
                 background: ta.has-hover ? Tokens.hover : Tokens.surface-high.with-alpha(0.7);
-                border-width: 1px;
-                border-color: Tokens.divider;
+                border-width: root.focus-visible && root.focus-index == idx ? Tokens.focus-ring : 1px;
+                border-color: root.focus-visible && root.focus-index == idx ? Tokens.focus-ring-color : Tokens.divider;
                 Icon {
                     kind: app.icon;
                     size: 24px;
@@ -471,13 +505,15 @@ export component Launcher inherits Rectangle {
     in-out property <string> query: "";
     in-out property <int> selected: 0;
     in property <GlassTier> tier: GlassTier.full;
+    in property <int> focus-index: -1;
+    in property <bool> focus-visible: false;
 
     callback edited(string);
     callback accepted(int);
     callback dismissed();
 
     width: Tokens.launcher-width;
-    height: 420px;
+    height: 420px + (Tokens.text-scale - 1) * 100px;
     border-radius: Tokens.radius-panel;
     background: Tokens.surface.with-alpha(0.94);
     border-width: 1px;
@@ -520,12 +556,15 @@ export component Launcher inherits Rectangle {
                     }
                 }
                 for result[idx] in root.results : Rectangle {
-                    height: 44px;
+                    height: 44px * Tokens.text-scale;
                     border-radius: Tokens.radius-button;
                     background: idx == root.selected ? Tokens.accent-soft : (row-ta.has-hover ? Tokens.hover : transparent);
+                    border-width: root.focus-visible && root.focus-index == idx ? Tokens.focus-ring : 0px;
+                    border-color: Tokens.focus-ring-color;
                     accessible-role: list-item;
                     accessible-label: result.title;
                     accessible-checked: idx == root.selected;
+                    accessible-description: root.focus-visible && root.focus-index == idx ? "Focused" : "";
 
                     HorizontalLayout {
                         padding-left: 10px;
@@ -592,16 +631,18 @@ component QuickTile inherits Rectangle {
     in property <IconKind> icon: IconKind.wifi;
     in property <bool> active: false;
     in property <string> label: "";
+    in property <bool> focused: false;
     callback toggled();
 
-    height: 64px;
+    height: 64px * Tokens.text-scale;
     border-radius: Tokens.radius-button;
     background: root.active ? Tokens.accent : Tokens.surface-high;
-    border-width: 1px;
-    border-color: root.active ? transparent : Tokens.divider;
+    border-width: root.focused ? Tokens.focus-ring : 1px;
+    border-color: root.focused ? Tokens.focus-ring-color : (root.active ? transparent : Tokens.divider);
     accessible-role: switch;
     accessible-label: root.label;
     accessible-checked: root.active;
+    accessible-description: root.focused ? "Focused" : "";
 
     VerticalLayout {
         padding: 10px;
@@ -642,6 +683,8 @@ export component ControlCenter inherits Rectangle {
     in property <GlassTier> tier: GlassTier.full;
     in property <string> effects-tier: "full";
     in property <string> effects-note: "";
+    in property <int> focus-index: -1;
+    in property <bool> focus-visible: false;
 
     callback toggled(string, bool);
     callback volume-changed(float);
@@ -651,8 +694,8 @@ export component ControlCenter inherits Rectangle {
     callback open-settings();
     callback lock();
 
-    width: Tokens.controlcenter-width;
-    height: 508px;
+    width: Tokens.controlcenter-width + (Tokens.text-scale - 1) * 140px;
+    height: 508px + (Tokens.text-scale - 1) * 140px;
     border-radius: Tokens.radius-panel;
     background: Tokens.surface.with-alpha(0.95);
     border-width: 1px;
@@ -675,17 +718,19 @@ export component ControlCenter inherits Rectangle {
             width: 100%;
             spacing: Tokens.space(2);
             QuickTile {
-                width: 150px;
+                width: 150px + (Tokens.text-scale - 1) * 60px;
                 title: "Wi-Fi"; subtitle: root.wifi ? "Home-5G" : "Off";
                 icon: root.wifi ? IconKind.wifi : IconKind.wifi-off;
                 active: root.wifi; label: "Wi-Fi";
+                focused: root.focus-visible && root.focus-index == 0;
                 toggled => { root.toggled("wifi", !root.wifi); }
             }
             QuickTile {
-                width: 150px;
+                width: 150px + (Tokens.text-scale - 1) * 60px;
                 title: "Bluetooth"; subtitle: root.bluetooth ? "2 devices" : "Off";
                 icon: root.bluetooth ? IconKind.bluetooth : IconKind.bluetooth-off;
                 active: root.bluetooth; label: "Bluetooth";
+                focused: root.focus-visible && root.focus-index == 1;
                 toggled => { root.toggled("bluetooth", !root.bluetooth); }
             }
         }
@@ -693,16 +738,18 @@ export component ControlCenter inherits Rectangle {
             width: 100%;
             spacing: Tokens.space(2);
             QuickTile {
-                width: 150px;
+                width: 150px + (Tokens.text-scale - 1) * 60px;
                 title: "Focus"; subtitle: root.focus-on ? root.focus-label : "Off";
                 icon: root.focus-on ? IconKind.moon : IconKind.bell;
                 active: root.focus-on; label: "Focus";
+                focused: root.focus-visible && root.focus-index == 2;
                 toggled => { root.toggled("focus", !root.focus-on); }
             }
             QuickTile {
-                width: 150px;
+                width: 150px + (Tokens.text-scale - 1) * 60px;
                 title: "Night light"; subtitle: root.night-light ? "On" : "Off";
                 icon: IconKind.sun; active: root.night-light; label: "Night light";
+                focused: root.focus-visible && root.focus-index == 3;
                 toggled => { root.toggled("night-light", !root.night-light); }
             }
         }
@@ -715,6 +762,7 @@ export component ControlCenter inherits Rectangle {
                 horizontal-stretch: 1;
                 value: root.volume;
                 label: "Volume";
+                focus-ring: root.focus-visible && root.focus-index == 4;
                 changed(value) => { root.volume-changed(value); }
             }
         }
@@ -726,6 +774,7 @@ export component ControlCenter inherits Rectangle {
                 horizontal-stretch: 1;
                 value: root.brightness;
                 label: "Brightness";
+                focus-ring: root.focus-visible && root.focus-index == 5;
                 changed(value) => { root.brightness-changed(value); }
             }
         }
@@ -749,6 +798,7 @@ export component ControlCenter inherits Rectangle {
         SegmentedControl {
             items: ["Power saver", "Balanced", "Performance"];
             current: root.power-mode == "saver" ? 0 : (root.power-mode == "performance" ? 2 : 1);
+            focus-ring: root.focus-visible && root.focus-index == 6;
             selected(idx) => {
                 root.power-mode-changed(idx == 0 ? "saver" : (idx == 2 ? "performance" : "balanced"));
             }
@@ -778,6 +828,7 @@ export component ControlCenter inherits Rectangle {
         SegmentedControl {
             items: ["Full", "Reduced", "Minimal"];
             current: root.effects-tier == "reduced" ? 1 : (root.effects-tier == "minimal" ? 2 : 0);
+            focus-ring: root.focus-visible && root.focus-index == 7;
             selected(idx) => {
                 root.effect-tier-changed(idx == 0 ? "full" : (idx == 2 ? "minimal" : "reduced"));
             }
@@ -789,11 +840,13 @@ export component ControlCenter inherits Rectangle {
             spacing: Tokens.space(2);
             AetherButton {
                 text: "Settings"; icon: IconKind.gear; show-icon: true;
+                focus-ring: root.focus-visible && root.focus-index == 8;
                 clicked => { root.open-settings(); }
             }
             Rectangle { horizontal-stretch: 1; background: transparent; }
             AetherButton {
                 text: "Lock"; icon: IconKind.lock; show-icon: true;
+                focus-ring: root.focus-visible && root.focus-index == 9;
                 clicked => { root.lock(); }
             }
         }
@@ -807,13 +860,15 @@ export component NotificationCenter inherits Rectangle {
     in property <bool> focus-on: false;
     in property <string> focus-until: "18:00";
     in property <GlassTier> tier: GlassTier.full;
+    in property <int> focus-index: -1;
+    in property <bool> focus-visible: false;
 
     callback dismissed(string);
     callback cleared-all();
     callback open-settings();
 
-    width: Tokens.notification-width;
-    height: 420px;
+    width: Tokens.notification-width + (Tokens.text-scale - 1) * 140px;
+    height: 420px + (Tokens.text-scale - 1) * 120px;
     border-radius: Tokens.radius-panel;
     background: Tokens.surface.with-alpha(0.95);
     border-width: 1px;
@@ -828,7 +883,11 @@ export component NotificationCenter inherits Rectangle {
         HorizontalLayout {
             Text { text: "Notifications"; color: Tokens.text; font-size: Tokens.font-title; font-weight: 700; }
             Rectangle { horizontal-stretch: 1; background: transparent; }
-            AetherButton { text: "Clear all"; clicked => { root.cleared-all(); } }
+            AetherButton {
+                text: "Clear all";
+                focus-ring: root.focus-visible && root.focus-index == 0;
+                clicked => { root.cleared-all(); }
+            }
         }
 
         if root.focus-on : Rectangle {
@@ -867,14 +926,17 @@ export component NotificationCenter inherits Rectangle {
                 height: self.preferred-height;
                 alignment: start;
                 spacing: Tokens.space(2);
-                for item in root.items : Rectangle {
-                    height: 74px;
+                for item[idx] in root.items : Rectangle {
+                    height: 74px * Tokens.text-scale;
                     border-radius: Tokens.radius-button;
                     background: Tokens.surface-high;
-                    border-width: 1px;
-                    border-color: item.unread ? Tokens.accent.with-alpha(0.5) : Tokens.divider;
+                    border-width: root.focus-visible && root.focus-index == idx + 1 ? Tokens.focus-ring : 1px;
+                    border-color: root.focus-visible && root.focus-index == idx + 1
+                        ? Tokens.focus-ring-color
+                        : (item.unread ? Tokens.accent.with-alpha(0.5) : Tokens.divider);
                     accessible-role: list-item;
                     accessible-label: item.app + ": " + item.title;
+                    accessible-description: root.focus-visible && root.focus-index == idx + 1 ? "Focused" : "";
 
                     HorizontalLayout {
                         padding: 10px;
@@ -912,7 +974,11 @@ export component NotificationCenter inherits Rectangle {
         Divider {}
         HorizontalLayout {
             alignment: center;
-            AetherButton { text: "Focus settings"; clicked => { root.open-settings(); } }
+            AetherButton {
+                text: "Focus settings";
+                focus-ring: root.focus-visible && root.focus-index == root.items.length + 1;
+                clicked => { root.open-settings(); }
+            }
             Rectangle { horizontal-stretch: 1; background: transparent; }
         }
     }
@@ -1127,7 +1193,7 @@ export component SettingsApp inherits Rectangle {
     HorizontalLayout {
         // Sidebar.
         Rectangle {
-            width: 200px;
+            width: 200px + (Tokens.text-scale - 1) * 60px;
             background: Tokens.surface-low;
             Rectangle {
                 x: parent.width - 1px;
@@ -1142,7 +1208,7 @@ export component SettingsApp inherits Rectangle {
                 spacing: 2px;
                 SectionLabel { label: "SETTINGS"; }
                 for category[idx] in root.categories : Rectangle {
-                    height: 34px;
+                    height: 34px * Tokens.text-scale;
                     border-radius: Tokens.radius-button;
                     background: idx == root.page ? Tokens.accent-soft : (ta.has-hover ? Tokens.hover : transparent);
                     accessible-role: tab;
@@ -1279,7 +1345,7 @@ export component SettingsApp inherits Rectangle {
                     alignment: start;
                     spacing: 2px;
                     for row in root.rows : Rectangle {
-                        height: 48px;
+                        height: 48px * Tokens.text-scale;
                         border-radius: Tokens.radius-button;
                         background: row-ta.has-hover ? Tokens.hover : transparent;
                         accessible-role: list-item;
@@ -1447,6 +1513,20 @@ export component ShellRoot inherits Window {
     in-out property <GlassTier> tier: GlassTier.full;
     in-out property <bool> dock-auto-hide: false;
     in-out property <string> desk-note: "Welcome to AetherOS";
+    // Accessibility (F1 SHL-18, design D1 sections 8 and 9). The controller
+    // clamps text-scale to 1.0–2.0; `tokens` below feeds every widget.
+    in-out property <float> text-scale: 1.0;
+    in-out property <bool> reduce-motion: false;
+    // Keyboard navigation: which surface and item owns focus (the panel codes
+    // match `kbdnav::Surface`) and whether the ring is visible.
+    in-out property <int> focus-surface: 0;
+    in-out property <int> focus-index: 0;
+    in-out property <bool> focus-visible: false;
+    in-out property <int> menu-open: -1;
+    // Reported so the acceptance harness can assert the indicator without
+    // reading pixels: 2 px accent outline (design D1 section 9).
+    out property <length> focus-ring-width: Tokens.focus-ring;
+    out property <color> focus-ring-color: Tokens.focus-ring-color;
     // G-NH2 (P3-T08): "Not responding" dialog and safe mode.
     in-out property <bool> nohang-open: false;
     in-out property <string> nohang-app: "";
@@ -1480,6 +1560,10 @@ export component ShellRoot inherits Window {
     callback nohang-wait();
     callback nohang-force-quit();
     callback safe-mode-reset();
+
+    // Accessibility tokens (F1 SHL-18) are set from Rust in
+    // `ShellController::sync` (`ui.global::<Tokens>()`); every surface and
+    // shared widget reads them.
 
     Wallpaper { width: 100%; height: 100%; }
 
@@ -1569,6 +1653,9 @@ export component ShellRoot inherits Window {
         charging: root.charging;
         unread: root.unread;
         tier: root.tier;
+        focus-index: root.focus-surface == 0 ? root.focus-index : -1;
+        focus-visible: root.focus-visible && root.focus-surface == 0;
+        open-menu <=> root.menu-open;
         menu-clicked(idx, item) => { root.menu-chosen(idx, item); }
         tray-clicked(id) => { root.tray-chosen(id); }
     }
@@ -1580,6 +1667,8 @@ export component ShellRoot inherits Window {
         apps: root.apps;
         auto-hide: root.dock-auto-hide;
         tier: root.tier;
+        focus-index: root.focus-surface == 1 ? root.focus-index : -1;
+        focus-visible: root.focus-visible && root.focus-surface == 1;
         app-clicked(id) => { root.dock-chosen(id); }
     }
 
@@ -1602,6 +1691,8 @@ export component ShellRoot inherits Window {
         results: root.results;
         selected: root.search-selected;
         tier: root.tier;
+        focus-index: root.focus-surface == 2 ? root.focus-index : -1;
+        focus-visible: root.focus-visible && root.focus-surface == 2;
         edited(text) => { root.search-edited(text); }
         accepted(idx) => { root.search-accepted(idx); }
         dismissed => { root.overlay-requested(0); }
@@ -1623,6 +1714,8 @@ export component ShellRoot inherits Window {
         tier: root.tier;
         effects-tier: root.effects-tier;
         effects-note: root.effects-note;
+        focus-index: root.focus-surface == 3 ? root.focus-index : -1;
+        focus-visible: root.focus-visible && root.focus-surface == 3;
         toggled(id, value) => { root.quick-toggle(id, value); }
         volume-changed(value) => { root.volume-changed(value); }
         brightness-changed(value) => { root.brightness-changed(value); }
@@ -1638,6 +1731,8 @@ export component ShellRoot inherits Window {
         items: root.notifications;
         focus-on: root.focus-on;
         tier: root.tier;
+        focus-index: root.focus-surface == 4 ? root.focus-index : -1;
+        focus-visible: root.focus-visible && root.focus-surface == 4;
         dismissed(id) => { root.notification-dismissed(id); }
         cleared-all => { root.notifications-cleared(); }
         open-settings => { root.overlay-requested(5); }

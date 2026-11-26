@@ -565,6 +565,18 @@ impl ShellState {
         self.notifications.retain(|notification| notification.id != id);
     }
 
+    /// Keyboard activation marks a card read instead of deleting it (the
+    /// dismiss button stays the explicit path for removal).
+    pub fn mark_read(&mut self, id: &str) {
+        if let Some(notification) = self
+            .notifications
+            .iter_mut()
+            .find(|notification| notification.id == id)
+        {
+            notification.unread = false;
+        }
+    }
+
     pub fn clear_notifications(&mut self) {
         self.notifications.clear();
     }
@@ -699,6 +711,27 @@ mod tests {
         state.set_toggle("focus", false);
         assert_eq!(state.visible_notifications().len(), 1);
         assert_eq!(state.notifications.len(), 1, "focus hides, never deletes");
+    }
+
+    #[test]
+    fn keyboard_activation_marks_a_notification_read_without_deleting_it() {
+        let mut state = ShellState::default();
+        state.notifications.push(Notification {
+            id: "n1".into(),
+            app: "Mail".into(),
+            title: "Hello".into(),
+            body: String::new(),
+            time: "now".into(),
+            icon: IconKind::Bell,
+            unread: true,
+        });
+        assert_eq!(state.unread_badge(), "1");
+        state.mark_read("n1");
+        assert_eq!(state.notifications.len(), 1, "mark read never deletes");
+        assert!(!state.notifications[0].unread);
+        assert_eq!(state.unread_badge(), "");
+        state.mark_read("missing");
+        assert_eq!(state.notifications.len(), 1);
     }
 
     #[test]

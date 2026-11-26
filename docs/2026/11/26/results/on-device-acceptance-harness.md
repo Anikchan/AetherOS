@@ -549,6 +549,59 @@ sleep 2; grep -i "speech\|utterance" /tmp/orca.log | head
 EXPECT Orca runs and announces each focused menu-bar item (utterance log lines).
 Record the announced strings; a silent focus change is a failure.
 
+### SHL-AC-12 — Reduce motion, text scale, keyboard navigation and the focus ring
+
+Headless preflight (development host, no display server):
+
+```sh
+aether-shell --a11y-status | tee /tmp/a11y-status.txt
+echo "status exit=$?"
+aether-shell --render-a11y /tmp/a11y-shots
+cargo test -p aether-shell --lib a11y
+cargo test -p aether-shell --lib kbdnav
+cargo test -p aether-shell --test a11y
+cargo test -p aether-shell --test a11y_ui
+```
+
+EXPECT `A11Y_REDUCE_MOTION: off`, `A11Y_TEXT_SCALE: 100%`, the five
+`A11Y_KEYBOARD: surface=…` lines, `AETHER_SHELL_FOCUS: surface=menubar`, and
+`AETHER_SHELL_A11Y_OK` as the last line; tests report `6 passed`, `5 passed`,
+`2 passed`, `1 passed`.
+
+On-device steps:
+
+```sh
+say shl-ac-12-reduce-motion
+# do: Settings → Appearance → Reduce motion on; open and close the dock and
+#     control centre. The panels must fade (120 ms), never slide.
+# do: Settings → Appearance → Text scale → 200 %; open every surface.
+shot shl-ac-12-text-200
+aether-shell --a11y-status | grep -E 'A11Y_(TEXT_SCALE|MOTION)'
+
+say shl-ac-12-keyboard
+# do: with the pointer parked, press Tab repeatedly and screenshot each stop.
+#     Tab through menu bar → dock → launcher → control centre → notifications.
+#     Press Enter on a dock app, a quick tile, the effects segment and a card.
+shot shl-ac-12-focus-ring
+journalctl -b -u aether-shell --no-pager | grep AETHER_SHELL_FOCUS | tail -n 10
+
+say shl-ac-12-orca
+# do: start orca, Tab to a dock item and a launcher result.
+grep -i "focused" /tmp/orca.log | head
+```
+
+EXPECT at 200 %: menu bar, control centre and settings text stay inside their
+panels (nothing clipped at the 2× step), the effect tier is untouched by text
+scale, and `A11Y_TEXT_SCALE: 200% scale=2.00` with
+`A11Y_MOTION: slide_ms=0 fade_ms=120 motion_ms=120` when reduce motion is on.
+Every Tab stop draws the 2 px accent ring on exactly one item, the journal shows
+one `AETHER_SHELL_FOCUS` line per step, and Orca announces the focused control
+(a silent focus change is a failure). Reduce transparency on must resolve the
+tier to Minimal (`aether-shell --status | grep effects-effective:`).
+
+Recorded hardware pass: pending the Dell run. Headless evidence:
+`docs/2026/11/27/results/shl-18-accessibility.md`.
+
 ## 3. DA-* (Default Apps) checklist
 
 ### DA-AC-01 — Text opens UTF-16 / Windows-1252
