@@ -57,6 +57,12 @@ Acceptance: `cargo test` green; new modules/tests; no changes outside territory.
 5. Docs/design pass (D3/D5/D8/D10, feature docs, README) continuous.
 Acceptance: `cargo test` green; docs updated; no changes outside territory.
 
+## Completed this round (2026-11-26)
+- **S2:** P3-T02 done (two outputs, layer shell, HiDPI; `cargo test -p aether-compositor` green). P3-T03 blocked → prerequisites added (XWayland in image defconfig by S1; `xwayland x11-apps` in CI by S4).
+- **S3:** P4-T06 greetd/PAM lock screen, P4-T13 PDF/poppler, P4-T14 player/GStreamer codec gate, P7-T07 Settings → Features UI. Tests green (shell 79, documents 19, player 17).
+- **S4:** P5-T08 soak/gate harness, P5-T15 energy contract, P6-T05/T06 Windows engine packaging + installer, P8-T01 live-USB script, P9-T01 RAUC wiring, docs, CI harness checks. Tests green.
+- **S1:** i915 as module (DMC fw timing), RTC-wake sleep harness, XWayland defconfig, tracker sync.
+
 ## Rules
 1. Read `docs/2026/11/17/os-implementation/plan.md` before/after work.
 2. Do not start a task another session marked In progress.
