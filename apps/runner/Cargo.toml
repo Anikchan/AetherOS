@@ -5,6 +5,10 @@ edition.workspace = true
 license.workspace = true
 description = "AetherOS app runner: engines, sandboxed launch, Windows prefixes, compatibility DB (P6-T02/T03/T05/T07/T10)"
 
+# Two binaries (`aether-runner`, `aether-samples`); the CLI is the default so
+# `cargo run -p aether-runner -- engines package …` works without --bin.
+default-run = "aether-runner"
+
 [dependencies]
 aether-pkg = { path = "../pkg" }
 aether-sandbox = { path = "../sandbox" }
