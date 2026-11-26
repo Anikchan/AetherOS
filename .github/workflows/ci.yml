@@ -23,10 +23,14 @@ jobs:
         # (`software-renderer-systemfonts`, used by aether-ui/shell/apps).
         # fonts-dejavu-core: deterministic text for any future render job —
         # the current tests are headless and assert structure, not pixels.
+        # libegl1 + mesa software stack: XWayland (P3-T03) probes EGL/glamor at
+        # startup and aborts if libEGL.so.1 is missing; with no GPU it needs the
+        # Mesa software driver to fall back cleanly to SHM rendering.
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             libxkbcommon-dev libfontconfig1-dev libfreetype-dev pkg-config fonts-dejavu-core \
+            libegl1 libegl-mesa0 libgl1-mesa-dri \
             xwayland x11-apps
 
       - name: Cache cargo registry and target
