@@ -166,8 +166,18 @@ impl LifecycleNotifier for SocketNotifier {
         let mut line = serde_json::to_string(&request)
             .map_err(|e| NotifyError::Protocol(e.to_string()))?;
         line.push('\n');
-        stream.write_all(line.as_bytes())?;
-        stream.flush()?;
+        if let Err(error) = stream.write_all(line.as_bytes()).and_then(|_| stream.flush()) {
+            // A client that closed between connect and write is as unresponsive
+            // as one that never answers; do not surface a transient reset.
+            if is_peer_gone(&error) {
+                return Ok(if message.expects_ack() {
+                    Ack::Timeout
+                } else {
+                    Ack::Accepted
+                });
+            }
+            return Err(NotifyError::Socket(error));
+        }
 
         if !message.expects_ack() {
             return Ok(Ack::Accepted);
@@ -192,9 +202,23 @@ impl LifecycleNotifier for SocketNotifier {
             {
                 Ok(Ack::Timeout)
             }
+            // The peer reset or closed while we waited for the ack: treat it as
+            // unresponsive (the app is suspended anyway).
+            Err(e) if is_peer_gone(&e) => Ok(Ack::Timeout),
             Err(e) => Err(NotifyError::Socket(e)),
         }
     }
+}
+
+/// True when the peer vanished (closed/reset/aborted the connection).
+fn is_peer_gone(error: &std::io::Error) -> bool {
+    matches!(
+        error.kind(),
+        std::io::ErrorKind::ConnectionReset
+            | std::io::ErrorKind::ConnectionAborted
+            | std::io::ErrorKind::BrokenPipe
+            | std::io::ErrorKind::NotConnected
+    )
 }
 
 /// Behavior of the SDK test app when the daemon sends `WillSuspend`.
@@ -373,21 +397,45 @@ mod tests {
         let dir = temp_dir("timeout");
         let path = dir.join(socket_name(&id()));
         let listener = UnixListener::bind(&path).unwrap();
-        // Accept but never answer.
+        // Accept and keep the stream open without answering until the notifier
+        // has hit its read timeout. Releasing explicitly avoids the old race
+        // where the peer closed at the same instant as the 500 ms timeout and
+        // the read returned ECONNRESET instead of a timeout.
+        let (release, released) = std::sync::mpsc::channel::<()>();
         let server = std::thread::spawn(move || {
-            // Accept and keep the stream open without answering, so the
-            // notifier must hit its read timeout.
             let (stream, _) = listener.accept().unwrap();
-            std::thread::sleep(Duration::from_millis(500));
+            let _ = released.recv_timeout(Duration::from_secs(5));
             drop(stream);
         });
         let notifier = SocketNotifier::at(&dir);
         let started = std::time::Instant::now();
         let ack = notifier
             .notify(&id(), LifecycleMessage::MemoryWarning)
-            .unwrap();
+            .expect("an unresponsive client must be reported as a timeout, not an error");
         assert_eq!(ack, Ack::Timeout);
         assert!(started.elapsed() >= Duration::from_millis(400));
+        let _ = release.send(());
+        let _ = server.join();
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn peer_reset_is_reported_as_timeout() {
+        // Regression for the CI flake: the peer may close or reset while the
+        // notifier is writing or waiting for the ack. Both must surface as
+        // Ack::Timeout, never as an unexpected Socket error.
+        let dir = temp_dir("reset");
+        let path = dir.join(socket_name(&id()));
+        let listener = UnixListener::bind(&path).unwrap();
+        let server = std::thread::spawn(move || {
+            let (stream, _) = listener.accept().unwrap();
+            drop(stream);
+        });
+        let notifier = SocketNotifier::at(&dir);
+        let ack = notifier
+            .notify(&id(), LifecycleMessage::MemoryWarning)
+            .expect("reset must be tolerated");
+        assert_eq!(ack, Ack::Timeout);
         let _ = server.join();
         let _ = fs::remove_dir_all(dir);
     }
