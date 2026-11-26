@@ -1,0 +1,10 @@
+prefix=/usr
+exec_prefix=${prefix}
+libdir=/usr/lib/x86_64-linux-gnu
+includedir=${prefix}/include
+
+Name: libseat
+Description: Stub for cross type-checking the DRM backend from the dev host (nothing is linked)
+Version: 0.8.0
+Libs: -L${libdir} -lseat
+Cflags: -I${includedir}

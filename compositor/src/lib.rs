@@ -31,8 +31,23 @@
 //! Phase P3-T08 adds [`hang`]: Wayland ping/pong responsiveness, "Not
 //! responding" detection, the shell watchdog and the frame-gap logger.
 //!
+//! Phase P3-T09 adds a second output backend in [`backend`]: `headless` (the
+//! default above, kept for CI and the dev host) and, behind the `drm` cargo
+//! feature, `backend::drm` — DRM/KMS page flips on the primary plane through
+//! GBM + EGL/GLES, with libinput reading evdev through a libseat-managed udev
+//! seat. `AETHER_COMPOSITOR_BACKEND` (`headless` | `drm` | `kms` | `auto`)
+//! selects it; `auto` follows the presence of `/dev/dri/card*`. The DRM path
+//! reuses the same window-manager, damage, frame-scheduling, scanout and glass
+//! state: [`AetherCompositor::begin_frame`] / `complete_frame` are the two
+//! halves of [`AetherCompositor::frame_tick`], so the KMS renderer presents the
+//! frame between them and answers `wl_surface.frame` only after the VBlank.
+//!
 //! Run: `cargo run -p aether-compositor` (or `aether-compositor` binary).
-//! Markers: `AETHER_COMPOSITOR_SOCKET_READY: wayland-0`,
+//! On hardware: `cargo build -p aether-compositor --features drm` then
+//! `AETHER_COMPOSITOR_BACKEND=drm ./target/debug/aether-compositor`
+//! (see `compositor/README.md`).
+//! Markers: `AETHER_COMPOSITOR_BACKEND: headless|drm`,
+//!          `AETHER_COMPOSITOR_SOCKET_READY: wayland-0`,
 //!          `AETHER_COMPOSITOR_OUTPUT: …`,
 //!          `AETHER_COMPOSITOR_OUTPUT_COUNT: 2`,
 //!          `AETHER_COMPOSITOR_OUTPUT_BOUND: …`,
@@ -70,6 +85,8 @@
 //! `AETHER_COMPOSITOR_EFFECT_TIER` (`full` | `reduced` | `minimal`, default
 //! `full`) selects the glass tier; `AETHER_COMPOSITOR_TARGET_FPS` (default 60)
 //! sets the frame pacing/budget target.
+//! `AETHER_COMPOSITOR_BACKEND` (`headless` | `drm` | `kms` | `auto`, default
+//! `auto`) selects the output backend; see [`backend::select_backend`].
 //! `AETHER_COMPOSITOR_PING_INTERVAL_MS` (default 2000) and
 //! `AETHER_COMPOSITOR_PING_TIMEOUT_MS` (default 5000, the NH-02 limit) drive the
 //! Wayland ping watchdog; `AETHER_COMPOSITOR_FRAME_GAP_MS` (default 1000) is the
@@ -89,9 +106,11 @@ use smithay::delegate_fractional_scale;
 use smithay::delegate_xwayland_shell;
 use smithay::delegate_layer_shell;
 use smithay::delegate_output;
+use smithay::delegate_seat;
 use smithay::delegate_shm;
 use smithay::delegate_xdg_shell;
-use smithay::input::{SeatHandler, SeatState};
+use smithay::input::pointer::CursorImageStatus;
+use smithay::input::{Seat, SeatHandler, SeatState};
 use smithay::output::{Mode, Output, PhysicalProperties, Scale, Subpixel};
 use smithay::reexports::wayland_server::backend::{
     ClientData, ClientId, DisconnectReason, ObjectId,
@@ -104,7 +123,7 @@ use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
 use smithay::reexports::wayland_server::{
     Client, Display, DisplayHandle, Resource,
 };
-use smithay::utils::{Logical, Serial, Size, Transform};
+use smithay::utils::{Logical, Point, Serial, SerialCounter, Size, Transform};
 use smithay::wayland::buffer::BufferHandler;
 use smithay::wayland::compositor::{
     with_states, BufferAssignment, CompositorClientState, CompositorHandler, CompositorState,
@@ -136,11 +155,13 @@ mod hang;
 mod scanout;
 mod scheduling;
 mod wm;
+pub mod backend;
 pub use glass::*;
 pub use hang::*;
 pub use scanout::*;
 pub use scheduling::*;
 pub use wm::*;
+pub use backend::{is_unknown_backend, select_backend, BackendKind, BACKEND_ENV};
 
 /// Per-client state, as required by the smithay compositor module.
 #[derive(Debug, Default)]
@@ -268,6 +289,18 @@ pub struct AetherCompositor {
     pub reported_windows: usize,
     /// Monotonic id source for managed toplevels.
     next_window_id: u64,
+    /// P3-T09: input seat. Created by the DRM backend; the headless backend has
+    /// no input devices, so this stays `None` (and no `wl_seat` global exists).
+    pub seat: Option<Seat<Self>>,
+    /// P3-T09: last pointer position in logical output space.
+    pub pointer_location: Point<f64, Logical>,
+    /// P3-T09: client-provided cursor image, drawn as a software cursor.
+    pub cursor_status: CursorImageStatus,
+    /// P3-T09: serial source for seat events (keyboard focus, clicks).
+    pub serials: SerialCounter,
+    /// P3-T09: DRM/KMS backend state when running on hardware.
+    #[cfg(all(target_os = "linux", feature = "drm"))]
+    pub drm: Option<backend::drm::DrmBackend>,
     pub mapped: bool,
     pub shutdown_at: Option<Instant>,
     pub deadline: Option<Instant>,
@@ -275,7 +308,20 @@ pub struct AetherCompositor {
 }
 
 impl AetherCompositor {
+    /// Headless compositor with the standard two-monitor HiDPI layout.
     pub fn new(dh: &DisplayHandle) -> Self {
+        Self::new_with_outputs(dh, HEADLESS_OUTPUTS)
+    }
+
+    /// P3-T09: state for the DRM backend. No synthetic outputs are created; the
+    /// KMS connector is registered by [`AetherCompositor::register_output`]
+    /// once the device is open.
+    pub fn new_for_drm(dh: &DisplayHandle) -> Self {
+        Self::new_with_outputs(dh, &[])
+    }
+
+    /// Compositor state advertising exactly the given headless monitors.
+    pub fn new_with_outputs(dh: &DisplayHandle, specs: &[HeadlessOutputSpec]) -> Self {
         // P3-T05: the effect tier is selectable; the default is Full, matching
         // the design doc. Unknown values fall back to Full instead of failing so
         // a typo cannot leave the desktop without a blur policy.
@@ -339,13 +385,19 @@ impl AetherCompositor {
             tier_switches: 0,
             reported_windows: 0,
             next_window_id: 0,
+            seat: None,
+            pointer_location: Point::from((0.0f64, 0.0)),
+            cursor_status: CursorImageStatus::Hidden,
+            serials: SerialCounter::new(),
+            #[cfg(all(target_os = "linux", feature = "drm"))]
+            drm: None,
             mapped: false,
             shutdown_at: None,
             deadline: None,
             timed_out: false,
         };
 
-        for spec in HEADLESS_OUTPUTS {
+        for spec in specs {
             state.add_headless_output(dh, spec);
         }
         // Seed the WM with the primary output's logical size so snap/tile
@@ -447,11 +499,24 @@ impl AetherCompositor {
         );
     }
 
-    /// P3-T06: one frame-scheduler tick, driven from the event loop. Presents
-    /// a frame when there is damage and the frame interval elapsed, answers the
-    /// `wl_surface.frame` callbacks for that frame, and lets the tier policy
-    /// react to the modelled frame cost.
+    /// P3-T06: one frame-scheduler tick, driven from the headless event loop.
+    /// Presents a frame when there is damage and the frame interval elapsed,
+    /// answers the `wl_surface.frame` callbacks for that frame, and lets the
+    /// tier policy react to the modelled frame cost.
     pub fn frame_tick(&mut self) {
+        let Some(frame) = self.begin_frame() else {
+            return;
+        };
+        self.complete_frame(&frame);
+    }
+
+    /// P3-T06/P3-T09: take the next frame the scheduler says is due.
+    ///
+    /// Consumes the damage and advances the pacing/idle accounting, but leaves
+    /// presentation to the caller: the headless path answers callbacks straight
+    /// away, while the DRM backend renders on the GPU and only answers them once
+    /// the page flip completed ([`AetherCompositor::complete_frame`]).
+    pub fn begin_frame(&mut self) -> Option<Frame> {
         let now = Instant::now();
         if !self.frames.due(now) {
             self.frames.note_idle(now);
@@ -463,13 +528,15 @@ impl AetherCompositor {
                     self.frames.frames
                 );
             }
-            return;
+            return None;
         }
+        self.frames.present(now)
+    }
 
-        let Some(frame) = self.frames.present(now) else {
-            return;
-        };
-
+    /// P3-T06: report the presented frame and answer its `wl_surface.frame`
+    /// callbacks. Safe to call once per [`AetherCompositor::begin_frame`]-taken
+    /// frame.
+    pub fn complete_frame(&mut self, frame: &Frame) {
         let direct = self.scanout.is_direct();
         if direct {
             // P3-T07: the client buffer goes straight to the output, so no
@@ -788,6 +855,58 @@ impl AetherCompositor {
         self.outputs.push(output);
     }
 
+    /// P3-T09: register an already-configured output (the DRM connector) and
+    /// print the same `AETHER_COMPOSITOR_OUTPUT` marker the headless path uses.
+    pub fn register_output(&mut self, dh: &DisplayHandle, output: Output) {
+        // The global stays alive for the compositor's lifetime.
+        let _global = output.create_global::<Self>(dh);
+        let (w, h) = output
+            .current_mode()
+            .map(|mode| (mode.size.w, mode.size.h))
+            .unwrap_or((0, 0));
+        let fractional = output.current_scale().fractional_scale();
+        let logical = self.logical_size(&output);
+        println!(
+            "AETHER_COMPOSITOR_OUTPUT: name={} mode={}x{} scale={} logical={}x{} position={},{}",
+            output.name(),
+            w,
+            h,
+            fractional,
+            logical.w,
+            logical.h,
+            output.current_location().x,
+            output.current_location().y
+        );
+        self.outputs.push(output);
+        // Seed the window manager with the output's logical size.
+        self.wm.output_size = (logical.w.max(1), logical.h.max(1));
+        println!("AETHER_COMPOSITOR_OUTPUT_COUNT: {}", self.outputs.len());
+        self.damage_whole_output();
+    }
+
+    /// Damage the whole primary output (first frame, VT switch, empty frame).
+    pub fn damage_whole_output(&mut self) {
+        let Some(size) = self.outputs.first().map(|output| self.logical_size(output)) else {
+            return;
+        };
+        self.frames.add_damage(Rect {
+            x: 0,
+            y: 0,
+            w: size.w,
+            h: size.h,
+        });
+    }
+
+    /// Damage the area around the pointer so a moved cursor repaints.
+    pub fn damage_pointer(&mut self) {
+        self.frames.add_damage(Rect {
+            x: self.pointer_location.x.round() as i32 - 16,
+            y: self.pointer_location.y.round() as i32 - 16,
+            w: 32,
+            h: 32,
+        });
+    }
+
     /// Logical (post-scale) size of an output.
     fn logical_size(&self, output: &Output) -> Size<i32, Logical> {
         let (w, h) = output
@@ -968,7 +1087,7 @@ fn env_millis(key: &str, default: u64) -> Duration {
 /// Layer-shell size negotiation (the subset the shell needs): anchored edges
 /// stretch to the output, an explicit non-zero size wins, otherwise the
 /// surface fills the output along that axis. Margins are subtracted.
-fn layer_surface_size(
+pub(crate) fn layer_surface_size(
     cached: &LayerSurfaceCachedState,
     output: Size<i32, Logical>,
 ) -> Size<i32, Logical> {
@@ -997,6 +1116,7 @@ fn layer_surface_size(
 // Delegate protocol dispatching.
 delegate_compositor!(AetherCompositor);
 delegate_shm!(AetherCompositor);
+delegate_seat!(AetherCompositor);
 delegate_xdg_shell!(AetherCompositor);
 delegate_layer_shell!(AetherCompositor);
 delegate_output!(AetherCompositor);
@@ -1252,6 +1372,14 @@ impl XdgShellHandler for AetherCompositor {
         );
         self.configure_toplevel(index, rect);
         self.update_scanout();
+
+        // P3-T09: give a newly mapped window the keyboard so typing works as
+        // soon as it appears. The headless backend has no seat, so this is a
+        // no-op there.
+        if let Some(keyboard) = self.seat.as_ref().and_then(|seat| seat.get_keyboard()) {
+            let serial = self.serials.next_serial();
+            keyboard.set_focus(self, Some(wl_surface), serial);
+        }
     }
 
     fn new_popup(&mut self, _surface: PopupSurface, _positioner: PositionerState) {}
@@ -1326,6 +1454,22 @@ impl SeatHandler for AetherCompositor {
 
     fn seat_state(&mut self) -> &mut SeatState<Self> {
         &mut self.seat_state
+    }
+
+    /// P3-T09: keyboard focus evidence for the DRM backend.
+    fn focus_changed(&mut self, _seat: &Seat<Self>, focused: Option<&WlSurface>) {
+        if self.seat.is_some() {
+            println!(
+                "AETHER_COMPOSITOR_SEAT_FOCUS: surface={}",
+                if focused.is_some() { "yes" } else { "none" }
+            );
+        }
+    }
+
+    /// P3-T09: remember the client cursor surface; the DRM backend draws it as
+    /// a software cursor element.
+    fn cursor_image(&mut self, _seat: &Seat<Self>, image: CursorImageStatus) {
+        self.cursor_status = image;
     }
 }
 
@@ -1409,7 +1553,46 @@ impl XwmHandler for AetherCompositor {
 }
 
 /// Run the compositor. Returns Ok(()) on clean shutdown.
+///
+/// The output backend is chosen by `AETHER_COMPOSITOR_BACKEND`
+/// (`headless` | `drm` | `kms` | `auto`, default `auto`); see
+/// [`backend::select_backend`] for the exact rules.
 pub fn run() -> Result<(), String> {
+    let requested = std::env::var(BACKEND_ENV).ok();
+    let drm_compiled = cfg!(all(target_os = "linux", feature = "drm"));
+    let selected = select_backend(requested.as_deref(), backend::drm_available(), drm_compiled);
+    println!("AETHER_COMPOSITOR_BACKEND: {}", selected.as_str());
+    if backend::is_unknown_backend(requested.as_deref()) {
+        eprintln!(
+            "aether-compositor: unknown {BACKEND_ENV}={:?} (expected headless|drm|auto); using headless",
+            requested.unwrap_or_default()
+        );
+    } else if selected == BackendKind::Headless
+        && requested
+            .as_deref()
+            .map(|value| matches!(value.trim().to_ascii_lowercase().as_str(), "drm" | "kms"))
+            .unwrap_or(false)
+        && !drm_compiled
+    {
+        eprintln!(
+            "aether-compositor: {BACKEND_ENV}=drm but this binary was built without the `drm` \
+             feature; rebuild with --features drm (see compositor/README.md)"
+        );
+    }
+
+    match selected {
+        BackendKind::Headless => run_headless(),
+        #[cfg(all(target_os = "linux", feature = "drm"))]
+        BackendKind::Drm => backend::drm::run(),
+        #[cfg(not(all(target_os = "linux", feature = "drm")))]
+        BackendKind::Drm => {
+            Err("DRM backend not compiled in (build with --features drm)".to_string())
+        }
+    }
+}
+
+/// Run the headless backend (the CI and dev-host path).
+fn run_headless() -> Result<(), String> {
     const OVERALL_TIMEOUT: Duration = Duration::from_secs(60);
 
     let grace = Duration::from_millis(

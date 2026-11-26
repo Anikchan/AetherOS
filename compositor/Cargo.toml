@@ -17,6 +17,26 @@ smithay = { version = "0.7.0", default-features = false, features = ["wayland_fr
 [target.'cfg(target_os = "linux")'.dependencies]
 smithay = { version = "0.7.0", default-features = false, features = ["wayland_frontend", "xwayland"] }
 
+[features]
+# P3-T09 hardware backend: DRM/KMS scanout (GBM + EGL/GLES primary plane) plus
+# libinput over a libseat-managed udev seat.
+#
+# Deliberately opt-in. The headless backend is the default so the whole crate
+# builds and tests on the macOS dev host and on CI runners that do not ship
+# libgbm/libinput/libudev/libseat, and so `cargo test` never needs a GPU.
+# Device images build with `--features drm`; on the dev host the DRM module is
+# type-checked for x86_64-unknown-linux-gnu by `scripts/check-linux-target.sh`.
+drm = [
+    "smithay/backend_drm",
+    "smithay/backend_gbm",
+    "smithay/backend_udev",
+    "smithay/backend_libinput",
+    "smithay/backend_session_libseat",
+    "smithay/backend_egl",
+    "smithay/renderer_gl",
+    "smithay/desktop",
+]
+
 # P3-T02 headless acceptance test: a Wayland client that checks the two
 # monitors (different scales) and a zwlr_layer_shell_v1 surface.
 [dev-dependencies]
