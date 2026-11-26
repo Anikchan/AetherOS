@@ -159,6 +159,54 @@ The A/B configuration is real, not a sketch:
   handshake. Development keys are in `update/config/README.md`; production keys
   stay offline (P9-T05).
 
+### 6.2 Rollback and health checks (P9-T02, 2026-11-26)
+
+The boot handshake is a separate service layer (`update/src/health.rs`) on top
+of the slot state machine; the write of the inactive slot itself is RAUC's job
+and still needs hardware validation.
+
+State machine (unchanged by the service):
+
+```
+A active, B empty
+install/stage_pending(B)  -> B pending, update_in_progress
+activate                  -> B active, boot_attempts = 0
+on_boot                   -> boot_attempts += 1; > max_boot_attempts -> rollback
+health pass               -> B active, A good, last_good_version = B
+health fail / deadline    -> B bad, A active
+```
+
+Health service:
+
+- Probes (`ProbeKind`): a command with a timeout, a path that must exist, a
+  systemd unit that must be active, and free space on the filesystem holding a
+  path (`df -Pk`). Each probe is required or optional; only required probes
+  gate the report, and an empty report never confirms an update.
+- Default probes: `boot-services` (`multi-user.target`), `storage` (200 MiB
+  free on `/var`), `update-state` (`/var/lib/aether/update` exists), plus
+  optional `socket` (`graphical.target`) and `audio` (`pipewire`). They are the
+  boot service's list and can be replaced by a policy file.
+- Policy (`HealthPolicy`): `deadline_secs` (120 s to confirm), `max_retries`
+  (2 failed reports) and `retry_after_secs` (15 s cooldown).
+- `HealthService::evaluate` returns `confirmed`, `waiting`, `rolled-back` or
+  `not-pending`. The retry counter and the last attempt time live in
+  `UpdateState` (`health_attempts`, `last_health_at`), so a fresh
+  `aether-update health-check` process — or the next boot — continues the same
+  count instead of restarting it.
+- `HealthService::enforce_deadline` rolls back a slot that never confirms; the
+  deadline is measured from the boot timestamp that the boot service passes in.
+- `install` and `stage_pending` refuse to stage a second image while
+  `update_in_progress` is set, so a second update cannot overwrite the last
+  good slot before the first one is confirmed.
+- CLI: `aether-update probes [--save-report FILE]` runs the default probes and
+  records the report; `aether-update health-check [--report FILE] [--boot-at
+  EPOCH] [--policy-file FILE]` applies the policy. A recorded report can be
+  evaluated without any A/B slot, which is how the policy is tested off
+  hardware.
+
+Hardware item still open: the actual write of the inactive slot, the
+`grubenv` switch and a real reboot/rollback cycle on the reference machine.
+
 
 ## 7. Reproducibility and CI
 

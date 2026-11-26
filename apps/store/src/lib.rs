@@ -18,6 +18,13 @@ use aether_pkg::{
     InstallError, InstallOutcome, Installer, PackageInstaller, Paths,
 };
 
+pub mod contract;
+
+pub use contract::{
+    handle, handle_json, handle_with_compat, rows, AppRow, ChangeRow, CompatIndex, StoreRequest,
+    StoreResponse, DUAL_BOOT_GUIDANCE,
+};
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct IndexEntry {
     pub manifest: PackageManifest,
@@ -227,7 +234,7 @@ mod tests {
     use aether_pkg::manifest::{compute_files, write_manifest, PackageKind};
     use std::io::Write;
 
-    fn temp_root(tag: &str) -> PathBuf {
+    pub(crate) fn temp_root(tag: &str) -> PathBuf {
         use std::sync::atomic::{AtomicU64, Ordering};
         static COUNTER: AtomicU64 = AtomicU64::new(0);
         let dir = std::env::temp_dir().join(format!(
@@ -243,7 +250,7 @@ mod tests {
         dir
     }
 
-    fn bundle(repo: &Path, id: &str, name: &str, version: &str) {
+    pub(crate) fn bundle(repo: &Path, id: &str, name: &str, version: &str) {
         let dir = repo.join(format!("{name}-{version}"));
         fs::create_dir_all(dir.join("bin")).unwrap();
         let mut file = fs::File::create(dir.join("bin/app")).unwrap();

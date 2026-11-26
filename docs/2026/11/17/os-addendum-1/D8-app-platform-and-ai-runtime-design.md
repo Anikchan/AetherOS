@@ -225,3 +225,46 @@ Rules:
 | AI state machine | Unit | Every transition in section 6 |
 | AI unload after idle | Integration | Memory returns to 0 MB model use within 2 minutes |
 | AI no network | Integration | Monitor shows no outgoing connection during generation |
+
+## 9. Software app contract (P6-T09, 2026-11-26)
+
+The shell (S3) never calls the store directly; it speaks one JSON request/response pair defined by `apps/store/src/contract.rs` (`aether-store`).
+
+| Request `action` | Fields | Response `status` |
+| --- | --- | --- |
+| `list` | — | `apps` |
+| `search` | `query` (empty = all) | `apps` |
+| `install` | `id`, `granted` (permissions the UI already accepted) | `installed`, `needs-permission` or `failed` |
+| `update` | `ids` (empty = every app with an update), `granted` | `updated` with one `changes` row per app (`updated`, `needs-permission`, `skipped`, `failed`) |
+| `remove` | `id`, `granted` | `removed` or `failed` |
+
+Row shape (`AppRow`): `id`, `name`, `version` (offered), `kind`, `description`, `installed` (installed version or null), `update` (newer version or null), `permissions` (labels), `compat_tier` (`a`–`d` or null) and `guidance` (dual-boot text, only for Tier D, APP-AC-08).
+
+Rules:
+- A malformed request still answers with `{"status":"failed","message":…}`; the UI never parses an error page.
+- `needs-permission` carries the permission labels; the UI shows the prompt and repeats the request with `granted`.
+- Compatibility tiers are supplied by the caller (`CompatIndex`, loaded from the runner's compatibility database) so the store does not depend on the runner crate. The index is keyed by app id and by app name, case-insensitively, and ignores unknown fields.
+- A row reports the installed version as `installed`, and `update` only when the repository version is strictly newer (numeric comparison).
+- CLI parity: `aether-store --repo DIR --json '{"action":"list"}' [--compat-db FILE]` prints the same JSON; exit code 3 means `needs-permission`, 1 means `failed`.
+
+## 10. Compatibility database and 40-app harness (P6-T10, 2026-11-26)
+
+Database (`apps/runner/src/compat.rs`):
+
+- The 40 slots are fixed by 04 §7: Browser 3, Office and productivity 8, Media 6, Development 7, Games 8, Utilities 8. Every slot carries a category and an archetype ("Chromium-based browser", "DirectX 11 game", …); the slot name stays the stable key (`Games app 1`).
+- An entry records the tier, the 0–100 score, the engine version, the documented tweak (if any), the machine/date and the measured `evidence` (one `CheckResult` per check).
+- Checks: `install`, `launch`, `window`, `input`, `audio`, `video`, `files`, `network`, `persistence`, `stability`. Grading (`grade`) is deterministic:
+  - no checks → `Untested` (the gate stays closed);
+  - a failed gate check (`install`, `launch`, `window`, `stability`) → `D`;
+  - all supplied checks pass and no tweak was needed → `A`;
+  - a documented tweak was needed (and no gate check failed) → `B`;
+  - a non-gate check failed without a documented tweak → `C`.
+- Score: sum of passed check weights over the full check set (120 points), rounded. Install/launch/window/stability are 20 each, input and video 10, audio/files/network/persistence 5. A missing check scores 0, so a partial run cannot inflate a tier.
+- Gate: 30 of 40 in Tier A or B (04 §7). The report is a Markdown table with slot, category, archetype, tier, score, tweak, notes and machine.
+
+Harness (`apps/runner/src/compat_harness.rs`):
+
+- `HarnessSpec` is JSON: engine label, machine label and one slot per database entry, each with the installer, the launch arguments, the tweak and the commands that prove each check (program, args, timeout).
+- Three modes: `dry_run` (report only, nothing runs, slots stay `Untested`), `execute` (run the commands on the reference machine; exit code 0 within the timeout passes), and `import` — a spec that carries any recorded observations is treated as an import run and slots without observations are left untouched instead of executing placeholder commands.
+- `aether-runner compat slots` prints the 40 slots, `compat template --out FILE` writes a 40-slot spec, and `compat harness --spec FILE [--dry-run] [--db FILE]` runs it and records the tiers.
+- Developers run `--dry-run` (or import a recorded run) today; the reference machine swaps the placeholder commands for real probes. No Windows app is needed to exercise the pipeline.

@@ -4,6 +4,7 @@
 //! available, otherwise launch fails with an explanation (D8 failure modes).
 
 pub mod compat;
+pub mod compat_harness;
 pub mod engine_package;
 pub mod windows;
 

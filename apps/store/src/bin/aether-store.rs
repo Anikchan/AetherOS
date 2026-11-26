@@ -5,18 +5,24 @@
 //!   aether-store --repo DIR install APP-ID [--granted a,b] [--root DIR]
 //!   aether-store --repo DIR updates|update-all [--granted a,b]
 //!   aether-store --repo DIR remove APP-ID --yes [--root DIR]
+//!   aether-store --repo DIR --json '{"action":"list"}' [--compat-db FILE] [--root DIR]
+//!
+//! `--json` is the contract the Software app UI binds to (D8 §9): one request
+//! in, one JSON response out.
 
 use std::collections::BTreeSet;
 use std::path::PathBuf;
 
 use aether_pkg::manifest::AppId;
 use aether_pkg::{InstallOutcome, Paths};
-use aether_store::{Store, StoreIndex};
+use aether_store::{CompatIndex, Store, StoreIndex, StoreResponse};
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let mut repo: Option<PathBuf> = None;
     let mut root: Option<PathBuf> = None;
+    let mut compat_db: Option<PathBuf> = None;
+    let mut json_request: Option<String> = None;
     let mut granted: BTreeSet<String> = BTreeSet::new();
     let mut yes = false;
     let mut positional = Vec::new();
@@ -31,6 +37,14 @@ fn main() {
                 index += 1;
                 root = args.get(index).map(PathBuf::from);
             }
+            "--compat-db" => {
+                index += 1;
+                compat_db = args.get(index).map(PathBuf::from);
+            }
+            "--json" => {
+                index += 1;
+                json_request = args.get(index).cloned();
+            }
             "--granted" => {
                 index += 1;
                 if let Some(value) = args.get(index) {
@@ -43,7 +57,7 @@ fn main() {
             }
             "--yes" => yes = true,
             "-h" | "--help" => {
-                println!("usage: aether-store [--repo DIR] <list|search|install|updates|update-all|remove> [args]");
+                println!("usage: aether-store [--repo DIR] <list|search|install|updates|update-all|remove|--json REQUEST> [args]");
                 return;
             }
             value => positional.push(value.to_string()),
@@ -64,6 +78,27 @@ fn main() {
         std::process::exit(1);
     });
     let store = Store::new(store_dir, index);
+
+    if let Some(request) = json_request {
+        let compat = match compat_db.as_deref() {
+            Some(path) => CompatIndex::load(path).unwrap_or_else(|error| {
+                eprintln!("cannot read compat db {}: {error}", path.display());
+                std::process::exit(1);
+            }),
+            None => CompatIndex::default(),
+        };
+        let answer = aether_store::handle_json(&store, &request, &compat);
+        println!("{answer}");
+        match serde_json::from_str::<StoreResponse>(&answer) {
+            Ok(StoreResponse::NeedsPermission { .. }) => std::process::exit(3),
+            Ok(StoreResponse::Failed { message }) => {
+                eprintln!("store request failed: {message}");
+                std::process::exit(1);
+            }
+            _ => {}
+        }
+        return;
+    }
 
     let command = positional.first().map(|s| s.as_str()).unwrap_or("list");
     match command {

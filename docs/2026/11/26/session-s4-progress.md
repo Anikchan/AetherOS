@@ -29,6 +29,10 @@ Must NOT touch: `os-build/kernel/`, `os-build/buildroot/`, `os-build/board/`,
 | 6 | P9: wire update state machine to a real RAUC A/B config | **Done (config + bridge 2026-11-26)**; slot install pending hardware | `update/config/*`, `update/src/rauc.rs`, `rauc-bundle.sh`, `tests/rauc_flow.rs` |
 | 7 | Docs/design pass (D3/D5/D8/D10, F7, README) | **Done (2026-11-26)** | status sections added |
 | 8 | CI assist for S2: xwayland + x11-apps for P3-T03 | **Done (2026-11-26)** | commit `af9de2d`; same job runs S4 harness checks |
+| 9 | P6-T10: compatibility database (schema, 40 slots, scoring engine) + hardware harness | **Done (2026-11-26)** | `apps/runner/src/compat.rs`, `compat_harness.rs`; DOS: real Windows apps pending hardware |
+| 10 | P9-T02: rollback/health-check service logic | **Done (2026-11-26)** | `update/src/health.rs`; probes, policy, persisted retries, deadline; slot write pending hardware |
+| 11 | P6-T09: Software app JSON UI contract for S3 | **Done (2026-11-26)** | `apps/store/src/contract.rs` + `aether-store --json`; `needs-permission` exit 3 |
+| 12 | Docs/design pass for the above (D8 §9/§10, D4 §6.2, README) | **Done (2026-11-26)** | D10 reviewed, unchanged (runtime monitoring, no boot-health contract) |
 
 ## Progress log
 
@@ -71,6 +75,17 @@ Must NOT touch: `os-build/kernel/`, `os-build/buildroot/`, `os-build/board/`,
   files in the shared worktree; the S4 changes are in that commit and history
   was not rewritten.
 
+- 2026-11-26 (P6-T09/T10, P9-T02 pass): compatibility database completed —
+  40 slots with archetypes, per-check evidence, a deterministic tier/score
+  engine, and a harness that runs in dry-run or import mode off hardware
+  (`apps/runner/src/compat.rs`, `compat_harness.rs`, 16 tests); the Software
+  app JSON contract (`apps/store/src/contract.rs`, 7 tests) with
+  `aether-store --json` and dual-boot guidance for Tier D; the update
+  health-check service (`update/src/health.rs`, 8 tests) with probes, policy,
+  persisted retry counters and a confirmation deadline, plus an
+  `update_in_progress` guard on staging. Design docs D8 §9/§10 and D4 §6.2
+  added. Evidence: `docs/2026/11/26/results/p6-t09-t10-p9-t02.md`.
+
 ## Blockers (unchanged, owner/hardware)
 
 - 72-hour soak, real G-PM1/B2/B6 values, G-BAT*, G-TM*, AP-AC-03/04 and the live
@@ -78,3 +93,6 @@ Must NOT touch: `os-build/kernel/`, `os-build/buildroot/`, `os-build/board/`,
 - Activity Manager window: Processes tab bound; the remaining tabs and the
   shortcut/confirmation flows are still open.
 - Live persistence service and the BIOS live path are image-overlay/S1 work.
+- The 40 compatibility slots are defined and the harness is ready, but the 40
+  real Windows apps (APP-AC-06) and the real inactive-slot write/rollback cycle
+  (P9-T02 hardware half) still need the reference machine.

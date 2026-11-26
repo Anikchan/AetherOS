@@ -5,6 +5,8 @@
 //!   aether-update status [--state F]
 //!   aether-update install --manifest FILE --image IMG [--signature-valid] [--state F]
 //!   aether-update boot|activate|health-pass|health-fail|rollback [--state F]
+//!   aether-update health-check [--report FILE] [--boot-at EPOCH] [--policy-file F] [--state F]
+//!   aether-update probes [--save-report FILE]
 //!   aether-update rauc-status [--rauc-json FILE]
 //!   aether-update rauc-sync [--rauc-json FILE] [--state F]
 //!   aether-update rauc-install --image BUNDLE [--dry-run] [--state F]
@@ -19,7 +21,8 @@ use aether_update::rauc::{
     RaucStatus, SYSTEM_CONF,
 };
 use aether_update::{
-    activate_pending, health_check, install, on_boot, rollback, sha256_file, stage_pending,
+    activate_pending, default_probes, health_check, install, on_boot, rollback, run_probes,
+    sha256_file, stage_pending, HealthAction, HealthPolicy, HealthReport, HealthService,
     UpdateManifest, UpdateState,
 };
 
@@ -38,6 +41,10 @@ fn main() {
     let mut manifest_path: Option<PathBuf> = None;
     let mut image_path: Option<PathBuf> = None;
     let mut rauc_json: Option<PathBuf> = None;
+    let mut report_path: Option<PathBuf> = None;
+    let mut save_report: Option<PathBuf> = None;
+    let mut policy_file: Option<PathBuf> = None;
+    let mut boot_at: Option<u64> = None;
     let mut version = String::from("0.0.0");
     let mut description = String::from("AetherOS update");
     let mut out_path: Option<PathBuf> = None;
@@ -64,6 +71,22 @@ fn main() {
                 index += 1;
                 rauc_json = args.get(index).map(PathBuf::from);
             }
+            "--report" => {
+                index += 1;
+                report_path = args.get(index).map(PathBuf::from);
+            }
+            "--save-report" => {
+                index += 1;
+                save_report = args.get(index).map(PathBuf::from);
+            }
+            "--policy-file" => {
+                index += 1;
+                policy_file = args.get(index).map(PathBuf::from);
+            }
+            "--boot-at" => {
+                index += 1;
+                boot_at = args.get(index).and_then(|value| value.parse().ok());
+            }
             "--version" => {
                 index += 1;
                 version = args.get(index).cloned().unwrap_or(version);
@@ -79,7 +102,7 @@ fn main() {
             "--signature-valid" => signature_valid = true,
             "--dry-run" => dry_run = true,
             "-h" | "--help" => {
-                println!("usage: aether-update <status|install|boot|activate|health-pass|health-fail|rollback|rauc-status|rauc-sync|rauc-install|rauc-mark-good|rauc-mark-bad|rauc-config|bundle-manifest> [args]");
+                println!("usage: aether-update <status|install|boot|activate|health-pass|health-fail|health-check|probes|rollback|rauc-status|rauc-sync|rauc-install|rauc-mark-good|rauc-mark-bad|rauc-config|bundle-manifest> [args]");
                 return;
             }
             other => {
@@ -131,6 +154,82 @@ fn main() {
             .map(|_| println!("HEALTH_OK active={:?}", state.active)),
         "health-fail" => health_check(&mut state, false)
             .map(|rolled_back| println!("HEALTH_FAILED rolled_back={rolled_back} active={:?}", state.active)),
+        "probes" => {
+            let report = run_probes(&default_probes());
+            for probe in &report.probes {
+                println!(
+                    "PROBE {}\t{}\t{}{}",
+                    probe.id,
+                    if probe.passed { "pass" } else { "fail" },
+                    if probe.required { "required" } else { "optional" },
+                    if probe.detail.is_empty() {
+                        String::new()
+                    } else {
+                        format!("\t{}", probe.detail)
+                    }
+                );
+            }
+            if let Some(path) = save_report.clone() {
+                report.save(&path).unwrap_or_else(|error| {
+                    eprintln!("cannot write {}: {error}", path.display());
+                    std::process::exit(1);
+                });
+                println!("HEALTH_REPORT {}", path.display());
+            }
+            println!("HEALTH_REPORT_PASSED passed={}", report.passed());
+            Ok(())
+        }
+        "health-check" => {
+            let policy = match policy_file.as_deref() {
+                Some(path) => {
+                    let text = std::fs::read_to_string(path).unwrap_or_else(|error| {
+                        eprintln!("cannot read policy {}: {error}", path.display());
+                        std::process::exit(1);
+                    });
+                    serde_json::from_str::<HealthPolicy>(&text).unwrap_or_else(|error| {
+                        eprintln!("invalid policy {}: {error}", path.display());
+                        std::process::exit(1);
+                    })
+                }
+                None => HealthPolicy::default(),
+            };
+            let mut service = HealthService::new(state.clone()).with_policy(policy);
+            let now = now_secs();
+            let action = match report_path.as_deref() {
+                Some(path) => {
+                    let report = HealthReport::load(path).unwrap_or_else(|error| {
+                        eprintln!("cannot read report {}: {error}", path.display());
+                        std::process::exit(1);
+                    });
+                    service.evaluate(&report, now)
+                }
+                None => {
+                    // The service runs the probes itself on a real boot.
+                    let report = run_probes(&default_probes());
+                    for probe in &report.probes {
+                        println!(
+                            "PROBE {}\t{}{}",
+                            probe.id,
+                            if probe.passed { "pass" } else { "fail" },
+                            if probe.detail.is_empty() {
+                                String::new()
+                            } else {
+                                format!("\t{}", probe.detail)
+                            }
+                        );
+                    }
+                    if let Some(boot_at) = boot_at {
+                        service.enforce_deadline(boot_at, now)
+                    } else {
+                        service.evaluate(&report, now)
+                    }
+                }
+            };
+            action.map(|action| {
+                state = service.state;
+                println!("HEALTH {}", describe_action(&action));
+            })
+        }
         "rollback" => rollback(&mut state).map(|_| println!("ROLLED_BACK active={:?}", state.active)),
         "rauc-config" => {
             let problems = validate_system_conf();
@@ -254,11 +353,38 @@ fn main() {
         eprintln!("update failed: {error}");
         std::process::exit(1);
     }
-    if !matches!(command, "status" | "rauc-status" | "rauc-config" | "bundle-manifest") {
+    if !matches!(
+        command,
+        "status" | "probes" | "rauc-status" | "rauc-config" | "bundle-manifest"
+    ) {
         if let Err(error) = state.save(&state_path) {
             eprintln!("state save failed: {error}");
             std::process::exit(1);
         }
+    }
+}
+
+fn now_secs() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_secs())
+        .unwrap_or(0)
+}
+
+fn describe_action(action: &HealthAction) -> String {
+    match action {
+        HealthAction::NotPending => "not-pending".into(),
+        HealthAction::Confirmed { version } => format!(
+            "confirmed version={}",
+            version.clone().unwrap_or_else(|| "unknown".into())
+        ),
+        HealthAction::RolledBack { to, reason } => {
+            format!("rolled-back to={to:?} because={reason:?}")
+        }
+        HealthAction::Waiting {
+            attempts,
+            next_retry_in_secs,
+        } => format!("waiting attempts={attempts} retry_in={next_retry_in_secs}s"),
     }
 }
 

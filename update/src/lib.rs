@@ -5,8 +5,13 @@
 //! installed, and when to roll back. A failed health check or too many boot
 //! attempts on a pending slot returns to the last good slot.
 
+pub mod health;
 pub mod rauc;
 
+pub use health::{
+    default_probes, run_probes, HealthAction, HealthPolicy, HealthProbe, HealthReport,
+    HealthService, ProbeKind, ProbeOutcome, RollbackReason,
+};
 pub use rauc::{
     bootname, bundle_manifest, parse_status, sync_state, validate_system_conf, RaucCommand,
     RaucError, RaucSlot, RaucStatus, MANIFEST_TEMPLATE, SYSTEM_CONF,
@@ -93,6 +98,12 @@ pub struct UpdateState {
     pub max_boot_attempts: u32,
     pub last_good_version: Option<String>,
     pub update_in_progress: bool,
+    /// Health-check attempts for the running pending slot (P9-T02).
+    #[serde(default)]
+    pub health_attempts: u32,
+    /// Unix time of the last health check (P9-T02).
+    #[serde(default)]
+    pub last_health_at: Option<u64>,
 }
 
 impl Default for UpdateState {
@@ -111,6 +122,8 @@ impl Default for UpdateState {
             max_boot_attempts: 3,
             last_good_version: None,
             update_in_progress: false,
+            health_attempts: 0,
+            last_health_at: None,
         }
     }
 }
@@ -161,6 +174,8 @@ pub enum UpdateError {
     NoInactiveSlot(String),
     #[error("no good slot to roll back to")]
     NoRollbackTarget,
+    #[error("an update is already in progress; confirm or roll it back first")]
+    UpdateInProgress,
     #[error("i/o error: {0}")]
     Io(#[from] io::Error),
 }
@@ -234,12 +249,17 @@ pub fn install(
     }
 
     let target = state.active.other();
+    if state.update_in_progress {
+        return Err(UpdateError::UpdateInProgress);
+    }
     let slot = state.slot_mut(target);
     slot.version = Some(manifest.version.clone());
     slot.state = SlotState::Pending;
     slot.checksum = Some(manifest.image_sha256.clone());
     state.update_in_progress = true;
     state.boot_attempts = 0;
+    state.health_attempts = 0;
+    state.last_health_at = None;
     Ok(())
 }
 
@@ -253,10 +273,15 @@ pub fn stage_pending(state: &mut UpdateState, slot: SlotId) -> Result<(), Update
             "cannot stage the running slot".into(),
         ));
     }
+    if state.update_in_progress {
+        return Err(UpdateError::UpdateInProgress);
+    }
     let entry = state.slot_mut(slot);
     entry.state = SlotState::Pending;
     state.update_in_progress = true;
     state.boot_attempts = 0;
+    state.health_attempts = 0;
+    state.last_health_at = None;
     Ok(())
 }
 
@@ -273,6 +298,8 @@ pub fn activate_pending(state: &mut UpdateState) -> Result<(), UpdateError> {   
     }
     state.active = target;
     state.boot_attempts = 0;
+    state.health_attempts = 0;
+    state.last_health_at = None;
     Ok(())
 }
 
@@ -320,6 +347,8 @@ pub fn health_check(state: &mut UpdateState, passed: bool) -> Result<bool, Updat
         state.last_good_version = version;
         state.update_in_progress = false;
         state.boot_attempts = 0;
+        state.health_attempts = 0;
+        state.last_health_at = None;
         Ok(false)
     } else {
         rollback(state)?;
@@ -349,6 +378,8 @@ pub fn rollback(state: &mut UpdateState) -> Result<(), UpdateError> {
     }
     state.boot_attempts = 0;
     state.update_in_progress = false;
+    state.health_attempts = 0;
+    state.last_health_at = None;
     Ok(())
 }
 
@@ -485,6 +516,21 @@ mod tests {
             stage_pending(&mut state, SlotId::A),
             Err(UpdateError::NoInactiveSlot(_))
         ));
+    }
+
+    #[test]
+    fn a_second_update_is_refused_while_one_is_pending() {
+        let mut state = seeded();
+        install(&mut state, &manifest("1.1.0"), "abc123", true).unwrap();
+        assert!(matches!(
+            install(&mut state, &manifest("1.2.0"), "abc123", true),
+            Err(UpdateError::UpdateInProgress)
+        ));
+        assert!(matches!(
+            stage_pending(&mut state, SlotId::B),
+            Err(UpdateError::UpdateInProgress)
+        ));
+        assert_eq!(state.inactive_slot().unwrap().version.as_deref(), Some("1.1.0"));
     }
 
     #[test]

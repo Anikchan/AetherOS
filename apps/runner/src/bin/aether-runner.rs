@@ -15,8 +15,23 @@ use std::path::PathBuf;
 
 use aether_pkg::manifest::AppId;
 use aether_pkg::{Paths, Registry};
-use aether_runner::compat::{CompatDb, CompatTier};
+use aether_runner::compat::{CompatDb, CompatSummary, CompatTier};
+use aether_runner::compat_harness::{self, HarnessSpec};
 use aether_runner::{EngineRegistry, PrefixManager, Runner, WindowsInstallRequest, WindowsInstallerFlow};
+
+fn print_compat_summary(summary: &CompatSummary) {
+    println!(
+        "COMPAT_SUMMARY total={} a={} b={} c={} d={} untested={} avg_score={} gate={}",
+        summary.total,
+        summary.tier_a,
+        summary.tier_b,
+        summary.tier_c,
+        summary.tier_d,
+        summary.untested,
+        summary.avg_score,
+        if summary.gate_passes() { "PASS" } else { "OPEN" }
+    );
+}
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -30,6 +45,8 @@ fn main() {
     let mut engine_name = "wine".to_string();
     let mut arch = "x86_64".to_string();
     let mut installer: Option<PathBuf> = None;
+    let mut spec_path: Option<PathBuf> = None;
+    let mut out_path: Option<PathBuf> = None;
     let mut app_id: Option<String> = None;
     let mut entry: Option<String> = None;
     let mut installer_args: Vec<String> = Vec::new();
@@ -71,6 +88,14 @@ fn main() {
             "--installer" => {
                 index += 1;
                 installer = args.get(index).map(PathBuf::from);
+            }
+            "--spec" => {
+                index += 1;
+                spec_path = args.get(index).map(PathBuf::from);
+            }
+            "--out" => {
+                index += 1;
+                out_path = args.get(index).map(PathBuf::from);
             }
             "--id" => {
                 index += 1;
@@ -326,6 +351,58 @@ fn main() {
         }
         "compat" => {
             let action = positional.first().map(|s| s.as_str()).unwrap_or("report");
+            if action == "slots" || action == "template" {
+                let spec = HarnessSpec::template("wine-10.0", "reference-machine");
+                if action == "template" {
+                    let Some(path) = out_path.clone().or_else(|| spec_path.clone()) else {
+                        eprintln!("compat template needs --out FILE");
+                        std::process::exit(2);
+                    };
+                    if let Err(error) = spec.save(&path) {
+                        eprintln!("cannot write {}: {error}", path.display());
+                        std::process::exit(1);
+                    }
+                    println!(
+                        "COMPAT_TEMPLATE slots={} file={}",
+                        spec.slots.len(),
+                        path.display()
+                    );
+                    return;
+                }
+                let db = CompatDb::test_plan();
+                for entry in &db.entries {
+                    println!("{}\t{}\t{}", entry.name, entry.category, entry.archetype);
+                }
+                println!("COMPAT_SLOTS total={}", db.entries.len());
+                return;
+            }
+            if action == "harness" {
+                let Some(path) = spec_path.clone() else {
+                    eprintln!("compat harness needs --spec FILE [--dry-run] [--db FILE]");
+                    std::process::exit(2);
+                };
+                match compat_harness::run_file(&path, &db_path, dry_run) {
+                    Ok((harness, summary)) => {
+                        println!(
+                            "COMPAT_HARNESS executed={} imported={} dry_run={} skipped={} unknown={}",
+                            harness.executed,
+                            harness.imported,
+                            harness.dry_run,
+                            harness.skipped,
+                            harness.unknown_slots
+                        );
+                        print_compat_summary(&summary);
+                        if harness.unknown_slots > 0 {
+                            std::process::exit(1);
+                        }
+                    }
+                    Err(error) => {
+                        eprintln!("harness failed: {error}");
+                        std::process::exit(1);
+                    }
+                }
+                return;
+            }
             if action == "plan" {
                 let db = CompatDb::test_plan();
                 let _ = db.save(&db_path);
@@ -345,14 +422,11 @@ fn main() {
                     eprintln!("compat set NAME TIER NOTES");
                     std::process::exit(2);
                 };
-                let tier = match tier.to_ascii_uppercase().as_str() {
-                    "A" => CompatTier::A,
-                    "B" => CompatTier::B,
-                    "C" => CompatTier::C,
-                    "D" => CompatTier::D,
-                    _ => CompatTier::Untested,
+                let Some(tier) = CompatTier::parse(tier) else {
+                    eprintln!("tier must be A, B, C, D or untested");
+                    std::process::exit(2);
                 };
-                let mut db = CompatDb::load(&db_path).unwrap_or_else(|_| CompatDb::test_plan());
+                let mut db = CompatDb::load_or_test_plan(&db_path);
                 let today = format!(
                     "epoch-day {}",
                     std::time::SystemTime::now()
@@ -371,25 +445,22 @@ fn main() {
                 println!("COMPAT_SET {name} {}", tier.label());
                 return;
             }
-            let db = CompatDb::load(&db_path).unwrap_or_else(|_| CompatDb::test_plan());
+            let db = CompatDb::load_or_test_plan(&db_path);
             let summary = db.summary();
             if action == "list" {
                 for entry in &db.entries {
-                    println!("{}\t{}\t{}", entry.name, entry.category, entry.tier.label());
+                    println!(
+                        "{}\t{}\t{}\t{}",
+                        entry.name,
+                        entry.category,
+                        entry.tier.label(),
+                        entry.score.map(|s| s.to_string()).unwrap_or_else(|| "—".into())
+                    );
                 }
             } else {
                 print!("{}", db.report());
             }
-            println!(
-                "COMPAT_SUMMARY total={} a={} b={} c={} d={} untested={} gate={}",
-                summary.total,
-                summary.tier_a,
-                summary.tier_b,
-                summary.tier_c,
-                summary.tier_d,
-                summary.untested,
-                if summary.gate_passes() { "PASS" } else { "OPEN" }
-            );
+            print_compat_summary(&summary);
         }
         other => {
             eprintln!("unknown command: {other}");
