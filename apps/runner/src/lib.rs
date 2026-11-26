@@ -5,6 +5,7 @@
 
 pub mod compat;
 pub mod compat_harness;
+pub mod compat_reference;
 pub mod engine_package;
 pub mod windows;
 

@@ -15,8 +15,9 @@ pub use disk::{
     HardwareReport, OperatingSystem, Partition, PartitionTable, WindowsInfo,
 };
 pub use planner::{
-    plan as plan_install, aetheros_roles, InstallPlan, Operation, OperationKind,
-    PartitionAllocation, PlanError, ESP_BYTES, GIB, MIB,
+    plan as plan_install, plan_with_options as plan_install_with_options, aetheros_roles,
+    InstallPlan, LuksEncryption, Operation, OperationKind, PartitionAllocation, PlanError,
+    PlanOptions, ESP_BYTES, GIB, LUKS2_HEADER_BYTES, LUKS_UUID_TOKEN, MIB,
 };
 pub use precheck::{
     blocking, can_proceed, run as run_prechecks, CheckStatus, InstallMode, PreCheck,

@@ -43,6 +43,9 @@ fn main() {
     let mut from_dir: Option<PathBuf> = None;
     let mut version: Option<String> = None;
     let mut engine_name = "wine".to_string();
+    let mut engine = "wine-10.0".to_string();
+    let mut machine = "reference-machine".to_string();
+    let mut payload_dir: Option<PathBuf> = None;
     let mut arch = "x86_64".to_string();
     let mut installer: Option<PathBuf> = None;
     let mut spec_path: Option<PathBuf> = None;
@@ -92,6 +95,18 @@ fn main() {
             "--spec" => {
                 index += 1;
                 spec_path = args.get(index).map(PathBuf::from);
+            }
+            "--payload" => {
+                index += 1;
+                payload_dir = args.get(index).map(PathBuf::from);
+            }
+            "--machine" => {
+                index += 1;
+                machine = args.get(index).cloned().unwrap_or(machine);
+            }
+            "--engine" => {
+                index += 1;
+                engine = args.get(index).cloned().unwrap_or(engine);
             }
             "--out" => {
                 index += 1;
@@ -374,6 +389,43 @@ fn main() {
                     println!("{}\t{}\t{}", entry.name, entry.category, entry.archetype);
                 }
                 println!("COMPAT_SLOTS total={}", db.entries.len());
+                return;
+            }
+            if action == "reference-template" || action == "reference-slots" {
+                let payload = payload_dir
+                    .clone()
+                    .unwrap_or_else(aether_runner::compat_reference::default_payload_dir);
+                let spec = aether_runner::compat_reference::spec(&engine, &machine, &payload);
+                if action == "reference-slots" {
+                    for (slot, app) in spec.slots.iter().zip(
+                        aether_runner::compat_reference::SLOT_APPS.iter(),
+                    ) {
+                        println!(
+                            "{}\t{}\t{}\t{}\t{}",
+                            slot.name,
+                            app.app,
+                            app.vendor,
+                            app.installer,
+                            app.window
+                        );
+                    }
+                    println!("COMPAT_REFERENCE_SLOTS total={}", spec.slots.len());
+                    return;
+                }
+                let Some(path) = out_path.clone().or_else(|| spec_path.clone()) else {
+                    eprintln!("compat reference-template needs --out FILE");
+                    std::process::exit(2);
+                };
+                if let Err(error) = spec.save(&path) {
+                    eprintln!("cannot write {}: {error}", path.display());
+                    std::process::exit(1);
+                }
+                println!(
+                    "COMPAT_REFERENCE_TEMPLATE slots={} payload={} file={}",
+                    spec.slots.len(),
+                    payload.display(),
+                    path.display()
+                );
                 return;
             }
             if action == "harness" {

@@ -1,0 +1,4766 @@
+{
+  "engine": "wine-10.0",
+  "machine": "reference-machine",
+  "slots": [
+    {
+      "name": "Browser app 1",
+      "installer": "/var/lib/aether/compat/payload/ChromeSetup.exe",
+      "args": [
+        "drive_c/Program Files/Google/Chrome/Application/chrome.exe"
+      ],
+      "tweak": null,
+      "checks": [
+        {
+          "check": "install",
+          "program": "aether-runner",
+          "args": [
+            "windows",
+            "install",
+            "--installer",
+            "/var/lib/aether/compat/payload/ChromeSetup.exe",
+            "--id",
+            "com.aether.compat.browser-app-1",
+            "--entry",
+            "drive_c/Program Files/Google/Chrome/Application/chrome.exe"
+          ],
+          "timeout_secs": 900
+        },
+        {
+          "check": "launch",
+          "program": "aether-runner",
+          "args": [
+            "launch",
+            "com.aether.compat.browser-app-1"
+          ],
+          "timeout_secs": 180
+        },
+        {
+          "check": "window",
+          "program": "xdotool",
+          "args": [
+            "search",
+            "--name",
+            "Google Chrome"
+          ],
+          "timeout_secs": 60
+        },
+        {
+          "check": "input",
+          "program": "aether-compat-probe",
+          "args": [
+            "input",
+            "--window",
+            "Google Chrome",
+            "--exe",
+            "drive_c/Program Files/Google/Chrome/Application/chrome.exe"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "audio",
+          "program": "aether-compat-probe",
+          "args": [
+            "audio",
+            "--id",
+            "com.aether.compat.browser-app-1"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "video",
+          "program": "aether-compat-probe",
+          "args": [
+            "video",
+            "--id",
+            "com.aether.compat.browser-app-1"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "files",
+          "program": "aether-compat-probe",
+          "args": [
+            "files",
+            "--id",
+            "com.aether.compat.browser-app-1"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "network",
+          "program": "aether-compat-probe",
+          "args": [
+            "network",
+            "--id",
+            "com.aether.compat.browser-app-1"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "persistence",
+          "program": "aether-compat-probe",
+          "args": [
+            "persistence",
+            "--id",
+            "com.aether.compat.browser-app-1"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "stability",
+          "program": "aether-compat-probe",
+          "args": [
+            "stability",
+            "--id",
+            "com.aether.compat.browser-app-1",
+            "--seconds",
+            "60"
+          ],
+          "timeout_secs": 300
+        }
+      ],
+      "recorded": []
+    },
+    {
+      "name": "Browser app 2",
+      "installer": "/var/lib/aether/compat/payload/Firefox Setup.exe",
+      "args": [
+        "drive_c/Program Files/Mozilla Firefox/firefox.exe"
+      ],
+      "tweak": null,
+      "checks": [
+        {
+          "check": "install",
+          "program": "aether-runner",
+          "args": [
+            "windows",
+            "install",
+            "--installer",
+            "/var/lib/aether/compat/payload/Firefox Setup.exe",
+            "--id",
+            "com.aether.compat.browser-app-2",
+            "--entry",
+            "drive_c/Program Files/Mozilla Firefox/firefox.exe"
+          ],
+          "timeout_secs": 900
+        },
+        {
+          "check": "launch",
+          "program": "aether-runner",
+          "args": [
+            "launch",
+            "com.aether.compat.browser-app-2"
+          ],
+          "timeout_secs": 180
+        },
+        {
+          "check": "window",
+          "program": "xdotool",
+          "args": [
+            "search",
+            "--name",
+            "Mozilla Firefox"
+          ],
+          "timeout_secs": 60
+        },
+        {
+          "check": "input",
+          "program": "aether-compat-probe",
+          "args": [
+            "input",
+            "--window",
+            "Mozilla Firefox",
+            "--exe",
+            "drive_c/Program Files/Mozilla Firefox/firefox.exe"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "audio",
+          "program": "aether-compat-probe",
+          "args": [
+            "audio",
+            "--id",
+            "com.aether.compat.browser-app-2"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "video",
+          "program": "aether-compat-probe",
+          "args": [
+            "video",
+            "--id",
+            "com.aether.compat.browser-app-2"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "files",
+          "program": "aether-compat-probe",
+          "args": [
+            "files",
+            "--id",
+            "com.aether.compat.browser-app-2"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "network",
+          "program": "aether-compat-probe",
+          "args": [
+            "network",
+            "--id",
+            "com.aether.compat.browser-app-2"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "persistence",
+          "program": "aether-compat-probe",
+          "args": [
+            "persistence",
+            "--id",
+            "com.aether.compat.browser-app-2"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "stability",
+          "program": "aether-compat-probe",
+          "args": [
+            "stability",
+            "--id",
+            "com.aether.compat.browser-app-2",
+            "--seconds",
+            "60"
+          ],
+          "timeout_secs": 300
+        }
+      ],
+      "recorded": []
+    },
+    {
+      "name": "Browser app 3",
+      "installer": "/var/lib/aether/compat/payload/BraveBrowserSetup.exe",
+      "args": [
+        "drive_c/Program Files/BraveSoftware/Brave-Browser/Application/brave.exe"
+      ],
+      "tweak": null,
+      "checks": [
+        {
+          "check": "install",
+          "program": "aether-runner",
+          "args": [
+            "windows",
+            "install",
+            "--installer",
+            "/var/lib/aether/compat/payload/BraveBrowserSetup.exe",
+            "--id",
+            "com.aether.compat.browser-app-3",
+            "--entry",
+            "drive_c/Program Files/BraveSoftware/Brave-Browser/Application/brave.exe"
+          ],
+          "timeout_secs": 900
+        },
+        {
+          "check": "launch",
+          "program": "aether-runner",
+          "args": [
+            "launch",
+            "com.aether.compat.browser-app-3"
+          ],
+          "timeout_secs": 180
+        },
+        {
+          "check": "window",
+          "program": "xdotool",
+          "args": [
+            "search",
+            "--name",
+            "Brave"
+          ],
+          "timeout_secs": 60
+        },
+        {
+          "check": "input",
+          "program": "aether-compat-probe",
+          "args": [
+            "input",
+            "--window",
+            "Brave",
+            "--exe",
+            "drive_c/Program Files/BraveSoftware/Brave-Browser/Application/brave.exe"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "audio",
+          "program": "aether-compat-probe",
+          "args": [
+            "audio",
+            "--id",
+            "com.aether.compat.browser-app-3"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "video",
+          "program": "aether-compat-probe",
+          "args": [
+            "video",
+            "--id",
+            "com.aether.compat.browser-app-3"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "files",
+          "program": "aether-compat-probe",
+          "args": [
+            "files",
+            "--id",
+            "com.aether.compat.browser-app-3"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "network",
+          "program": "aether-compat-probe",
+          "args": [
+            "network",
+            "--id",
+            "com.aether.compat.browser-app-3"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "persistence",
+          "program": "aether-compat-probe",
+          "args": [
+            "persistence",
+            "--id",
+            "com.aether.compat.browser-app-3"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "stability",
+          "program": "aether-compat-probe",
+          "args": [
+            "stability",
+            "--id",
+            "com.aether.compat.browser-app-3",
+            "--seconds",
+            "60"
+          ],
+          "timeout_secs": 300
+        }
+      ],
+      "recorded": []
+    },
+    {
+      "name": "Office and productivity app 1",
+      "installer": "/var/lib/aether/compat/payload/LibreOffice_Win_x86-64.msi",
+      "args": [
+        "drive_c/Program Files/LibreOffice/program/soffice.exe"
+      ],
+      "tweak": null,
+      "checks": [
+        {
+          "check": "install",
+          "program": "aether-runner",
+          "args": [
+            "windows",
+            "install",
+            "--installer",
+            "/var/lib/aether/compat/payload/LibreOffice_Win_x86-64.msi",
+            "--id",
+            "com.aether.compat.office-and-productivity-app-1",
+            "--entry",
+            "drive_c/Program Files/LibreOffice/program/soffice.exe"
+          ],
+          "timeout_secs": 900
+        },
+        {
+          "check": "launch",
+          "program": "aether-runner",
+          "args": [
+            "launch",
+            "com.aether.compat.office-and-productivity-app-1"
+          ],
+          "timeout_secs": 180
+        },
+        {
+          "check": "window",
+          "program": "xdotool",
+          "args": [
+            "search",
+            "--name",
+            "LibreOffice Writer"
+          ],
+          "timeout_secs": 60
+        },
+        {
+          "check": "input",
+          "program": "aether-compat-probe",
+          "args": [
+            "input",
+            "--window",
+            "LibreOffice Writer",
+            "--exe",
+            "drive_c/Program Files/LibreOffice/program/soffice.exe"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "audio",
+          "program": "aether-compat-probe",
+          "args": [
+            "audio",
+            "--id",
+            "com.aether.compat.office-and-productivity-app-1"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "video",
+          "program": "aether-compat-probe",
+          "args": [
+            "video",
+            "--id",
+            "com.aether.compat.office-and-productivity-app-1"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "files",
+          "program": "aether-compat-probe",
+          "args": [
+            "files",
+            "--id",
+            "com.aether.compat.office-and-productivity-app-1"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "network",
+          "program": "aether-compat-probe",
+          "args": [
+            "network",
+            "--id",
+            "com.aether.compat.office-and-productivity-app-1"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "persistence",
+          "program": "aether-compat-probe",
+          "args": [
+            "persistence",
+            "--id",
+            "com.aether.compat.office-and-productivity-app-1"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "stability",
+          "program": "aether-compat-probe",
+          "args": [
+            "stability",
+            "--id",
+            "com.aether.compat.office-and-productivity-app-1",
+            "--seconds",
+            "60"
+          ],
+          "timeout_secs": 300
+        }
+      ],
+      "recorded": []
+    },
+    {
+      "name": "Office and productivity app 2",
+      "installer": "/var/lib/aether/compat/payload/LibreOffice_Win_x86-64.msi",
+      "args": [
+        "drive_c/Program Files/LibreOffice/program/soffice.exe"
+      ],
+      "tweak": null,
+      "checks": [
+        {
+          "check": "install",
+          "program": "aether-runner",
+          "args": [
+            "windows",
+            "install",
+            "--installer",
+            "/var/lib/aether/compat/payload/LibreOffice_Win_x86-64.msi",
+            "--id",
+            "com.aether.compat.office-and-productivity-app-2",
+            "--entry",
+            "drive_c/Program Files/LibreOffice/program/soffice.exe"
+          ],
+          "timeout_secs": 900
+        },
+        {
+          "check": "launch",
+          "program": "aether-runner",
+          "args": [
+            "launch",
+            "com.aether.compat.office-and-productivity-app-2"
+          ],
+          "timeout_secs": 180
+        },
+        {
+          "check": "window",
+          "program": "xdotool",
+          "args": [
+            "search",
+            "--name",
+            "LibreOffice Calc"
+          ],
+          "timeout_secs": 60
+        },
+        {
+          "check": "input",
+          "program": "aether-compat-probe",
+          "args": [
+            "input",
+            "--window",
+            "LibreOffice Calc",
+            "--exe",
+            "drive_c/Program Files/LibreOffice/program/soffice.exe"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "audio",
+          "program": "aether-compat-probe",
+          "args": [
+            "audio",
+            "--id",
+            "com.aether.compat.office-and-productivity-app-2"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "video",
+          "program": "aether-compat-probe",
+          "args": [
+            "video",
+            "--id",
+            "com.aether.compat.office-and-productivity-app-2"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "files",
+          "program": "aether-compat-probe",
+          "args": [
+            "files",
+            "--id",
+            "com.aether.compat.office-and-productivity-app-2"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "network",
+          "program": "aether-compat-probe",
+          "args": [
+            "network",
+            "--id",
+            "com.aether.compat.office-and-productivity-app-2"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "persistence",
+          "program": "aether-compat-probe",
+          "args": [
+            "persistence",
+            "--id",
+            "com.aether.compat.office-and-productivity-app-2"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "stability",
+          "program": "aether-compat-probe",
+          "args": [
+            "stability",
+            "--id",
+            "com.aether.compat.office-and-productivity-app-2",
+            "--seconds",
+            "60"
+          ],
+          "timeout_secs": 300
+        }
+      ],
+      "recorded": []
+    },
+    {
+      "name": "Office and productivity app 3",
+      "installer": "/var/lib/aether/compat/payload/LibreOffice_Win_x86-64.msi",
+      "args": [
+        "drive_c/Program Files/LibreOffice/program/soffice.exe"
+      ],
+      "tweak": null,
+      "checks": [
+        {
+          "check": "install",
+          "program": "aether-runner",
+          "args": [
+            "windows",
+            "install",
+            "--installer",
+            "/var/lib/aether/compat/payload/LibreOffice_Win_x86-64.msi",
+            "--id",
+            "com.aether.compat.office-and-productivity-app-3",
+            "--entry",
+            "drive_c/Program Files/LibreOffice/program/soffice.exe"
+          ],
+          "timeout_secs": 900
+        },
+        {
+          "check": "launch",
+          "program": "aether-runner",
+          "args": [
+            "launch",
+            "com.aether.compat.office-and-productivity-app-3"
+          ],
+          "timeout_secs": 180
+        },
+        {
+          "check": "window",
+          "program": "xdotool",
+          "args": [
+            "search",
+            "--name",
+            "LibreOffice Impress"
+          ],
+          "timeout_secs": 60
+        },
+        {
+          "check": "input",
+          "program": "aether-compat-probe",
+          "args": [
+            "input",
+            "--window",
+            "LibreOffice Impress",
+            "--exe",
+            "drive_c/Program Files/LibreOffice/program/soffice.exe"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "audio",
+          "program": "aether-compat-probe",
+          "args": [
+            "audio",
+            "--id",
+            "com.aether.compat.office-and-productivity-app-3"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "video",
+          "program": "aether-compat-probe",
+          "args": [
+            "video",
+            "--id",
+            "com.aether.compat.office-and-productivity-app-3"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "files",
+          "program": "aether-compat-probe",
+          "args": [
+            "files",
+            "--id",
+            "com.aether.compat.office-and-productivity-app-3"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "network",
+          "program": "aether-compat-probe",
+          "args": [
+            "network",
+            "--id",
+            "com.aether.compat.office-and-productivity-app-3"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "persistence",
+          "program": "aether-compat-probe",
+          "args": [
+            "persistence",
+            "--id",
+            "com.aether.compat.office-and-productivity-app-3"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "stability",
+          "program": "aether-compat-probe",
+          "args": [
+            "stability",
+            "--id",
+            "com.aether.compat.office-and-productivity-app-3",
+            "--seconds",
+            "60"
+          ],
+          "timeout_secs": 300
+        }
+      ],
+      "recorded": []
+    },
+    {
+      "name": "Office and productivity app 4",
+      "installer": "/var/lib/aether/compat/payload/AcroRdrDC_en_US.exe",
+      "args": [
+        "drive_c/Program Files (x86)/Adobe/Acrobat Reader DC/Reader/AcroRd32.exe"
+      ],
+      "tweak": null,
+      "checks": [
+        {
+          "check": "install",
+          "program": "aether-runner",
+          "args": [
+            "windows",
+            "install",
+            "--installer",
+            "/var/lib/aether/compat/payload/AcroRdrDC_en_US.exe",
+            "--id",
+            "com.aether.compat.office-and-productivity-app-4",
+            "--entry",
+            "drive_c/Program Files (x86)/Adobe/Acrobat Reader DC/Reader/AcroRd32.exe"
+          ],
+          "timeout_secs": 900
+        },
+        {
+          "check": "launch",
+          "program": "aether-runner",
+          "args": [
+            "launch",
+            "com.aether.compat.office-and-productivity-app-4"
+          ],
+          "timeout_secs": 180
+        },
+        {
+          "check": "window",
+          "program": "xdotool",
+          "args": [
+            "search",
+            "--name",
+            "Adobe Acrobat"
+          ],
+          "timeout_secs": 60
+        },
+        {
+          "check": "input",
+          "program": "aether-compat-probe",
+          "args": [
+            "input",
+            "--window",
+            "Adobe Acrobat",
+            "--exe",
+            "drive_c/Program Files (x86)/Adobe/Acrobat Reader DC/Reader/AcroRd32.exe"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "audio",
+          "program": "aether-compat-probe",
+          "args": [
+            "audio",
+            "--id",
+            "com.aether.compat.office-and-productivity-app-4"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "video",
+          "program": "aether-compat-probe",
+          "args": [
+            "video",
+            "--id",
+            "com.aether.compat.office-and-productivity-app-4"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "files",
+          "program": "aether-compat-probe",
+          "args": [
+            "files",
+            "--id",
+            "com.aether.compat.office-and-productivity-app-4"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "network",
+          "program": "aether-compat-probe",
+          "args": [
+            "network",
+            "--id",
+            "com.aether.compat.office-and-productivity-app-4"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "persistence",
+          "program": "aether-compat-probe",
+          "args": [
+            "persistence",
+            "--id",
+            "com.aether.compat.office-and-productivity-app-4"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "stability",
+          "program": "aether-compat-probe",
+          "args": [
+            "stability",
+            "--id",
+            "com.aether.compat.office-and-productivity-app-4",
+            "--seconds",
+            "60"
+          ],
+          "timeout_secs": 300
+        }
+      ],
+      "recorded": []
+    },
+    {
+      "name": "Office and productivity app 5",
+      "installer": "/var/lib/aether/compat/payload/Notion-Setup.exe",
+      "args": [
+        "drive_c/Users/user/AppData/Local/Programs/Notion/Notion.exe"
+      ],
+      "tweak": null,
+      "checks": [
+        {
+          "check": "install",
+          "program": "aether-runner",
+          "args": [
+            "windows",
+            "install",
+            "--installer",
+            "/var/lib/aether/compat/payload/Notion-Setup.exe",
+            "--id",
+            "com.aether.compat.office-and-productivity-app-5",
+            "--entry",
+            "drive_c/Users/user/AppData/Local/Programs/Notion/Notion.exe"
+          ],
+          "timeout_secs": 900
+        },
+        {
+          "check": "launch",
+          "program": "aether-runner",
+          "args": [
+            "launch",
+            "com.aether.compat.office-and-productivity-app-5"
+          ],
+          "timeout_secs": 180
+        },
+        {
+          "check": "window",
+          "program": "xdotool",
+          "args": [
+            "search",
+            "--name",
+            "Notion"
+          ],
+          "timeout_secs": 60
+        },
+        {
+          "check": "input",
+          "program": "aether-compat-probe",
+          "args": [
+            "input",
+            "--window",
+            "Notion",
+            "--exe",
+            "drive_c/Users/user/AppData/Local/Programs/Notion/Notion.exe"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "audio",
+          "program": "aether-compat-probe",
+          "args": [
+            "audio",
+            "--id",
+            "com.aether.compat.office-and-productivity-app-5"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "video",
+          "program": "aether-compat-probe",
+          "args": [
+            "video",
+            "--id",
+            "com.aether.compat.office-and-productivity-app-5"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "files",
+          "program": "aether-compat-probe",
+          "args": [
+            "files",
+            "--id",
+            "com.aether.compat.office-and-productivity-app-5"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "network",
+          "program": "aether-compat-probe",
+          "args": [
+            "network",
+            "--id",
+            "com.aether.compat.office-and-productivity-app-5"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "persistence",
+          "program": "aether-compat-probe",
+          "args": [
+            "persistence",
+            "--id",
+            "com.aether.compat.office-and-productivity-app-5"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "stability",
+          "program": "aether-compat-probe",
+          "args": [
+            "stability",
+            "--id",
+            "com.aether.compat.office-and-productivity-app-5",
+            "--seconds",
+            "60"
+          ],
+          "timeout_secs": 300
+        }
+      ],
+      "recorded": []
+    },
+    {
+      "name": "Office and productivity app 6",
+      "installer": "/var/lib/aether/compat/payload/Thunderbird Setup.exe",
+      "args": [
+        "drive_c/Program Files/Mozilla Thunderbird/thunderbird.exe"
+      ],
+      "tweak": null,
+      "checks": [
+        {
+          "check": "install",
+          "program": "aether-runner",
+          "args": [
+            "windows",
+            "install",
+            "--installer",
+            "/var/lib/aether/compat/payload/Thunderbird Setup.exe",
+            "--id",
+            "com.aether.compat.office-and-productivity-app-6",
+            "--entry",
+            "drive_c/Program Files/Mozilla Thunderbird/thunderbird.exe"
+          ],
+          "timeout_secs": 900
+        },
+        {
+          "check": "launch",
+          "program": "aether-runner",
+          "args": [
+            "launch",
+            "com.aether.compat.office-and-productivity-app-6"
+          ],
+          "timeout_secs": 180
+        },
+        {
+          "check": "window",
+          "program": "xdotool",
+          "args": [
+            "search",
+            "--name",
+            "Mozilla Thunderbird"
+          ],
+          "timeout_secs": 60
+        },
+        {
+          "check": "input",
+          "program": "aether-compat-probe",
+          "args": [
+            "input",
+            "--window",
+            "Mozilla Thunderbird",
+            "--exe",
+            "drive_c/Program Files/Mozilla Thunderbird/thunderbird.exe"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "audio",
+          "program": "aether-compat-probe",
+          "args": [
+            "audio",
+            "--id",
+            "com.aether.compat.office-and-productivity-app-6"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "video",
+          "program": "aether-compat-probe",
+          "args": [
+            "video",
+            "--id",
+            "com.aether.compat.office-and-productivity-app-6"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "files",
+          "program": "aether-compat-probe",
+          "args": [
+            "files",
+            "--id",
+            "com.aether.compat.office-and-productivity-app-6"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "network",
+          "program": "aether-compat-probe",
+          "args": [
+            "network",
+            "--id",
+            "com.aether.compat.office-and-productivity-app-6"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "persistence",
+          "program": "aether-compat-probe",
+          "args": [
+            "persistence",
+            "--id",
+            "com.aether.compat.office-and-productivity-app-6"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "stability",
+          "program": "aether-compat-probe",
+          "args": [
+            "stability",
+            "--id",
+            "com.aether.compat.office-and-productivity-app-6",
+            "--seconds",
+            "60"
+          ],
+          "timeout_secs": 300
+        }
+      ],
+      "recorded": []
+    },
+    {
+      "name": "Office and productivity app 7",
+      "installer": "/var/lib/aether/compat/payload/TodoistSetup.exe",
+      "args": [
+        "drive_c/Users/user/AppData/Local/Programs/Todoist/Todoist.exe"
+      ],
+      "tweak": null,
+      "checks": [
+        {
+          "check": "install",
+          "program": "aether-runner",
+          "args": [
+            "windows",
+            "install",
+            "--installer",
+            "/var/lib/aether/compat/payload/TodoistSetup.exe",
+            "--id",
+            "com.aether.compat.office-and-productivity-app-7",
+            "--entry",
+            "drive_c/Users/user/AppData/Local/Programs/Todoist/Todoist.exe"
+          ],
+          "timeout_secs": 900
+        },
+        {
+          "check": "launch",
+          "program": "aether-runner",
+          "args": [
+            "launch",
+            "com.aether.compat.office-and-productivity-app-7"
+          ],
+          "timeout_secs": 180
+        },
+        {
+          "check": "window",
+          "program": "xdotool",
+          "args": [
+            "search",
+            "--name",
+            "Todoist"
+          ],
+          "timeout_secs": 60
+        },
+        {
+          "check": "input",
+          "program": "aether-compat-probe",
+          "args": [
+            "input",
+            "--window",
+            "Todoist",
+            "--exe",
+            "drive_c/Users/user/AppData/Local/Programs/Todoist/Todoist.exe"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "audio",
+          "program": "aether-compat-probe",
+          "args": [
+            "audio",
+            "--id",
+            "com.aether.compat.office-and-productivity-app-7"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "video",
+          "program": "aether-compat-probe",
+          "args": [
+            "video",
+            "--id",
+            "com.aether.compat.office-and-productivity-app-7"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "files",
+          "program": "aether-compat-probe",
+          "args": [
+            "files",
+            "--id",
+            "com.aether.compat.office-and-productivity-app-7"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "network",
+          "program": "aether-compat-probe",
+          "args": [
+            "network",
+            "--id",
+            "com.aether.compat.office-and-productivity-app-7"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "persistence",
+          "program": "aether-compat-probe",
+          "args": [
+            "persistence",
+            "--id",
+            "com.aether.compat.office-and-productivity-app-7"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "stability",
+          "program": "aether-compat-probe",
+          "args": [
+            "stability",
+            "--id",
+            "com.aether.compat.office-and-productivity-app-7",
+            "--seconds",
+            "60"
+          ],
+          "timeout_secs": 300
+        }
+      ],
+      "recorded": []
+    },
+    {
+      "name": "Office and productivity app 8",
+      "installer": "/var/lib/aether/compat/payload/PDFCreator-Setup.exe",
+      "args": [
+        "drive_c/Program Files/PDFCreator/PDFCreator.exe"
+      ],
+      "tweak": "install the PDF printer driver manually; driver installers need admin",
+      "checks": [
+        {
+          "check": "install",
+          "program": "aether-runner",
+          "args": [
+            "windows",
+            "install",
+            "--installer",
+            "/var/lib/aether/compat/payload/PDFCreator-Setup.exe",
+            "--id",
+            "com.aether.compat.office-and-productivity-app-8",
+            "--entry",
+            "drive_c/Program Files/PDFCreator/PDFCreator.exe"
+          ],
+          "timeout_secs": 900
+        },
+        {
+          "check": "launch",
+          "program": "aether-runner",
+          "args": [
+            "launch",
+            "com.aether.compat.office-and-productivity-app-8"
+          ],
+          "timeout_secs": 180
+        },
+        {
+          "check": "window",
+          "program": "xdotool",
+          "args": [
+            "search",
+            "--name",
+            "PDFCreator"
+          ],
+          "timeout_secs": 60
+        },
+        {
+          "check": "input",
+          "program": "aether-compat-probe",
+          "args": [
+            "input",
+            "--window",
+            "PDFCreator",
+            "--exe",
+            "drive_c/Program Files/PDFCreator/PDFCreator.exe"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "audio",
+          "program": "aether-compat-probe",
+          "args": [
+            "audio",
+            "--id",
+            "com.aether.compat.office-and-productivity-app-8"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "video",
+          "program": "aether-compat-probe",
+          "args": [
+            "video",
+            "--id",
+            "com.aether.compat.office-and-productivity-app-8"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "files",
+          "program": "aether-compat-probe",
+          "args": [
+            "files",
+            "--id",
+            "com.aether.compat.office-and-productivity-app-8"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "network",
+          "program": "aether-compat-probe",
+          "args": [
+            "network",
+            "--id",
+            "com.aether.compat.office-and-productivity-app-8"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "persistence",
+          "program": "aether-compat-probe",
+          "args": [
+            "persistence",
+            "--id",
+            "com.aether.compat.office-and-productivity-app-8"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "stability",
+          "program": "aether-compat-probe",
+          "args": [
+            "stability",
+            "--id",
+            "com.aether.compat.office-and-productivity-app-8",
+            "--seconds",
+            "60"
+          ],
+          "timeout_secs": 300
+        }
+      ],
+      "recorded": []
+    },
+    {
+      "name": "Media app 1",
+      "installer": "/var/lib/aether/compat/payload/vlc-win64.exe",
+      "args": [
+        "drive_c/Program Files/VideoLAN/VLC/vlc.exe"
+      ],
+      "tweak": null,
+      "checks": [
+        {
+          "check": "install",
+          "program": "aether-runner",
+          "args": [
+            "windows",
+            "install",
+            "--installer",
+            "/var/lib/aether/compat/payload/vlc-win64.exe",
+            "--id",
+            "com.aether.compat.media-app-1",
+            "--entry",
+            "drive_c/Program Files/VideoLAN/VLC/vlc.exe"
+          ],
+          "timeout_secs": 900
+        },
+        {
+          "check": "launch",
+          "program": "aether-runner",
+          "args": [
+            "launch",
+            "com.aether.compat.media-app-1"
+          ],
+          "timeout_secs": 180
+        },
+        {
+          "check": "window",
+          "program": "xdotool",
+          "args": [
+            "search",
+            "--name",
+            "VLC media player"
+          ],
+          "timeout_secs": 60
+        },
+        {
+          "check": "input",
+          "program": "aether-compat-probe",
+          "args": [
+            "input",
+            "--window",
+            "VLC media player",
+            "--exe",
+            "drive_c/Program Files/VideoLAN/VLC/vlc.exe"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "audio",
+          "program": "aether-compat-probe",
+          "args": [
+            "audio",
+            "--id",
+            "com.aether.compat.media-app-1"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "video",
+          "program": "aether-compat-probe",
+          "args": [
+            "video",
+            "--id",
+            "com.aether.compat.media-app-1"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "files",
+          "program": "aether-compat-probe",
+          "args": [
+            "files",
+            "--id",
+            "com.aether.compat.media-app-1"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "network",
+          "program": "aether-compat-probe",
+          "args": [
+            "network",
+            "--id",
+            "com.aether.compat.media-app-1"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "persistence",
+          "program": "aether-compat-probe",
+          "args": [
+            "persistence",
+            "--id",
+            "com.aether.compat.media-app-1"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "stability",
+          "program": "aether-compat-probe",
+          "args": [
+            "stability",
+            "--id",
+            "com.aether.compat.media-app-1",
+            "--seconds",
+            "60"
+          ],
+          "timeout_secs": 300
+        }
+      ],
+      "recorded": []
+    },
+    {
+      "name": "Media app 2",
+      "installer": "/var/lib/aether/compat/payload/foobar2000.exe",
+      "args": [
+        "drive_c/Program Files (x86)/foobar2000/foobar2000.exe"
+      ],
+      "tweak": null,
+      "checks": [
+        {
+          "check": "install",
+          "program": "aether-runner",
+          "args": [
+            "windows",
+            "install",
+            "--installer",
+            "/var/lib/aether/compat/payload/foobar2000.exe",
+            "--id",
+            "com.aether.compat.media-app-2",
+            "--entry",
+            "drive_c/Program Files (x86)/foobar2000/foobar2000.exe"
+          ],
+          "timeout_secs": 900
+        },
+        {
+          "check": "launch",
+          "program": "aether-runner",
+          "args": [
+            "launch",
+            "com.aether.compat.media-app-2"
+          ],
+          "timeout_secs": 180
+        },
+        {
+          "check": "window",
+          "program": "xdotool",
+          "args": [
+            "search",
+            "--name",
+            "foobar2000"
+          ],
+          "timeout_secs": 60
+        },
+        {
+          "check": "input",
+          "program": "aether-compat-probe",
+          "args": [
+            "input",
+            "--window",
+            "foobar2000",
+            "--exe",
+            "drive_c/Program Files (x86)/foobar2000/foobar2000.exe"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "audio",
+          "program": "aether-compat-probe",
+          "args": [
+            "audio",
+            "--id",
+            "com.aether.compat.media-app-2"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "video",
+          "program": "aether-compat-probe",
+          "args": [
+            "video",
+            "--id",
+            "com.aether.compat.media-app-2"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "files",
+          "program": "aether-compat-probe",
+          "args": [
+            "files",
+            "--id",
+            "com.aether.compat.media-app-2"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "network",
+          "program": "aether-compat-probe",
+          "args": [
+            "network",
+            "--id",
+            "com.aether.compat.media-app-2"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "persistence",
+          "program": "aether-compat-probe",
+          "args": [
+            "persistence",
+            "--id",
+            "com.aether.compat.media-app-2"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "stability",
+          "program": "aether-compat-probe",
+          "args": [
+            "stability",
+            "--id",
+            "com.aether.compat.media-app-2",
+            "--seconds",
+            "60"
+          ],
+          "timeout_secs": 300
+        }
+      ],
+      "recorded": []
+    },
+    {
+      "name": "Media app 3",
+      "installer": "/var/lib/aether/compat/payload/shotcut-win64.exe",
+      "args": [
+        "drive_c/Program Files/Shotcut/shotcut.exe"
+      ],
+      "tweak": null,
+      "checks": [
+        {
+          "check": "install",
+          "program": "aether-runner",
+          "args": [
+            "windows",
+            "install",
+            "--installer",
+            "/var/lib/aether/compat/payload/shotcut-win64.exe",
+            "--id",
+            "com.aether.compat.media-app-3",
+            "--entry",
+            "drive_c/Program Files/Shotcut/shotcut.exe"
+          ],
+          "timeout_secs": 900
+        },
+        {
+          "check": "launch",
+          "program": "aether-runner",
+          "args": [
+            "launch",
+            "com.aether.compat.media-app-3"
+          ],
+          "timeout_secs": 180
+        },
+        {
+          "check": "window",
+          "program": "xdotool",
+          "args": [
+            "search",
+            "--name",
+            "Shotcut"
+          ],
+          "timeout_secs": 60
+        },
+        {
+          "check": "input",
+          "program": "aether-compat-probe",
+          "args": [
+            "input",
+            "--window",
+            "Shotcut",
+            "--exe",
+            "drive_c/Program Files/Shotcut/shotcut.exe"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "audio",
+          "program": "aether-compat-probe",
+          "args": [
+            "audio",
+            "--id",
+            "com.aether.compat.media-app-3"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "video",
+          "program": "aether-compat-probe",
+          "args": [
+            "video",
+            "--id",
+            "com.aether.compat.media-app-3"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "files",
+          "program": "aether-compat-probe",
+          "args": [
+            "files",
+            "--id",
+            "com.aether.compat.media-app-3"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "network",
+          "program": "aether-compat-probe",
+          "args": [
+            "network",
+            "--id",
+            "com.aether.compat.media-app-3"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "persistence",
+          "program": "aether-compat-probe",
+          "args": [
+            "persistence",
+            "--id",
+            "com.aether.compat.media-app-3"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "stability",
+          "program": "aether-compat-probe",
+          "args": [
+            "stability",
+            "--id",
+            "com.aether.compat.media-app-3",
+            "--seconds",
+            "60"
+          ],
+          "timeout_secs": 300
+        }
+      ],
+      "recorded": []
+    },
+    {
+      "name": "Media app 4",
+      "installer": "/var/lib/aether/compat/payload/gimp-setup.exe",
+      "args": [
+        "drive_c/Program Files/GIMP 2/bin/gimp-2.10.exe"
+      ],
+      "tweak": null,
+      "checks": [
+        {
+          "check": "install",
+          "program": "aether-runner",
+          "args": [
+            "windows",
+            "install",
+            "--installer",
+            "/var/lib/aether/compat/payload/gimp-setup.exe",
+            "--id",
+            "com.aether.compat.media-app-4",
+            "--entry",
+            "drive_c/Program Files/GIMP 2/bin/gimp-2.10.exe"
+          ],
+          "timeout_secs": 900
+        },
+        {
+          "check": "launch",
+          "program": "aether-runner",
+          "args": [
+            "launch",
+            "com.aether.compat.media-app-4"
+          ],
+          "timeout_secs": 180
+        },
+        {
+          "check": "window",
+          "program": "xdotool",
+          "args": [
+            "search",
+            "--name",
+            "GIMP"
+          ],
+          "timeout_secs": 60
+        },
+        {
+          "check": "input",
+          "program": "aether-compat-probe",
+          "args": [
+            "input",
+            "--window",
+            "GIMP",
+            "--exe",
+            "drive_c/Program Files/GIMP 2/bin/gimp-2.10.exe"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "audio",
+          "program": "aether-compat-probe",
+          "args": [
+            "audio",
+            "--id",
+            "com.aether.compat.media-app-4"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "video",
+          "program": "aether-compat-probe",
+          "args": [
+            "video",
+            "--id",
+            "com.aether.compat.media-app-4"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "files",
+          "program": "aether-compat-probe",
+          "args": [
+            "files",
+            "--id",
+            "com.aether.compat.media-app-4"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "network",
+          "program": "aether-compat-probe",
+          "args": [
+            "network",
+            "--id",
+            "com.aether.compat.media-app-4"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "persistence",
+          "program": "aether-compat-probe",
+          "args": [
+            "persistence",
+            "--id",
+            "com.aether.compat.media-app-4"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "stability",
+          "program": "aether-compat-probe",
+          "args": [
+            "stability",
+            "--id",
+            "com.aether.compat.media-app-4",
+            "--seconds",
+            "60"
+          ],
+          "timeout_secs": 300
+        }
+      ],
+      "recorded": []
+    },
+    {
+      "name": "Media app 5",
+      "installer": "/var/lib/aether/compat/payload/HandBrake-Win_GUI.exe",
+      "args": [
+        "drive_c/Program Files/HandBrake/HandBrake.exe"
+      ],
+      "tweak": null,
+      "checks": [
+        {
+          "check": "install",
+          "program": "aether-runner",
+          "args": [
+            "windows",
+            "install",
+            "--installer",
+            "/var/lib/aether/compat/payload/HandBrake-Win_GUI.exe",
+            "--id",
+            "com.aether.compat.media-app-5",
+            "--entry",
+            "drive_c/Program Files/HandBrake/HandBrake.exe"
+          ],
+          "timeout_secs": 900
+        },
+        {
+          "check": "launch",
+          "program": "aether-runner",
+          "args": [
+            "launch",
+            "com.aether.compat.media-app-5"
+          ],
+          "timeout_secs": 180
+        },
+        {
+          "check": "window",
+          "program": "xdotool",
+          "args": [
+            "search",
+            "--name",
+            "HandBrake"
+          ],
+          "timeout_secs": 60
+        },
+        {
+          "check": "input",
+          "program": "aether-compat-probe",
+          "args": [
+            "input",
+            "--window",
+            "HandBrake",
+            "--exe",
+            "drive_c/Program Files/HandBrake/HandBrake.exe"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "audio",
+          "program": "aether-compat-probe",
+          "args": [
+            "audio",
+            "--id",
+            "com.aether.compat.media-app-5"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "video",
+          "program": "aether-compat-probe",
+          "args": [
+            "video",
+            "--id",
+            "com.aether.compat.media-app-5"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "files",
+          "program": "aether-compat-probe",
+          "args": [
+            "files",
+            "--id",
+            "com.aether.compat.media-app-5"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "network",
+          "program": "aether-compat-probe",
+          "args": [
+            "network",
+            "--id",
+            "com.aether.compat.media-app-5"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "persistence",
+          "program": "aether-compat-probe",
+          "args": [
+            "persistence",
+            "--id",
+            "com.aether.compat.media-app-5"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "stability",
+          "program": "aether-compat-probe",
+          "args": [
+            "stability",
+            "--id",
+            "com.aether.compat.media-app-5",
+            "--seconds",
+            "60"
+          ],
+          "timeout_secs": 300
+        }
+      ],
+      "recorded": []
+    },
+    {
+      "name": "Media app 6",
+      "installer": "/var/lib/aether/compat/payload/SpotifySetup.exe",
+      "args": [
+        "drive_c/Users/user/AppData/Roaming/Spotify/Spotify.exe"
+      ],
+      "tweak": null,
+      "checks": [
+        {
+          "check": "install",
+          "program": "aether-runner",
+          "args": [
+            "windows",
+            "install",
+            "--installer",
+            "/var/lib/aether/compat/payload/SpotifySetup.exe",
+            "--id",
+            "com.aether.compat.media-app-6",
+            "--entry",
+            "drive_c/Users/user/AppData/Roaming/Spotify/Spotify.exe"
+          ],
+          "timeout_secs": 900
+        },
+        {
+          "check": "launch",
+          "program": "aether-runner",
+          "args": [
+            "launch",
+            "com.aether.compat.media-app-6"
+          ],
+          "timeout_secs": 180
+        },
+        {
+          "check": "window",
+          "program": "xdotool",
+          "args": [
+            "search",
+            "--name",
+            "Spotify"
+          ],
+          "timeout_secs": 60
+        },
+        {
+          "check": "input",
+          "program": "aether-compat-probe",
+          "args": [
+            "input",
+            "--window",
+            "Spotify",
+            "--exe",
+            "drive_c/Users/user/AppData/Roaming/Spotify/Spotify.exe"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "audio",
+          "program": "aether-compat-probe",
+          "args": [
+            "audio",
+            "--id",
+            "com.aether.compat.media-app-6"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "video",
+          "program": "aether-compat-probe",
+          "args": [
+            "video",
+            "--id",
+            "com.aether.compat.media-app-6"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "files",
+          "program": "aether-compat-probe",
+          "args": [
+            "files",
+            "--id",
+            "com.aether.compat.media-app-6"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "network",
+          "program": "aether-compat-probe",
+          "args": [
+            "network",
+            "--id",
+            "com.aether.compat.media-app-6"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "persistence",
+          "program": "aether-compat-probe",
+          "args": [
+            "persistence",
+            "--id",
+            "com.aether.compat.media-app-6"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "stability",
+          "program": "aether-compat-probe",
+          "args": [
+            "stability",
+            "--id",
+            "com.aether.compat.media-app-6",
+            "--seconds",
+            "60"
+          ],
+          "timeout_secs": 300
+        }
+      ],
+      "recorded": []
+    },
+    {
+      "name": "Development app 1",
+      "installer": "/var/lib/aether/compat/payload/VSCodeUserSetup-x64.exe",
+      "args": [
+        "drive_c/Users/user/AppData/Local/Programs/Microsoft VS Code/Code.exe"
+      ],
+      "tweak": null,
+      "checks": [
+        {
+          "check": "install",
+          "program": "aether-runner",
+          "args": [
+            "windows",
+            "install",
+            "--installer",
+            "/var/lib/aether/compat/payload/VSCodeUserSetup-x64.exe",
+            "--id",
+            "com.aether.compat.development-app-1",
+            "--entry",
+            "drive_c/Users/user/AppData/Local/Programs/Microsoft VS Code/Code.exe"
+          ],
+          "timeout_secs": 900
+        },
+        {
+          "check": "launch",
+          "program": "aether-runner",
+          "args": [
+            "launch",
+            "com.aether.compat.development-app-1"
+          ],
+          "timeout_secs": 180
+        },
+        {
+          "check": "window",
+          "program": "xdotool",
+          "args": [
+            "search",
+            "--name",
+            "Visual Studio Code"
+          ],
+          "timeout_secs": 60
+        },
+        {
+          "check": "input",
+          "program": "aether-compat-probe",
+          "args": [
+            "input",
+            "--window",
+            "Visual Studio Code",
+            "--exe",
+            "drive_c/Users/user/AppData/Local/Programs/Microsoft VS Code/Code.exe"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "audio",
+          "program": "aether-compat-probe",
+          "args": [
+            "audio",
+            "--id",
+            "com.aether.compat.development-app-1"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "video",
+          "program": "aether-compat-probe",
+          "args": [
+            "video",
+            "--id",
+            "com.aether.compat.development-app-1"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "files",
+          "program": "aether-compat-probe",
+          "args": [
+            "files",
+            "--id",
+            "com.aether.compat.development-app-1"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "network",
+          "program": "aether-compat-probe",
+          "args": [
+            "network",
+            "--id",
+            "com.aether.compat.development-app-1"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "persistence",
+          "program": "aether-compat-probe",
+          "args": [
+            "persistence",
+            "--id",
+            "com.aether.compat.development-app-1"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "stability",
+          "program": "aether-compat-probe",
+          "args": [
+            "stability",
+            "--id",
+            "com.aether.compat.development-app-1",
+            "--seconds",
+            "60"
+          ],
+          "timeout_secs": 300
+        }
+      ],
+      "recorded": []
+    },
+    {
+      "name": "Development app 2",
+      "installer": "/var/lib/aether/compat/payload/vs_community.exe",
+      "args": [
+        "drive_c/Program Files/Microsoft Visual Studio/2022/Community/Common7/IDE/devenv.exe"
+      ],
+      "tweak": "build an offline layout on Windows first; the web bootstrapper needs MS servers",
+      "checks": [
+        {
+          "check": "install",
+          "program": "aether-runner",
+          "args": [
+            "windows",
+            "install",
+            "--installer",
+            "/var/lib/aether/compat/payload/vs_community.exe",
+            "--id",
+            "com.aether.compat.development-app-2",
+            "--entry",
+            "drive_c/Program Files/Microsoft Visual Studio/2022/Community/Common7/IDE/devenv.exe"
+          ],
+          "timeout_secs": 900
+        },
+        {
+          "check": "launch",
+          "program": "aether-runner",
+          "args": [
+            "launch",
+            "com.aether.compat.development-app-2"
+          ],
+          "timeout_secs": 180
+        },
+        {
+          "check": "window",
+          "program": "xdotool",
+          "args": [
+            "search",
+            "--name",
+            "Microsoft Visual Studio"
+          ],
+          "timeout_secs": 60
+        },
+        {
+          "check": "input",
+          "program": "aether-compat-probe",
+          "args": [
+            "input",
+            "--window",
+            "Microsoft Visual Studio",
+            "--exe",
+            "drive_c/Program Files/Microsoft Visual Studio/2022/Community/Common7/IDE/devenv.exe"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "audio",
+          "program": "aether-compat-probe",
+          "args": [
+            "audio",
+            "--id",
+            "com.aether.compat.development-app-2"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "video",
+          "program": "aether-compat-probe",
+          "args": [
+            "video",
+            "--id",
+            "com.aether.compat.development-app-2"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "files",
+          "program": "aether-compat-probe",
+          "args": [
+            "files",
+            "--id",
+            "com.aether.compat.development-app-2"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "network",
+          "program": "aether-compat-probe",
+          "args": [
+            "network",
+            "--id",
+            "com.aether.compat.development-app-2"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "persistence",
+          "program": "aether-compat-probe",
+          "args": [
+            "persistence",
+            "--id",
+            "com.aether.compat.development-app-2"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "stability",
+          "program": "aether-compat-probe",
+          "args": [
+            "stability",
+            "--id",
+            "com.aether.compat.development-app-2",
+            "--seconds",
+            "60"
+          ],
+          "timeout_secs": 300
+        }
+      ],
+      "recorded": []
+    },
+    {
+      "name": "Development app 3",
+      "installer": "/var/lib/aether/compat/payload/putty-64bit-installer.msi",
+      "args": [
+        "drive_c/Program Files/PuTTY/putty.exe"
+      ],
+      "tweak": null,
+      "checks": [
+        {
+          "check": "install",
+          "program": "aether-runner",
+          "args": [
+            "windows",
+            "install",
+            "--installer",
+            "/var/lib/aether/compat/payload/putty-64bit-installer.msi",
+            "--id",
+            "com.aether.compat.development-app-3",
+            "--entry",
+            "drive_c/Program Files/PuTTY/putty.exe"
+          ],
+          "timeout_secs": 900
+        },
+        {
+          "check": "launch",
+          "program": "aether-runner",
+          "args": [
+            "launch",
+            "com.aether.compat.development-app-3"
+          ],
+          "timeout_secs": 180
+        },
+        {
+          "check": "window",
+          "program": "xdotool",
+          "args": [
+            "search",
+            "--name",
+            "PuTTY"
+          ],
+          "timeout_secs": 60
+        },
+        {
+          "check": "input",
+          "program": "aether-compat-probe",
+          "args": [
+            "input",
+            "--window",
+            "PuTTY",
+            "--exe",
+            "drive_c/Program Files/PuTTY/putty.exe"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "audio",
+          "program": "aether-compat-probe",
+          "args": [
+            "audio",
+            "--id",
+            "com.aether.compat.development-app-3"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "video",
+          "program": "aether-compat-probe",
+          "args": [
+            "video",
+            "--id",
+            "com.aether.compat.development-app-3"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "files",
+          "program": "aether-compat-probe",
+          "args": [
+            "files",
+            "--id",
+            "com.aether.compat.development-app-3"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "network",
+          "program": "aether-compat-probe",
+          "args": [
+            "network",
+            "--id",
+            "com.aether.compat.development-app-3"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "persistence",
+          "program": "aether-compat-probe",
+          "args": [
+            "persistence",
+            "--id",
+            "com.aether.compat.development-app-3"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "stability",
+          "program": "aether-compat-probe",
+          "args": [
+            "stability",
+            "--id",
+            "com.aether.compat.development-app-3",
+            "--seconds",
+            "60"
+          ],
+          "timeout_secs": 300
+        }
+      ],
+      "recorded": []
+    },
+    {
+      "name": "Development app 4",
+      "installer": "/var/lib/aether/compat/payload/dbeaver-ce-setup.exe",
+      "args": [
+        "drive_c/Program Files/DBeaver/dbeaver.exe"
+      ],
+      "tweak": null,
+      "checks": [
+        {
+          "check": "install",
+          "program": "aether-runner",
+          "args": [
+            "windows",
+            "install",
+            "--installer",
+            "/var/lib/aether/compat/payload/dbeaver-ce-setup.exe",
+            "--id",
+            "com.aether.compat.development-app-4",
+            "--entry",
+            "drive_c/Program Files/DBeaver/dbeaver.exe"
+          ],
+          "timeout_secs": 900
+        },
+        {
+          "check": "launch",
+          "program": "aether-runner",
+          "args": [
+            "launch",
+            "com.aether.compat.development-app-4"
+          ],
+          "timeout_secs": 180
+        },
+        {
+          "check": "window",
+          "program": "xdotool",
+          "args": [
+            "search",
+            "--name",
+            "DBeaver"
+          ],
+          "timeout_secs": 60
+        },
+        {
+          "check": "input",
+          "program": "aether-compat-probe",
+          "args": [
+            "input",
+            "--window",
+            "DBeaver",
+            "--exe",
+            "drive_c/Program Files/DBeaver/dbeaver.exe"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "audio",
+          "program": "aether-compat-probe",
+          "args": [
+            "audio",
+            "--id",
+            "com.aether.compat.development-app-4"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "video",
+          "program": "aether-compat-probe",
+          "args": [
+            "video",
+            "--id",
+            "com.aether.compat.development-app-4"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "files",
+          "program": "aether-compat-probe",
+          "args": [
+            "files",
+            "--id",
+            "com.aether.compat.development-app-4"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "network",
+          "program": "aether-compat-probe",
+          "args": [
+            "network",
+            "--id",
+            "com.aether.compat.development-app-4"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "persistence",
+          "program": "aether-compat-probe",
+          "args": [
+            "persistence",
+            "--id",
+            "com.aether.compat.development-app-4"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "stability",
+          "program": "aether-compat-probe",
+          "args": [
+            "stability",
+            "--id",
+            "com.aether.compat.development-app-4",
+            "--seconds",
+            "60"
+          ],
+          "timeout_secs": 300
+        }
+      ],
+      "recorded": []
+    },
+    {
+      "name": "Development app 5",
+      "installer": "/var/lib/aether/compat/payload/GitHubDesktopSetup-x64.exe",
+      "args": [
+        "drive_c/Users/user/AppData/Local/GitHubDesktop/GitHubDesktop.exe"
+      ],
+      "tweak": null,
+      "checks": [
+        {
+          "check": "install",
+          "program": "aether-runner",
+          "args": [
+            "windows",
+            "install",
+            "--installer",
+            "/var/lib/aether/compat/payload/GitHubDesktopSetup-x64.exe",
+            "--id",
+            "com.aether.compat.development-app-5",
+            "--entry",
+            "drive_c/Users/user/AppData/Local/GitHubDesktop/GitHubDesktop.exe"
+          ],
+          "timeout_secs": 900
+        },
+        {
+          "check": "launch",
+          "program": "aether-runner",
+          "args": [
+            "launch",
+            "com.aether.compat.development-app-5"
+          ],
+          "timeout_secs": 180
+        },
+        {
+          "check": "window",
+          "program": "xdotool",
+          "args": [
+            "search",
+            "--name",
+            "GitHub Desktop"
+          ],
+          "timeout_secs": 60
+        },
+        {
+          "check": "input",
+          "program": "aether-compat-probe",
+          "args": [
+            "input",
+            "--window",
+            "GitHub Desktop",
+            "--exe",
+            "drive_c/Users/user/AppData/Local/GitHubDesktop/GitHubDesktop.exe"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "audio",
+          "program": "aether-compat-probe",
+          "args": [
+            "audio",
+            "--id",
+            "com.aether.compat.development-app-5"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "video",
+          "program": "aether-compat-probe",
+          "args": [
+            "video",
+            "--id",
+            "com.aether.compat.development-app-5"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "files",
+          "program": "aether-compat-probe",
+          "args": [
+            "files",
+            "--id",
+            "com.aether.compat.development-app-5"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "network",
+          "program": "aether-compat-probe",
+          "args": [
+            "network",
+            "--id",
+            "com.aether.compat.development-app-5"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "persistence",
+          "program": "aether-compat-probe",
+          "args": [
+            "persistence",
+            "--id",
+            "com.aether.compat.development-app-5"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "stability",
+          "program": "aether-compat-probe",
+          "args": [
+            "stability",
+            "--id",
+            "com.aether.compat.development-app-5",
+            "--seconds",
+            "60"
+          ],
+          "timeout_secs": 300
+        }
+      ],
+      "recorded": []
+    },
+    {
+      "name": "Development app 6",
+      "installer": "/var/lib/aether/compat/payload/Docker Desktop Installer.exe",
+      "args": [
+        "drive_c/Program Files/Docker/Docker/Docker Desktop.exe"
+      ],
+      "tweak": "requires WSL2/Hyper-V; expected Tier D without a Windows kernel",
+      "checks": [
+        {
+          "check": "install",
+          "program": "aether-runner",
+          "args": [
+            "windows",
+            "install",
+            "--installer",
+            "/var/lib/aether/compat/payload/Docker Desktop Installer.exe",
+            "--id",
+            "com.aether.compat.development-app-6",
+            "--entry",
+            "drive_c/Program Files/Docker/Docker/Docker Desktop.exe"
+          ],
+          "timeout_secs": 900
+        },
+        {
+          "check": "launch",
+          "program": "aether-runner",
+          "args": [
+            "launch",
+            "com.aether.compat.development-app-6"
+          ],
+          "timeout_secs": 180
+        },
+        {
+          "check": "window",
+          "program": "xdotool",
+          "args": [
+            "search",
+            "--name",
+            "Docker Desktop"
+          ],
+          "timeout_secs": 60
+        },
+        {
+          "check": "input",
+          "program": "aether-compat-probe",
+          "args": [
+            "input",
+            "--window",
+            "Docker Desktop",
+            "--exe",
+            "drive_c/Program Files/Docker/Docker/Docker Desktop.exe"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "audio",
+          "program": "aether-compat-probe",
+          "args": [
+            "audio",
+            "--id",
+            "com.aether.compat.development-app-6"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "video",
+          "program": "aether-compat-probe",
+          "args": [
+            "video",
+            "--id",
+            "com.aether.compat.development-app-6"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "files",
+          "program": "aether-compat-probe",
+          "args": [
+            "files",
+            "--id",
+            "com.aether.compat.development-app-6"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "network",
+          "program": "aether-compat-probe",
+          "args": [
+            "network",
+            "--id",
+            "com.aether.compat.development-app-6"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "persistence",
+          "program": "aether-compat-probe",
+          "args": [
+            "persistence",
+            "--id",
+            "com.aether.compat.development-app-6"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "stability",
+          "program": "aether-compat-probe",
+          "args": [
+            "stability",
+            "--id",
+            "com.aether.compat.development-app-6",
+            "--seconds",
+            "60"
+          ],
+          "timeout_secs": 300
+        }
+      ],
+      "recorded": []
+    },
+    {
+      "name": "Development app 7",
+      "installer": "/var/lib/aether/compat/payload/Postman-win64-Setup.exe",
+      "args": [
+        "drive_c/Users/user/AppData/Local/Postman/Postman.exe"
+      ],
+      "tweak": null,
+      "checks": [
+        {
+          "check": "install",
+          "program": "aether-runner",
+          "args": [
+            "windows",
+            "install",
+            "--installer",
+            "/var/lib/aether/compat/payload/Postman-win64-Setup.exe",
+            "--id",
+            "com.aether.compat.development-app-7",
+            "--entry",
+            "drive_c/Users/user/AppData/Local/Postman/Postman.exe"
+          ],
+          "timeout_secs": 900
+        },
+        {
+          "check": "launch",
+          "program": "aether-runner",
+          "args": [
+            "launch",
+            "com.aether.compat.development-app-7"
+          ],
+          "timeout_secs": 180
+        },
+        {
+          "check": "window",
+          "program": "xdotool",
+          "args": [
+            "search",
+            "--name",
+            "Postman"
+          ],
+          "timeout_secs": 60
+        },
+        {
+          "check": "input",
+          "program": "aether-compat-probe",
+          "args": [
+            "input",
+            "--window",
+            "Postman",
+            "--exe",
+            "drive_c/Users/user/AppData/Local/Postman/Postman.exe"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "audio",
+          "program": "aether-compat-probe",
+          "args": [
+            "audio",
+            "--id",
+            "com.aether.compat.development-app-7"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "video",
+          "program": "aether-compat-probe",
+          "args": [
+            "video",
+            "--id",
+            "com.aether.compat.development-app-7"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "files",
+          "program": "aether-compat-probe",
+          "args": [
+            "files",
+            "--id",
+            "com.aether.compat.development-app-7"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "network",
+          "program": "aether-compat-probe",
+          "args": [
+            "network",
+            "--id",
+            "com.aether.compat.development-app-7"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "persistence",
+          "program": "aether-compat-probe",
+          "args": [
+            "persistence",
+            "--id",
+            "com.aether.compat.development-app-7"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "stability",
+          "program": "aether-compat-probe",
+          "args": [
+            "stability",
+            "--id",
+            "com.aether.compat.development-app-7",
+            "--seconds",
+            "60"
+          ],
+          "timeout_secs": 300
+        }
+      ],
+      "recorded": []
+    },
+    {
+      "name": "Games app 1",
+      "installer": "/var/lib/aether/compat/payload/setup_fallout_4.exe",
+      "args": [
+        "drive_c/GOG Games/Fallout 4/Fallout4.exe"
+      ],
+      "tweak": null,
+      "checks": [
+        {
+          "check": "install",
+          "program": "aether-runner",
+          "args": [
+            "windows",
+            "install",
+            "--installer",
+            "/var/lib/aether/compat/payload/setup_fallout_4.exe",
+            "--id",
+            "com.aether.compat.games-app-1",
+            "--entry",
+            "drive_c/GOG Games/Fallout 4/Fallout4.exe"
+          ],
+          "timeout_secs": 900
+        },
+        {
+          "check": "launch",
+          "program": "aether-runner",
+          "args": [
+            "launch",
+            "com.aether.compat.games-app-1"
+          ],
+          "timeout_secs": 180
+        },
+        {
+          "check": "window",
+          "program": "xdotool",
+          "args": [
+            "search",
+            "--name",
+            "Fallout4"
+          ],
+          "timeout_secs": 60
+        },
+        {
+          "check": "input",
+          "program": "aether-compat-probe",
+          "args": [
+            "input",
+            "--window",
+            "Fallout4",
+            "--exe",
+            "drive_c/GOG Games/Fallout 4/Fallout4.exe"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "audio",
+          "program": "aether-compat-probe",
+          "args": [
+            "audio",
+            "--id",
+            "com.aether.compat.games-app-1"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "video",
+          "program": "aether-compat-probe",
+          "args": [
+            "video",
+            "--id",
+            "com.aether.compat.games-app-1"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "files",
+          "program": "aether-compat-probe",
+          "args": [
+            "files",
+            "--id",
+            "com.aether.compat.games-app-1"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "network",
+          "program": "aether-compat-probe",
+          "args": [
+            "network",
+            "--id",
+            "com.aether.compat.games-app-1"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "persistence",
+          "program": "aether-compat-probe",
+          "args": [
+            "persistence",
+            "--id",
+            "com.aether.compat.games-app-1"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "stability",
+          "program": "aether-compat-probe",
+          "args": [
+            "stability",
+            "--id",
+            "com.aether.compat.games-app-1",
+            "--seconds",
+            "60"
+          ],
+          "timeout_secs": 300
+        }
+      ],
+      "recorded": []
+    },
+    {
+      "name": "Games app 2",
+      "installer": "/var/lib/aether/compat/payload/setup_cyberpunk_2077.exe",
+      "args": [
+        "drive_c/GOG Games/Cyberpunk 2077/bin/x64/Cyberpunk2077.exe"
+      ],
+      "tweak": "force vkd3d-proton in the prefix",
+      "checks": [
+        {
+          "check": "install",
+          "program": "aether-runner",
+          "args": [
+            "windows",
+            "install",
+            "--installer",
+            "/var/lib/aether/compat/payload/setup_cyberpunk_2077.exe",
+            "--id",
+            "com.aether.compat.games-app-2",
+            "--entry",
+            "drive_c/GOG Games/Cyberpunk 2077/bin/x64/Cyberpunk2077.exe"
+          ],
+          "timeout_secs": 900
+        },
+        {
+          "check": "launch",
+          "program": "aether-runner",
+          "args": [
+            "launch",
+            "com.aether.compat.games-app-2"
+          ],
+          "timeout_secs": 180
+        },
+        {
+          "check": "window",
+          "program": "xdotool",
+          "args": [
+            "search",
+            "--name",
+            "Cyberpunk 2077"
+          ],
+          "timeout_secs": 60
+        },
+        {
+          "check": "input",
+          "program": "aether-compat-probe",
+          "args": [
+            "input",
+            "--window",
+            "Cyberpunk 2077",
+            "--exe",
+            "drive_c/GOG Games/Cyberpunk 2077/bin/x64/Cyberpunk2077.exe"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "audio",
+          "program": "aether-compat-probe",
+          "args": [
+            "audio",
+            "--id",
+            "com.aether.compat.games-app-2"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "video",
+          "program": "aether-compat-probe",
+          "args": [
+            "video",
+            "--id",
+            "com.aether.compat.games-app-2"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "files",
+          "program": "aether-compat-probe",
+          "args": [
+            "files",
+            "--id",
+            "com.aether.compat.games-app-2"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "network",
+          "program": "aether-compat-probe",
+          "args": [
+            "network",
+            "--id",
+            "com.aether.compat.games-app-2"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "persistence",
+          "program": "aether-compat-probe",
+          "args": [
+            "persistence",
+            "--id",
+            "com.aether.compat.games-app-2"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "stability",
+          "program": "aether-compat-probe",
+          "args": [
+            "stability",
+            "--id",
+            "com.aether.compat.games-app-2",
+            "--seconds",
+            "60"
+          ],
+          "timeout_secs": 300
+        }
+      ],
+      "recorded": []
+    },
+    {
+      "name": "Games app 3",
+      "installer": "/var/lib/aether/compat/payload/setup_celeste.exe",
+      "args": [
+        "drive_c/GOG Games/Celeste/Celeste.exe"
+      ],
+      "tweak": null,
+      "checks": [
+        {
+          "check": "install",
+          "program": "aether-runner",
+          "args": [
+            "windows",
+            "install",
+            "--installer",
+            "/var/lib/aether/compat/payload/setup_celeste.exe",
+            "--id",
+            "com.aether.compat.games-app-3",
+            "--entry",
+            "drive_c/GOG Games/Celeste/Celeste.exe"
+          ],
+          "timeout_secs": 900
+        },
+        {
+          "check": "launch",
+          "program": "aether-runner",
+          "args": [
+            "launch",
+            "com.aether.compat.games-app-3"
+          ],
+          "timeout_secs": 180
+        },
+        {
+          "check": "window",
+          "program": "xdotool",
+          "args": [
+            "search",
+            "--name",
+            "Celeste"
+          ],
+          "timeout_secs": 60
+        },
+        {
+          "check": "input",
+          "program": "aether-compat-probe",
+          "args": [
+            "input",
+            "--window",
+            "Celeste",
+            "--exe",
+            "drive_c/GOG Games/Celeste/Celeste.exe"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "audio",
+          "program": "aether-compat-probe",
+          "args": [
+            "audio",
+            "--id",
+            "com.aether.compat.games-app-3"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "video",
+          "program": "aether-compat-probe",
+          "args": [
+            "video",
+            "--id",
+            "com.aether.compat.games-app-3"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "files",
+          "program": "aether-compat-probe",
+          "args": [
+            "files",
+            "--id",
+            "com.aether.compat.games-app-3"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "network",
+          "program": "aether-compat-probe",
+          "args": [
+            "network",
+            "--id",
+            "com.aether.compat.games-app-3"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "persistence",
+          "program": "aether-compat-probe",
+          "args": [
+            "persistence",
+            "--id",
+            "com.aether.compat.games-app-3"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "stability",
+          "program": "aether-compat-probe",
+          "args": [
+            "stability",
+            "--id",
+            "com.aether.compat.games-app-3",
+            "--seconds",
+            "60"
+          ],
+          "timeout_secs": 300
+        }
+      ],
+      "recorded": []
+    },
+    {
+      "name": "Games app 4",
+      "installer": "/var/lib/aether/compat/payload/SteamSetup.exe",
+      "args": [
+        "drive_c/Program Files (x86)/Steam/steam.exe"
+      ],
+      "tweak": null,
+      "checks": [
+        {
+          "check": "install",
+          "program": "aether-runner",
+          "args": [
+            "windows",
+            "install",
+            "--installer",
+            "/var/lib/aether/compat/payload/SteamSetup.exe",
+            "--id",
+            "com.aether.compat.games-app-4",
+            "--entry",
+            "drive_c/Program Files (x86)/Steam/steam.exe"
+          ],
+          "timeout_secs": 900
+        },
+        {
+          "check": "launch",
+          "program": "aether-runner",
+          "args": [
+            "launch",
+            "com.aether.compat.games-app-4"
+          ],
+          "timeout_secs": 180
+        },
+        {
+          "check": "window",
+          "program": "xdotool",
+          "args": [
+            "search",
+            "--name",
+            "Steam"
+          ],
+          "timeout_secs": 60
+        },
+        {
+          "check": "input",
+          "program": "aether-compat-probe",
+          "args": [
+            "input",
+            "--window",
+            "Steam",
+            "--exe",
+            "drive_c/Program Files (x86)/Steam/steam.exe"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "audio",
+          "program": "aether-compat-probe",
+          "args": [
+            "audio",
+            "--id",
+            "com.aether.compat.games-app-4"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "video",
+          "program": "aether-compat-probe",
+          "args": [
+            "video",
+            "--id",
+            "com.aether.compat.games-app-4"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "files",
+          "program": "aether-compat-probe",
+          "args": [
+            "files",
+            "--id",
+            "com.aether.compat.games-app-4"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "network",
+          "program": "aether-compat-probe",
+          "args": [
+            "network",
+            "--id",
+            "com.aether.compat.games-app-4"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "persistence",
+          "program": "aether-compat-probe",
+          "args": [
+            "persistence",
+            "--id",
+            "com.aether.compat.games-app-4"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "stability",
+          "program": "aether-compat-probe",
+          "args": [
+            "stability",
+            "--id",
+            "com.aether.compat.games-app-4",
+            "--seconds",
+            "60"
+          ],
+          "timeout_secs": 300
+        }
+      ],
+      "recorded": []
+    },
+    {
+      "name": "Games app 5",
+      "installer": "/var/lib/aether/compat/payload/setup_cuphead.exe",
+      "args": [
+        "drive_c/GOG Games/Cuphead/Cuphead.exe"
+      ],
+      "tweak": null,
+      "checks": [
+        {
+          "check": "install",
+          "program": "aether-runner",
+          "args": [
+            "windows",
+            "install",
+            "--installer",
+            "/var/lib/aether/compat/payload/setup_cuphead.exe",
+            "--id",
+            "com.aether.compat.games-app-5",
+            "--entry",
+            "drive_c/GOG Games/Cuphead/Cuphead.exe"
+          ],
+          "timeout_secs": 900
+        },
+        {
+          "check": "launch",
+          "program": "aether-runner",
+          "args": [
+            "launch",
+            "com.aether.compat.games-app-5"
+          ],
+          "timeout_secs": 180
+        },
+        {
+          "check": "window",
+          "program": "xdotool",
+          "args": [
+            "search",
+            "--name",
+            "Cuphead"
+          ],
+          "timeout_secs": 60
+        },
+        {
+          "check": "input",
+          "program": "aether-compat-probe",
+          "args": [
+            "input",
+            "--window",
+            "Cuphead",
+            "--exe",
+            "drive_c/GOG Games/Cuphead/Cuphead.exe"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "audio",
+          "program": "aether-compat-probe",
+          "args": [
+            "audio",
+            "--id",
+            "com.aether.compat.games-app-5"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "video",
+          "program": "aether-compat-probe",
+          "args": [
+            "video",
+            "--id",
+            "com.aether.compat.games-app-5"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "files",
+          "program": "aether-compat-probe",
+          "args": [
+            "files",
+            "--id",
+            "com.aether.compat.games-app-5"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "network",
+          "program": "aether-compat-probe",
+          "args": [
+            "network",
+            "--id",
+            "com.aether.compat.games-app-5"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "persistence",
+          "program": "aether-compat-probe",
+          "args": [
+            "persistence",
+            "--id",
+            "com.aether.compat.games-app-5"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "stability",
+          "program": "aether-compat-probe",
+          "args": [
+            "stability",
+            "--id",
+            "com.aether.compat.games-app-5",
+            "--seconds",
+            "60"
+          ],
+          "timeout_secs": 300
+        }
+      ],
+      "recorded": []
+    },
+    {
+      "name": "Games app 6",
+      "installer": "/var/lib/aether/compat/payload/setup_abzu.exe",
+      "args": [
+        "drive_c/GOG Games/ABZU/ABZU.exe"
+      ],
+      "tweak": null,
+      "checks": [
+        {
+          "check": "install",
+          "program": "aether-runner",
+          "args": [
+            "windows",
+            "install",
+            "--installer",
+            "/var/lib/aether/compat/payload/setup_abzu.exe",
+            "--id",
+            "com.aether.compat.games-app-6",
+            "--entry",
+            "drive_c/GOG Games/ABZU/ABZU.exe"
+          ],
+          "timeout_secs": 900
+        },
+        {
+          "check": "launch",
+          "program": "aether-runner",
+          "args": [
+            "launch",
+            "com.aether.compat.games-app-6"
+          ],
+          "timeout_secs": 180
+        },
+        {
+          "check": "window",
+          "program": "xdotool",
+          "args": [
+            "search",
+            "--name",
+            "ABZU"
+          ],
+          "timeout_secs": 60
+        },
+        {
+          "check": "input",
+          "program": "aether-compat-probe",
+          "args": [
+            "input",
+            "--window",
+            "ABZU",
+            "--exe",
+            "drive_c/GOG Games/ABZU/ABZU.exe"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "audio",
+          "program": "aether-compat-probe",
+          "args": [
+            "audio",
+            "--id",
+            "com.aether.compat.games-app-6"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "video",
+          "program": "aether-compat-probe",
+          "args": [
+            "video",
+            "--id",
+            "com.aether.compat.games-app-6"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "files",
+          "program": "aether-compat-probe",
+          "args": [
+            "files",
+            "--id",
+            "com.aether.compat.games-app-6"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "network",
+          "program": "aether-compat-probe",
+          "args": [
+            "network",
+            "--id",
+            "com.aether.compat.games-app-6"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "persistence",
+          "program": "aether-compat-probe",
+          "args": [
+            "persistence",
+            "--id",
+            "com.aether.compat.games-app-6"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "stability",
+          "program": "aether-compat-probe",
+          "args": [
+            "stability",
+            "--id",
+            "com.aether.compat.games-app-6",
+            "--seconds",
+            "60"
+          ],
+          "timeout_secs": 300
+        }
+      ],
+      "recorded": []
+    },
+    {
+      "name": "Games app 7",
+      "installer": "/var/lib/aether/compat/payload/setup_aoe2.exe",
+      "args": [
+        "drive_c/GOG Games/Age of Empires II/Empires2.exe"
+      ],
+      "tweak": null,
+      "checks": [
+        {
+          "check": "install",
+          "program": "aether-runner",
+          "args": [
+            "windows",
+            "install",
+            "--installer",
+            "/var/lib/aether/compat/payload/setup_aoe2.exe",
+            "--id",
+            "com.aether.compat.games-app-7",
+            "--entry",
+            "drive_c/GOG Games/Age of Empires II/Empires2.exe"
+          ],
+          "timeout_secs": 900
+        },
+        {
+          "check": "launch",
+          "program": "aether-runner",
+          "args": [
+            "launch",
+            "com.aether.compat.games-app-7"
+          ],
+          "timeout_secs": 180
+        },
+        {
+          "check": "window",
+          "program": "xdotool",
+          "args": [
+            "search",
+            "--name",
+            "Age of Empires II"
+          ],
+          "timeout_secs": 60
+        },
+        {
+          "check": "input",
+          "program": "aether-compat-probe",
+          "args": [
+            "input",
+            "--window",
+            "Age of Empires II",
+            "--exe",
+            "drive_c/GOG Games/Age of Empires II/Empires2.exe"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "audio",
+          "program": "aether-compat-probe",
+          "args": [
+            "audio",
+            "--id",
+            "com.aether.compat.games-app-7"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "video",
+          "program": "aether-compat-probe",
+          "args": [
+            "video",
+            "--id",
+            "com.aether.compat.games-app-7"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "files",
+          "program": "aether-compat-probe",
+          "args": [
+            "files",
+            "--id",
+            "com.aether.compat.games-app-7"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "network",
+          "program": "aether-compat-probe",
+          "args": [
+            "network",
+            "--id",
+            "com.aether.compat.games-app-7"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "persistence",
+          "program": "aether-compat-probe",
+          "args": [
+            "persistence",
+            "--id",
+            "com.aether.compat.games-app-7"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "stability",
+          "program": "aether-compat-probe",
+          "args": [
+            "stability",
+            "--id",
+            "com.aether.compat.games-app-7",
+            "--seconds",
+            "60"
+          ],
+          "timeout_secs": 300
+        }
+      ],
+      "recorded": []
+    },
+    {
+      "name": "Games app 8",
+      "installer": "/var/lib/aether/compat/payload/RiotClientInstalls.exe",
+      "args": [
+        "drive_c/Riot Games/VALORANT/live/VALORANT.exe"
+      ],
+      "tweak": "Vanguard anti-cheat needs a Windows kernel; expected Tier D",
+      "checks": [
+        {
+          "check": "install",
+          "program": "aether-runner",
+          "args": [
+            "windows",
+            "install",
+            "--installer",
+            "/var/lib/aether/compat/payload/RiotClientInstalls.exe",
+            "--id",
+            "com.aether.compat.games-app-8",
+            "--entry",
+            "drive_c/Riot Games/VALORANT/live/VALORANT.exe"
+          ],
+          "timeout_secs": 900
+        },
+        {
+          "check": "launch",
+          "program": "aether-runner",
+          "args": [
+            "launch",
+            "com.aether.compat.games-app-8"
+          ],
+          "timeout_secs": 180
+        },
+        {
+          "check": "window",
+          "program": "xdotool",
+          "args": [
+            "search",
+            "--name",
+            "VALORANT"
+          ],
+          "timeout_secs": 60
+        },
+        {
+          "check": "input",
+          "program": "aether-compat-probe",
+          "args": [
+            "input",
+            "--window",
+            "VALORANT",
+            "--exe",
+            "drive_c/Riot Games/VALORANT/live/VALORANT.exe"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "audio",
+          "program": "aether-compat-probe",
+          "args": [
+            "audio",
+            "--id",
+            "com.aether.compat.games-app-8"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "video",
+          "program": "aether-compat-probe",
+          "args": [
+            "video",
+            "--id",
+            "com.aether.compat.games-app-8"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "files",
+          "program": "aether-compat-probe",
+          "args": [
+            "files",
+            "--id",
+            "com.aether.compat.games-app-8"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "network",
+          "program": "aether-compat-probe",
+          "args": [
+            "network",
+            "--id",
+            "com.aether.compat.games-app-8"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "persistence",
+          "program": "aether-compat-probe",
+          "args": [
+            "persistence",
+            "--id",
+            "com.aether.compat.games-app-8"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "stability",
+          "program": "aether-compat-probe",
+          "args": [
+            "stability",
+            "--id",
+            "com.aether.compat.games-app-8",
+            "--seconds",
+            "60"
+          ],
+          "timeout_secs": 300
+        }
+      ],
+      "recorded": []
+    },
+    {
+      "name": "Utilities app 1",
+      "installer": "/var/lib/aether/compat/payload/7z-x64.exe",
+      "args": [
+        "drive_c/Program Files/7-Zip/7zFM.exe"
+      ],
+      "tweak": null,
+      "checks": [
+        {
+          "check": "install",
+          "program": "aether-runner",
+          "args": [
+            "windows",
+            "install",
+            "--installer",
+            "/var/lib/aether/compat/payload/7z-x64.exe",
+            "--id",
+            "com.aether.compat.utilities-app-1",
+            "--entry",
+            "drive_c/Program Files/7-Zip/7zFM.exe"
+          ],
+          "timeout_secs": 900
+        },
+        {
+          "check": "launch",
+          "program": "aether-runner",
+          "args": [
+            "launch",
+            "com.aether.compat.utilities-app-1"
+          ],
+          "timeout_secs": 180
+        },
+        {
+          "check": "window",
+          "program": "xdotool",
+          "args": [
+            "search",
+            "--name",
+            "7-Zip"
+          ],
+          "timeout_secs": 60
+        },
+        {
+          "check": "input",
+          "program": "aether-compat-probe",
+          "args": [
+            "input",
+            "--window",
+            "7-Zip",
+            "--exe",
+            "drive_c/Program Files/7-Zip/7zFM.exe"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "audio",
+          "program": "aether-compat-probe",
+          "args": [
+            "audio",
+            "--id",
+            "com.aether.compat.utilities-app-1"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "video",
+          "program": "aether-compat-probe",
+          "args": [
+            "video",
+            "--id",
+            "com.aether.compat.utilities-app-1"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "files",
+          "program": "aether-compat-probe",
+          "args": [
+            "files",
+            "--id",
+            "com.aether.compat.utilities-app-1"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "network",
+          "program": "aether-compat-probe",
+          "args": [
+            "network",
+            "--id",
+            "com.aether.compat.utilities-app-1"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "persistence",
+          "program": "aether-compat-probe",
+          "args": [
+            "persistence",
+            "--id",
+            "com.aether.compat.utilities-app-1"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "stability",
+          "program": "aether-compat-probe",
+          "args": [
+            "stability",
+            "--id",
+            "com.aether.compat.utilities-app-1",
+            "--seconds",
+            "60"
+          ],
+          "timeout_secs": 300
+        }
+      ],
+      "recorded": []
+    },
+    {
+      "name": "Utilities app 2",
+      "installer": "/var/lib/aether/compat/payload/DropboxInstaller.exe",
+      "args": [
+        "drive_c/Program Files (x86)/Dropbox/Dropbox.exe"
+      ],
+      "tweak": null,
+      "checks": [
+        {
+          "check": "install",
+          "program": "aether-runner",
+          "args": [
+            "windows",
+            "install",
+            "--installer",
+            "/var/lib/aether/compat/payload/DropboxInstaller.exe",
+            "--id",
+            "com.aether.compat.utilities-app-2",
+            "--entry",
+            "drive_c/Program Files (x86)/Dropbox/Dropbox.exe"
+          ],
+          "timeout_secs": 900
+        },
+        {
+          "check": "launch",
+          "program": "aether-runner",
+          "args": [
+            "launch",
+            "com.aether.compat.utilities-app-2"
+          ],
+          "timeout_secs": 180
+        },
+        {
+          "check": "window",
+          "program": "xdotool",
+          "args": [
+            "search",
+            "--name",
+            "Dropbox"
+          ],
+          "timeout_secs": 60
+        },
+        {
+          "check": "input",
+          "program": "aether-compat-probe",
+          "args": [
+            "input",
+            "--window",
+            "Dropbox",
+            "--exe",
+            "drive_c/Program Files (x86)/Dropbox/Dropbox.exe"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "audio",
+          "program": "aether-compat-probe",
+          "args": [
+            "audio",
+            "--id",
+            "com.aether.compat.utilities-app-2"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "video",
+          "program": "aether-compat-probe",
+          "args": [
+            "video",
+            "--id",
+            "com.aether.compat.utilities-app-2"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "files",
+          "program": "aether-compat-probe",
+          "args": [
+            "files",
+            "--id",
+            "com.aether.compat.utilities-app-2"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "network",
+          "program": "aether-compat-probe",
+          "args": [
+            "network",
+            "--id",
+            "com.aether.compat.utilities-app-2"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "persistence",
+          "program": "aether-compat-probe",
+          "args": [
+            "persistence",
+            "--id",
+            "com.aether.compat.utilities-app-2"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "stability",
+          "program": "aether-compat-probe",
+          "args": [
+            "stability",
+            "--id",
+            "com.aether.compat.utilities-app-2",
+            "--seconds",
+            "60"
+          ],
+          "timeout_secs": 300
+        }
+      ],
+      "recorded": []
+    },
+    {
+      "name": "Utilities app 3",
+      "installer": "/var/lib/aether/compat/payload/KeePass-Setup.exe",
+      "args": [
+        "drive_c/Program Files/KeePass Password Safe 2/KeePass.exe"
+      ],
+      "tweak": null,
+      "checks": [
+        {
+          "check": "install",
+          "program": "aether-runner",
+          "args": [
+            "windows",
+            "install",
+            "--installer",
+            "/var/lib/aether/compat/payload/KeePass-Setup.exe",
+            "--id",
+            "com.aether.compat.utilities-app-3",
+            "--entry",
+            "drive_c/Program Files/KeePass Password Safe 2/KeePass.exe"
+          ],
+          "timeout_secs": 900
+        },
+        {
+          "check": "launch",
+          "program": "aether-runner",
+          "args": [
+            "launch",
+            "com.aether.compat.utilities-app-3"
+          ],
+          "timeout_secs": 180
+        },
+        {
+          "check": "window",
+          "program": "xdotool",
+          "args": [
+            "search",
+            "--name",
+            "KeePass"
+          ],
+          "timeout_secs": 60
+        },
+        {
+          "check": "input",
+          "program": "aether-compat-probe",
+          "args": [
+            "input",
+            "--window",
+            "KeePass",
+            "--exe",
+            "drive_c/Program Files/KeePass Password Safe 2/KeePass.exe"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "audio",
+          "program": "aether-compat-probe",
+          "args": [
+            "audio",
+            "--id",
+            "com.aether.compat.utilities-app-3"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "video",
+          "program": "aether-compat-probe",
+          "args": [
+            "video",
+            "--id",
+            "com.aether.compat.utilities-app-3"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "files",
+          "program": "aether-compat-probe",
+          "args": [
+            "files",
+            "--id",
+            "com.aether.compat.utilities-app-3"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "network",
+          "program": "aether-compat-probe",
+          "args": [
+            "network",
+            "--id",
+            "com.aether.compat.utilities-app-3"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "persistence",
+          "program": "aether-compat-probe",
+          "args": [
+            "persistence",
+            "--id",
+            "com.aether.compat.utilities-app-3"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "stability",
+          "program": "aether-compat-probe",
+          "args": [
+            "stability",
+            "--id",
+            "com.aether.compat.utilities-app-3",
+            "--seconds",
+            "60"
+          ],
+          "timeout_secs": 300
+        }
+      ],
+      "recorded": []
+    },
+    {
+      "name": "Utilities app 4",
+      "installer": "/var/lib/aether/compat/payload/HWiNFO64-Setup.exe",
+      "args": [
+        "drive_c/Program Files/HWiNFO64/HWiNFO64.exe"
+      ],
+      "tweak": null,
+      "checks": [
+        {
+          "check": "install",
+          "program": "aether-runner",
+          "args": [
+            "windows",
+            "install",
+            "--installer",
+            "/var/lib/aether/compat/payload/HWiNFO64-Setup.exe",
+            "--id",
+            "com.aether.compat.utilities-app-4",
+            "--entry",
+            "drive_c/Program Files/HWiNFO64/HWiNFO64.exe"
+          ],
+          "timeout_secs": 900
+        },
+        {
+          "check": "launch",
+          "program": "aether-runner",
+          "args": [
+            "launch",
+            "com.aether.compat.utilities-app-4"
+          ],
+          "timeout_secs": 180
+        },
+        {
+          "check": "window",
+          "program": "xdotool",
+          "args": [
+            "search",
+            "--name",
+            "HWiNFO"
+          ],
+          "timeout_secs": 60
+        },
+        {
+          "check": "input",
+          "program": "aether-compat-probe",
+          "args": [
+            "input",
+            "--window",
+            "HWiNFO",
+            "--exe",
+            "drive_c/Program Files/HWiNFO64/HWiNFO64.exe"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "audio",
+          "program": "aether-compat-probe",
+          "args": [
+            "audio",
+            "--id",
+            "com.aether.compat.utilities-app-4"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "video",
+          "program": "aether-compat-probe",
+          "args": [
+            "video",
+            "--id",
+            "com.aether.compat.utilities-app-4"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "files",
+          "program": "aether-compat-probe",
+          "args": [
+            "files",
+            "--id",
+            "com.aether.compat.utilities-app-4"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "network",
+          "program": "aether-compat-probe",
+          "args": [
+            "network",
+            "--id",
+            "com.aether.compat.utilities-app-4"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "persistence",
+          "program": "aether-compat-probe",
+          "args": [
+            "persistence",
+            "--id",
+            "com.aether.compat.utilities-app-4"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "stability",
+          "program": "aether-compat-probe",
+          "args": [
+            "stability",
+            "--id",
+            "com.aether.compat.utilities-app-4",
+            "--seconds",
+            "60"
+          ],
+          "timeout_secs": 300
+        }
+      ],
+      "recorded": []
+    },
+    {
+      "name": "Utilities app 5",
+      "installer": "/var/lib/aether/compat/payload/ShareX-setup.exe",
+      "args": [
+        "drive_c/Program Files/ShareX/ShareX.exe"
+      ],
+      "tweak": null,
+      "checks": [
+        {
+          "check": "install",
+          "program": "aether-runner",
+          "args": [
+            "windows",
+            "install",
+            "--installer",
+            "/var/lib/aether/compat/payload/ShareX-setup.exe",
+            "--id",
+            "com.aether.compat.utilities-app-5",
+            "--entry",
+            "drive_c/Program Files/ShareX/ShareX.exe"
+          ],
+          "timeout_secs": 900
+        },
+        {
+          "check": "launch",
+          "program": "aether-runner",
+          "args": [
+            "launch",
+            "com.aether.compat.utilities-app-5"
+          ],
+          "timeout_secs": 180
+        },
+        {
+          "check": "window",
+          "program": "xdotool",
+          "args": [
+            "search",
+            "--name",
+            "ShareX"
+          ],
+          "timeout_secs": 60
+        },
+        {
+          "check": "input",
+          "program": "aether-compat-probe",
+          "args": [
+            "input",
+            "--window",
+            "ShareX",
+            "--exe",
+            "drive_c/Program Files/ShareX/ShareX.exe"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "audio",
+          "program": "aether-compat-probe",
+          "args": [
+            "audio",
+            "--id",
+            "com.aether.compat.utilities-app-5"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "video",
+          "program": "aether-compat-probe",
+          "args": [
+            "video",
+            "--id",
+            "com.aether.compat.utilities-app-5"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "files",
+          "program": "aether-compat-probe",
+          "args": [
+            "files",
+            "--id",
+            "com.aether.compat.utilities-app-5"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "network",
+          "program": "aether-compat-probe",
+          "args": [
+            "network",
+            "--id",
+            "com.aether.compat.utilities-app-5"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "persistence",
+          "program": "aether-compat-probe",
+          "args": [
+            "persistence",
+            "--id",
+            "com.aether.compat.utilities-app-5"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "stability",
+          "program": "aether-compat-probe",
+          "args": [
+            "stability",
+            "--id",
+            "com.aether.compat.utilities-app-5",
+            "--seconds",
+            "60"
+          ],
+          "timeout_secs": 300
+        }
+      ],
+      "recorded": []
+    },
+    {
+      "name": "Utilities app 6",
+      "installer": "/var/lib/aether/compat/payload/AnyDesk.exe",
+      "args": [
+        "drive_c/Program Files (x86)/AnyDesk/AnyDesk.exe"
+      ],
+      "tweak": null,
+      "checks": [
+        {
+          "check": "install",
+          "program": "aether-runner",
+          "args": [
+            "windows",
+            "install",
+            "--installer",
+            "/var/lib/aether/compat/payload/AnyDesk.exe",
+            "--id",
+            "com.aether.compat.utilities-app-6",
+            "--entry",
+            "drive_c/Program Files (x86)/AnyDesk/AnyDesk.exe"
+          ],
+          "timeout_secs": 900
+        },
+        {
+          "check": "launch",
+          "program": "aether-runner",
+          "args": [
+            "launch",
+            "com.aether.compat.utilities-app-6"
+          ],
+          "timeout_secs": 180
+        },
+        {
+          "check": "window",
+          "program": "xdotool",
+          "args": [
+            "search",
+            "--name",
+            "AnyDesk"
+          ],
+          "timeout_secs": 60
+        },
+        {
+          "check": "input",
+          "program": "aether-compat-probe",
+          "args": [
+            "input",
+            "--window",
+            "AnyDesk",
+            "--exe",
+            "drive_c/Program Files (x86)/AnyDesk/AnyDesk.exe"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "audio",
+          "program": "aether-compat-probe",
+          "args": [
+            "audio",
+            "--id",
+            "com.aether.compat.utilities-app-6"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "video",
+          "program": "aether-compat-probe",
+          "args": [
+            "video",
+            "--id",
+            "com.aether.compat.utilities-app-6"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "files",
+          "program": "aether-compat-probe",
+          "args": [
+            "files",
+            "--id",
+            "com.aether.compat.utilities-app-6"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "network",
+          "program": "aether-compat-probe",
+          "args": [
+            "network",
+            "--id",
+            "com.aether.compat.utilities-app-6"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "persistence",
+          "program": "aether-compat-probe",
+          "args": [
+            "persistence",
+            "--id",
+            "com.aether.compat.utilities-app-6"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "stability",
+          "program": "aether-compat-probe",
+          "args": [
+            "stability",
+            "--id",
+            "com.aether.compat.utilities-app-6",
+            "--seconds",
+            "60"
+          ],
+          "timeout_secs": 300
+        }
+      ],
+      "recorded": []
+    },
+    {
+      "name": "Utilities app 7",
+      "installer": "/var/lib/aether/compat/payload/wireguard-installer.exe",
+      "args": [
+        "drive_c/Program Files/WireGuard/wireguard.exe"
+      ],
+      "tweak": null,
+      "checks": [
+        {
+          "check": "install",
+          "program": "aether-runner",
+          "args": [
+            "windows",
+            "install",
+            "--installer",
+            "/var/lib/aether/compat/payload/wireguard-installer.exe",
+            "--id",
+            "com.aether.compat.utilities-app-7",
+            "--entry",
+            "drive_c/Program Files/WireGuard/wireguard.exe"
+          ],
+          "timeout_secs": 900
+        },
+        {
+          "check": "launch",
+          "program": "aether-runner",
+          "args": [
+            "launch",
+            "com.aether.compat.utilities-app-7"
+          ],
+          "timeout_secs": 180
+        },
+        {
+          "check": "window",
+          "program": "xdotool",
+          "args": [
+            "search",
+            "--name",
+            "WireGuard"
+          ],
+          "timeout_secs": 60
+        },
+        {
+          "check": "input",
+          "program": "aether-compat-probe",
+          "args": [
+            "input",
+            "--window",
+            "WireGuard",
+            "--exe",
+            "drive_c/Program Files/WireGuard/wireguard.exe"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "audio",
+          "program": "aether-compat-probe",
+          "args": [
+            "audio",
+            "--id",
+            "com.aether.compat.utilities-app-7"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "video",
+          "program": "aether-compat-probe",
+          "args": [
+            "video",
+            "--id",
+            "com.aether.compat.utilities-app-7"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "files",
+          "program": "aether-compat-probe",
+          "args": [
+            "files",
+            "--id",
+            "com.aether.compat.utilities-app-7"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "network",
+          "program": "aether-compat-probe",
+          "args": [
+            "network",
+            "--id",
+            "com.aether.compat.utilities-app-7"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "persistence",
+          "program": "aether-compat-probe",
+          "args": [
+            "persistence",
+            "--id",
+            "com.aether.compat.utilities-app-7"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "stability",
+          "program": "aether-compat-probe",
+          "args": [
+            "stability",
+            "--id",
+            "com.aether.compat.utilities-app-7",
+            "--seconds",
+            "60"
+          ],
+          "timeout_secs": 300
+        }
+      ],
+      "recorded": []
+    },
+    {
+      "name": "Utilities app 8",
+      "installer": "/var/lib/aether/compat/payload/Duplicati.msi",
+      "args": [
+        "drive_c/Program Files/Duplicati/Duplicati.GUI.TrayIcon.exe"
+      ],
+      "tweak": null,
+      "checks": [
+        {
+          "check": "install",
+          "program": "aether-runner",
+          "args": [
+            "windows",
+            "install",
+            "--installer",
+            "/var/lib/aether/compat/payload/Duplicati.msi",
+            "--id",
+            "com.aether.compat.utilities-app-8",
+            "--entry",
+            "drive_c/Program Files/Duplicati/Duplicati.GUI.TrayIcon.exe"
+          ],
+          "timeout_secs": 900
+        },
+        {
+          "check": "launch",
+          "program": "aether-runner",
+          "args": [
+            "launch",
+            "com.aether.compat.utilities-app-8"
+          ],
+          "timeout_secs": 180
+        },
+        {
+          "check": "window",
+          "program": "xdotool",
+          "args": [
+            "search",
+            "--name",
+            "Duplicati"
+          ],
+          "timeout_secs": 60
+        },
+        {
+          "check": "input",
+          "program": "aether-compat-probe",
+          "args": [
+            "input",
+            "--window",
+            "Duplicati",
+            "--exe",
+            "drive_c/Program Files/Duplicati/Duplicati.GUI.TrayIcon.exe"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "audio",
+          "program": "aether-compat-probe",
+          "args": [
+            "audio",
+            "--id",
+            "com.aether.compat.utilities-app-8"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "video",
+          "program": "aether-compat-probe",
+          "args": [
+            "video",
+            "--id",
+            "com.aether.compat.utilities-app-8"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "files",
+          "program": "aether-compat-probe",
+          "args": [
+            "files",
+            "--id",
+            "com.aether.compat.utilities-app-8"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "network",
+          "program": "aether-compat-probe",
+          "args": [
+            "network",
+            "--id",
+            "com.aether.compat.utilities-app-8"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "persistence",
+          "program": "aether-compat-probe",
+          "args": [
+            "persistence",
+            "--id",
+            "com.aether.compat.utilities-app-8"
+          ],
+          "timeout_secs": 120
+        },
+        {
+          "check": "stability",
+          "program": "aether-compat-probe",
+          "args": [
+            "stability",
+            "--id",
+            "com.aether.compat.utilities-app-8",
+            "--seconds",
+            "60"
+          ],
+          "timeout_secs": 300
+        }
+      ],
+      "recorded": []
+    }
+  ]
+}

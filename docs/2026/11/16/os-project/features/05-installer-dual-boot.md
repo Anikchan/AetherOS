@@ -54,6 +54,25 @@ A Windows user can try AetherOS from a USB drive, install it beside Windows, cho
 - AetherOS boots through a signed unified kernel image (D4).
 - Windows keeps its own boot files. The installer does not change them.
 
+## 5.1 Disk Encryption (INS-08, planning)
+
+The installer plans an optional LUKS2 container around the root partition; the
+dry run shows every step, and the encryption itself runs only from the live
+image.
+
+- Entry point: `aether-installer plan --disk DEV --encrypt [--luks-mapper NAME]`.
+- The plan orders `luksFormat` → `luksOpen` → `/etc/crypttab` → `mkfs.ext4` on
+  `/dev/mapper/<mapper>`, and reserves the 16 MiB LUKS2 header inside the
+  partition (D4 §2.2).
+- The boot entry carries `rd.luks.name=<uuid>=aether-root` and
+  `root=/dev/mapper/aether-root`; the real UUID is filled in after
+  `luksFormat`.
+- The passphrase is prompted, never passed on the command line. The recovery
+  key is shown once and must be stored offline.
+- Not yet done: the encrypted boot itself. The initramfs needs the
+  `cryptsetup`/`udev` hooks (image build), and one encrypted erase install plus
+  one encrypted install-beside must be validated on the reference machine.
+
 ## 6. Uninstall Flow
 
 1. Boot Windows.
@@ -80,6 +99,7 @@ A Windows user can try AetherOS from a USB drive, install it beside Windows, cho
 | INS-AC-07 | Windows data is unchanged after install and uninstall (file hash check) | Not tested |
 | INS-AC-08 | Secure Boot on: AetherOS boots with the signed path | Not tested (Later, public release) |
 | INS-AC-09 | Legacy BIOS install on an MBR machine; both systems boot | Not tested |
+| INS-AC-10 | Encrypted install boots with the passphrase and refuses a wrong one | Not tested (planning verified by tests; hardware-gated) |
 
 ## 9. Caveats to Show Users
 
@@ -87,6 +107,7 @@ A Windows user can try AetherOS from a USB drive, install it beside Windows, cho
 - Keep the BitLocker recovery key somewhere safe.
 - Turn off Fast Startup in Windows before installing.
 - A Windows feature update may reset the boot order. Use the boot menu key (shown at startup) to pick AetherOS, or run the repair tool (INS-10).
+- Encryption (INS-08): there is no way to recover data if both the passphrase and the recovery key are lost. Write the recovery key down during install.
 
 ## 10. Open Questions
 

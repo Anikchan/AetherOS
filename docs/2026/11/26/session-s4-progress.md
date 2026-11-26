@@ -33,6 +33,9 @@ Must NOT touch: `os-build/kernel/`, `os-build/buildroot/`, `os-build/board/`,
 | 10 | P9-T02: rollback/health-check service logic | **Done (2026-11-26)** | `update/src/health.rs`; probes, policy, persisted retries, deadline; slot write pending hardware |
 | 11 | P6-T09: Software app JSON UI contract for S3 | **Done (2026-11-26)** | `apps/store/src/contract.rs` + `aether-store --json`; `needs-permission` exit 3 |
 | 12 | Docs/design pass for the above (D8 §9/§10, D4 §6.2, README) | **Done (2026-11-26)** | D10 reviewed, unchanged (runtime monitoring, no boot-health contract) |
+| 13 | P9-T03: optional LUKS2 disk encryption in the installer (planning + tests) | **Done (planning 2026-11-26)**; encrypted boot pending hardware | `LuksEncryption`/`PlanOptions`/`plan_with_options`, cryptsetup + crypttab + mapper operations, `set_luks_uuid`; 5 integration tests |
+| 14 | P6-T10: real 40-app compatibility spec template (installers + probes) | **Done (2026-11-26)**; real runs pending hardware | `apps/runner/src/compat_reference.rs`, `apps/runner/compat/40-app-spec-template.json`, `compat reference-template|reference-slots`; 6 tests |
+| 15 | P8-T05: Secure Boot path decision + prerequisites | **Deferred (documented 2026-11-26)** | `docs/2026/11/26/results/p8-t05-secure-boot-deferred.md`, D4 §5.1, F5 INS-AC-08 note; no code |
 
 ## Progress log
 
@@ -86,6 +89,19 @@ Must NOT touch: `os-build/kernel/`, `os-build/buildroot/`, `os-build/board/`,
   `update_in_progress` guard on staging. Design docs D8 §9/§10 and D4 §6.2
   added. Evidence: `docs/2026/11/26/results/p6-t09-t10-p9-t02.md`.
 
+- 2026-11-26 (P9-T03, P6-T10 reference spec, P8-T05 pass): optional LUKS2 is
+  planned by the installer — `--encrypt` orders luksFormat → luksOpen →
+  crypttab → mkfs on `/dev/mapper/aether-root`, reserves the 16 MiB header,
+  refuses LUKS1/bad mappers and rewrites the boot cmdline once the UUID is
+  known (`set_luks_uuid`); 5 integration tests (`installer/tests/luks_plan.rs`).
+  The 40 compatibility slots now have a real reference spec (vendor installer,
+  entry point, window probe, tweaks) generated from
+  `apps/runner/src/compat_reference.rs` into
+  `apps/runner/compat/40-app-spec-template.json`, with
+  `compat reference-template|reference-slots` and 6 tests. P8-T05 (Secure
+  Boot) is recorded as deferred with prerequisites, risks and a test matrix;
+  no code. Docs: D4 §2.2/§5.1, F5 §5.1 + INS-AC-10, project README.
+
 ## Blockers (unchanged, owner/hardware)
 
 - 72-hour soak, real G-PM1/B2/B6 values, G-BAT*, G-TM*, AP-AC-03/04 and the live
@@ -93,6 +109,7 @@ Must NOT touch: `os-build/kernel/`, `os-build/buildroot/`, `os-build/board/`,
 - Activity Manager window: Processes tab bound; the remaining tabs and the
   shortcut/confirmation flows are still open.
 - Live persistence service and the BIOS live path are image-overlay/S1 work.
-- The 40 compatibility slots are defined and the harness is ready, but the 40
-  real Windows apps (APP-AC-06) and the real inactive-slot write/rollback cycle
+- The 40 compatibility slots are defined, the reference spec is ready and the
+  harness runs, but the 40 real Windows apps (APP-AC-06), the encrypted boot
+  (P9-T03 hardware half) and the real inactive-slot write/rollback cycle
   (P9-T02 hardware half) still need the reference machine.

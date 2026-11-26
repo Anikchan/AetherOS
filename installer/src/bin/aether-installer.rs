@@ -7,14 +7,19 @@
 //!                         [--confirm DEV] [--json] [--backup-confirmed]
 //!                         [--fast-startup] [--bitlocker] [--recovery-key-saved]
 //!                         [--on-battery PERCENT] [--ram-gib N] [--force]
+//!                         [--encrypt] [--luks-mapper NAME]
 //!   aether-installer uninstall-plan --disk DEV [--grow-windows] [--json]
 //!   aether-installer apply --plan FILE     (refused outside the live image)
+//!
+//! `--encrypt` plans a LUKS2 container around the root filesystem (P9-T03).
+//! The passphrase is never taken from argv; the live image prompts for it.
 
 use std::path::PathBuf;
 
 use aether_installer::precheck::{can_proceed, run as run_prechecks, CheckStatus, PreCheckInput};
 use aether_installer::{
-    detect_system, human_size, plan_install, plan_uninstall, InstallMode, UninstallMode,
+    detect_system, human_size, plan_install_with_options, plan_uninstall, InstallMode,
+    LuksEncryption, PlanOptions, UninstallMode,
 };
 
 fn main() {
@@ -34,6 +39,8 @@ fn main() {
     let mut force = false;
     let mut grow_windows = false;
     let mut plan_file: Option<PathBuf> = None;
+    let mut encrypt = false;
+    let mut luks_mapper: Option<String> = None;
 
     let mut index = 1;
     while index < args.len() {
@@ -69,6 +76,11 @@ fn main() {
             }
             "--force" => force = true,
             "--grow-windows" => grow_windows = true,
+            "--encrypt" => encrypt = true,
+            "--luks-mapper" => {
+                index += 1;
+                luks_mapper = args.get(index).cloned();
+            }
             "--plan" => {
                 index += 1;
                 plan_file = args.get(index).map(PathBuf::from);
@@ -163,14 +175,34 @@ fn main() {
                 eprintln!("PRECHECK_BLOCKED; resolve blocking checks or pass --force for the dry run only");
                 std::process::exit(1);
             }
-            match plan_install(disk, &windows, mode, root_gib, ram_gib, confirm.as_deref()) {
+            let mut options = PlanOptions::new(root_gib, ram_gib);
+            if encrypt {
+                let mut encryption = LuksEncryption::default();
+                if let Some(mapper) = &luks_mapper {
+                    encryption.mapper_name = mapper.clone();
+                }
+                options.encryption = Some(encryption);
+            } else if luks_mapper.is_some() {
+                eprintln!("--luks-mapper only applies together with --encrypt");
+                std::process::exit(2);
+            }
+            match plan_install_with_options(
+                disk,
+                &windows,
+                mode,
+                confirm.as_deref(),
+                &options,
+            ) {
                 Ok(plan) => {
                     if json {
                         println!("{}", serde_json::to_string_pretty(&plan).unwrap_or_default());
                     } else {
                         print!("{}", plan.render_text());
                     }
-                    println!("PLAN_OK dry_run={} operations={}", plan.dry_run, plan.operations.len());
+                    println!("PLAN_OK dry_run={} operations={} encrypted={}",
+                        plan.dry_run,
+                        plan.operations.len(),
+                        plan.encryption.is_some());
                 }
                 Err(error) => {
                     eprintln!("PLAN_FAILED {error}");

@@ -69,6 +69,33 @@ os-build/scripts/make-live-usb.sh --binaries os-build/buildroot/output/images \
 - BIOS live boot is out of scope for P8-T01; `aetheros-bios.img` remains the P1
   legacy test image.
 
+## 2.2 Root Encryption Plan (P9-T03, F5 INS-08)
+
+`--encrypt` on `aether-installer plan` produces a *plan*; the encryption itself
+runs only from the live image (`apply` stays refused off the live medium).
+
+| Step | Command / artefact | Notes |
+| --- | --- | --- |
+| 1. Partition | `CreatePartition` on the root partition | Same size as an unencrypted root; the LUKS2 header lives inside it |
+| 2. Container | `cryptsetup luksFormat --type luks2 --cipher aes-xts-plain64 --key-size 512 --pbkdf argon2id` | Passphrase is prompted, never passed as an argument |
+| 3. Recovery key | cryptsetup prints it once; the plan warns to store it offline | INS-08 requires showing it exactly once |
+| 4. Open | `cryptsetup luksOpen --type luks2` as `aether-root` (`--luks-mapper` changes the name) | The mapper device is what the filesystem is created on |
+| 5. crypttab | `aether-root UUID=<LUKS-UUID> none luks,discard` | Written at install time; the plan carries the token until `luksFormat` reports the UUID |
+| 6. Format | `mkfs.ext4` on `/dev/mapper/aether-root` | 16 MiB of the partition is the LUKS2 header (`LUKS2_HEADER_BYTES`) |
+| 7. Boot entry | `rd.luks.name=<LUKS-UUID>=aether-root root=/dev/mapper/aether-root` | `InstallPlan::set_luks_uuid` rewrites the command line once the UUID exists |
+
+Prerequisites (blocking an encrypted *boot*, not the plan):
+
+- The initramfs needs the `cryptsetup` and `udev` hooks (Dracut module set) and
+  must run before the root mount. This is an image-build change (S1 territory).
+- The A/B slots stay read-only squashfs images; encryption covers the data
+  partition (`/var`, `/home`) and the root container in this plan.
+- Hibernation needs the swap file inside the encrypted root plus a resume
+  offset in the kernel command line.
+- Validation: one encrypted erase install and one encrypted install-beside on
+  the reference machine, then two reboots with a wrong and a correct
+  passphrase. Hardware-gated; the plan tests cover the planning only.
+
 ## 3. Size Budget
 
 Compressed sizes. Targets with limits per component. Measured on every build.
@@ -126,6 +153,26 @@ UEFI (Secure Boot on, with Microsoft keys) -> shim (signed by a Microsoft-signed
 - Shim approval depends on a review process; plan at least several weeks for it. This is a P8-T05 risk.
 - Our key signs `systemd-boot` and `nexa.efi`. Keys are stored offline. Signing is part of the release pipeline (P9-T05).
 - Users can enroll our key or use the shim path. Both paths are documented in F5.
+
+### 5.1 Secure Boot status (P8-T05, deferred 2026-11-26)
+
+P8-T05 stays **deferred to public release**; no code or key material is added
+now. Personal Edition boots with firmware Secure Boot off, and the installer
+already documents the requirement in the pre-checks. The decision and its
+prerequisites are recorded in
+`docs/2026/11/26/results/p8-t05-secure-boot-deferred.md`:
+
+- Microsoft-signed `shim` (EV certificate + shim-review submission, weeks of
+  lead time) or owner-managed MOK enrollment at install time.
+- An offline signing key for `systemd-boot` and the UKI, with a release-time
+  re-signing step on every build (P9-T05).
+- Kernel lockdown/IMA and module-signature policy decided before signing, so
+  the first signed release does not need a policy change.
+- Targets: Secure Boot on with our key enrolled, Secure Boot on with shim only,
+  Secure Boot off, and dual boot with BitLocker enabled (PCR7 must not force
+  recovery prompts).
+- Reversibility: a signed release must still boot after the user disables
+  Secure Boot, and rollback (A/B) must not depend on Secure Boot state.
 
 ## 6. Update Layout (A/B)
 
