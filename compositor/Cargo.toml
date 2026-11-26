@@ -10,3 +10,10 @@ path = "src/main.rs"
 
 [dependencies]
 smithay = { version = "0.7.0", default-features = false, features = ["wayland_frontend"] }
+
+# P3-T02 headless acceptance test: a Wayland client that checks the two
+# monitors (different scales) and a zwlr_layer_shell_v1 surface.
+[dev-dependencies]
+wayland-client = "0.31"
+wayland-protocols = { version = "0.32", features = ["client"] }
+wayland-protocols-wlr = { version = "0.3", features = ["client"] }
