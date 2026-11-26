@@ -3974,12 +3974,14 @@ dependencies = [
  "cursor-icon",
  "downcast-rs",
  "drm-fourcc",
+ "encoding_rs",
  "errno",
  "indexmap",
  "libc",
  "profiling",
  "rand",
  "rustix 1.1.6",
+ "scopeguard",
  "sha2",
  "smallvec",
  "tempfile",
@@ -3989,6 +3991,7 @@ dependencies = [
  "wayland-protocols-misc",
  "wayland-protocols-wlr",
  "wayland-server",
+ "x11rb",
  "xkbcommon",
 ]
 

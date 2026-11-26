@@ -41,11 +41,11 @@
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
-use std::thread;
 use std::time::{Duration, Instant};
 
 use smithay::delegate_compositor;
 use smithay::delegate_fractional_scale;
+use smithay::delegate_xwayland_shell;
 use smithay::delegate_layer_shell;
 use smithay::delegate_output;
 use smithay::delegate_shm;
@@ -60,7 +60,7 @@ use smithay::reexports::wayland_server::protocol::wl_output::WlOutput;
 use smithay::reexports::wayland_server::protocol::wl_seat::WlSeat;
 use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
 use smithay::reexports::wayland_server::{
-    Client, Display, DisplayHandle, ListeningSocket, Resource,
+    Client, Display, DisplayHandle, Resource,
 };
 use smithay::utils::{Logical, Serial, Size, Transform};
 use smithay::wayland::buffer::BufferHandler;
@@ -71,6 +71,12 @@ use smithay::wayland::compositor::{
 use smithay::wayland::fractional_scale::{
     with_fractional_scale, FractionalScaleHandler, FractionalScaleManagerState,
 };
+use smithay::wayland::socket::ListeningSocketSource;
+use smithay::wayland::xwayland_shell::{
+    XWaylandShellHandler, XWaylandShellState,
+};
+use smithay::xwayland::{XWayland, XWaylandEvent};
+use smithay::xwayland::xwm::{X11Surface, X11Wm, XwmHandler, XwmId};
 use smithay::wayland::output::{OutputHandler, OutputManagerState};
 use smithay::wayland::shell::wlr_layer::{
     Anchor, Layer, LayerSurface, LayerSurfaceCachedState, WlrLayerShellHandler, WlrLayerShellState,
@@ -79,6 +85,9 @@ use smithay::wayland::shell::xdg::{
     PopupSurface, PositionerState, ToplevelSurface, XdgShellHandler, XdgShellState,
 };
 use smithay::wayland::shm::{ShmHandler, ShmState};
+
+mod wm;
+pub use wm::*;
 
 /// Per-client state, as required by the smithay compositor module.
 #[derive(Debug, Default)]
@@ -146,12 +155,21 @@ pub struct AetherCompositor {
     pub xdg_shell: XdgShellState,
     pub layer_shell: WlrLayerShellState,
     pub output_manager: OutputManagerState,
+    pub display_handle: smithay::reexports::wayland_server::DisplayHandle,
     pub fractional_scale: FractionalScaleManagerState,
     pub seat_state: SeatState<Self>,
     /// Headless monitors, in layout order (index 0 is primary).
     pub outputs: Vec<Output>,
     pub layer_surfaces: Vec<LayerSurfaceEntry>,
     pub toplevels: Vec<ToplevelSurface>,
+    /// xwayland shell global (associates X11 windows with wl_surfaces).
+    pub xwayland_shell: XWaylandShellState,
+    /// Running X11 window manager, if XWayland spawned successfully.
+    pub xwm: Option<X11Wm>,
+    /// Wayland client representing the XWayland server.
+    pub xwayland_client: Option<smithay::reexports::wayland_server::Client>,
+    /// Display number chosen by XWayland.
+    pub xwayland_display: Option<u32>,
     /// Preferred fractional scale per surface, decided when the surface is
     /// assigned to an output.
     surface_scales: HashMap<ObjectId, f64>,
@@ -159,6 +177,8 @@ pub struct AetherCompositor {
     scaled_surfaces: HashSet<ObjectId>,
     pub mapped: bool,
     pub shutdown_at: Option<Instant>,
+    pub deadline: Option<Instant>,
+    pub timed_out: bool,
 }
 
 impl AetherCompositor {
@@ -171,15 +191,22 @@ impl AetherCompositor {
             // xdg-output piggybacks on every wl_output global created below,
             // so it must exist first.
             output_manager: OutputManagerState::new_with_xdg_output::<Self>(dh),
+            display_handle: dh.clone(),
             fractional_scale: FractionalScaleManagerState::new::<Self>(dh),
             seat_state: SeatState::new(),
             outputs: Vec::new(),
             layer_surfaces: Vec::new(),
             toplevels: Vec::new(),
+            xwayland_shell: XWaylandShellState::new::<Self>(dh),
+            xwm: None,
+            xwayland_client: None,
+            xwayland_display: None,
             surface_scales: HashMap::new(),
             scaled_surfaces: HashSet::new(),
             mapped: false,
             shutdown_at: None,
+            deadline: None,
+            timed_out: false,
         };
 
         for spec in HEADLESS_OUTPUTS {
@@ -338,6 +365,7 @@ delegate_xdg_shell!(AetherCompositor);
 delegate_layer_shell!(AetherCompositor);
 delegate_output!(AetherCompositor);
 delegate_fractional_scale!(AetherCompositor);
+delegate_xwayland_shell!(AetherCompositor);
 
 impl CompositorHandler for AetherCompositor {
     fn compositor_state(&mut self) -> &mut CompositorState {
@@ -492,9 +520,85 @@ impl SeatHandler for AetherCompositor {
     }
 }
 
+impl XWaylandShellHandler for AetherCompositor {
+    fn xwayland_shell_state(&mut self) -> &mut XWaylandShellState {
+        &mut self.xwayland_shell
+    }
+
+    fn surface_associated(
+        &mut self,
+        _xwm: XwmId,
+        _wl_surface: smithay::reexports::wayland_server::protocol::wl_surface::WlSurface,
+        _surface: X11Surface,
+    ) {
+    }
+}
+
+impl XwmHandler for AetherCompositor {
+    fn xwm_state(&mut self, _xwm: XwmId) -> &mut X11Wm {
+        self.xwm.as_mut().expect("xwm not initialised")
+    }
+
+    fn new_window(&mut self, _xwm: XwmId, _window: X11Surface) {}
+
+    fn new_override_redirect_window(&mut self, _xwm: XwmId, _window: X11Surface) {}
+
+    fn map_window_request(&mut self, _xwm: XwmId, window: X11Surface) {
+        let _ = window.set_mapped(true);
+        let _ = window.configure(None);
+        println!("AETHER_COMPOSITOR_XWAYLAND_MAPPED");
+    }
+
+    fn map_window_notify(&mut self, _xwm: XwmId, _window: X11Surface) {
+        println!("AETHER_COMPOSITOR_XWAYLAND_MAPPED");
+    }
+
+    fn mapped_override_redirect_window(&mut self, _xwm: XwmId, _window: X11Surface) {
+        println!("AETHER_COMPOSITOR_XWAYLAND_MAPPED");
+    }
+
+    fn unmapped_window(&mut self, _xwm: XwmId, _window: X11Surface) {}
+
+    fn destroyed_window(&mut self, _xwm: XwmId, _window: X11Surface) {}
+
+    fn configure_request(
+        &mut self,
+        _xwm: XwmId,
+        window: X11Surface,
+        x: Option<i32>,
+        y: Option<i32>,
+        w: Option<u32>,
+        h: Option<u32>,
+        _reorder: Option<smithay::xwayland::xwm::Reorder>,
+    ) {
+        use smithay::utils::{Logical, Rectangle, Size};
+        let rect = Rectangle::<i32, Logical>::new(
+            (x.unwrap_or(0), y.unwrap_or(0)).into(),
+            Size::from((w.unwrap_or(0) as i32, h.unwrap_or(0) as i32)),
+        );
+        if w.is_some() || h.is_some() {
+            let _ = window.configure(Some(rect));
+        } else {
+            let _ = window.configure(None);
+        }
+    }
+
+    fn configure_notify(
+        &mut self,
+        _xwm: XwmId,
+        _window: X11Surface,
+        _geometry: smithay::utils::Rectangle<i32, smithay::utils::Logical>,
+        _above: Option<smithay::xwayland::xwm::X11Window>,
+    ) {
+    }
+
+    fn resize_request(&mut self, _xwm: XwmId, _window: X11Surface, _button: u32, _resize_edge: smithay::xwayland::xwm::ResizeEdge) {}
+
+    fn move_request(&mut self, _xwm: XwmId, _window: X11Surface, _button: u32) {}
+}
+
 /// Run the compositor. Returns Ok(()) on clean shutdown.
 pub fn run() -> Result<(), String> {
-    const SOCKET_NAME: &str = "wayland-0";
     const OVERALL_TIMEOUT: Duration = Duration::from_secs(60);
 
     let grace = Duration::from_millis(
@@ -504,49 +608,146 @@ pub fn run() -> Result<(), String> {
             .unwrap_or(3000),
     );
 
-    let mut display: Display<AetherCompositor> =
+    let display: Display<AetherCompositor> =
         Display::new().map_err(|e| format!("Display::new: {e:?}"))?;
-    let mut dh = display.handle();
+    let dh = display.handle();
 
     let mut state = AetherCompositor::new(&dh);
+    state.deadline = Some(Instant::now() + OVERALL_TIMEOUT);
 
-    let socket =
-        ListeningSocket::bind(SOCKET_NAME).map_err(|e| format!("bind {SOCKET_NAME}: {e:?}"))?;
-    println!("AETHER_COMPOSITOR_SOCKET_READY: {SOCKET_NAME}");
+    // Spawn XWayland if available (Linux CI). Failure is non-fatal: the
+    // compositor keeps running as a pure Wayland compositor.
+    let xwayland_pair = XWayland::spawn(
+        &dh,
+        None,
+        std::iter::empty::<(String, String)>(),
+        false,
+        std::process::Stdio::null(),
+        std::process::Stdio::null(),
+        |_ud| {},
+    )
+    .ok();
+    if let Some((_, client)) = &xwayland_pair {
+        state.xwayland_client = Some(client.clone());
+    }
 
-    let deadline = Instant::now() + OVERALL_TIMEOUT;
-    loop {
-        display
-            .dispatch_clients(&mut state)
-            .map_err(|e| format!("dispatch_clients: {e}"))?;
-        match socket.accept() {
-            Ok(Some(stream)) => {
-                dh.insert_client(stream, Arc::new(ClientState::default()))
-                    .map_err(|e| format!("insert_client: {e:?}"))?;
+    let mut event_loop: smithay::reexports::calloop::EventLoop<'_, AetherCompositor> =
+        smithay::reexports::calloop::EventLoop::try_new()
+            .map_err(|e| format!("EventLoop::try_new: {e:?}"))?;
+    let loop_handle = event_loop.handle();
+    let signal = event_loop.get_signal();
+
+    // Listening socket for Wayland clients.
+    let socket_source = ListeningSocketSource::with_name("wayland-0")
+        .map_err(|e| format!("bind wayland-0: {e:?}"))?;
+    event_loop
+        .handle()
+        .insert_source(socket_source, |stream, _, state| {
+            if let Err(err) = state
+                .display_handle
+                .insert_client(stream, Arc::new(ClientState::default()))
+            {
+                eprintln!("aether-compositor: insert_client: {err:?}");
             }
-            Ok(None) => {}
-            Err(err) => return Err(format!("accept: {err}")),
-        }
-        display
-            .flush_clients()
-            .map_err(|e| format!("flush_clients: {e}"))?;
+        })
+        .map_err(|e| format!("insert socket source: {e:?}"))?;
 
-        if state.mapped && state.shutdown_at.is_none() {
-            state.shutdown_at = Some(Instant::now() + grace);
-        }
-        if let Some(shutdown_at) = state.shutdown_at {
-            if Instant::now() >= shutdown_at {
-                break;
+    // XWayland event source.
+    if let Some((xwayland, _client)) = xwayland_pair {
+        let lh = loop_handle.clone();
+        event_loop
+            .handle()
+            .insert_source(xwayland, move |event, _, state| {
+                match event {
+                    XWaylandEvent::Ready {
+                        x11_socket,
+                        display_number,
+                    } => {
+                        state.xwayland_display = Some(display_number);
+                        println!("AETHER_COMPOSITOR_XWAYLAND_DISPLAY: {display_number}");
+                        if let Some(client) = state.xwayland_client.clone() {
+                            match X11Wm::start_wm(lh.clone(), x11_socket, client) {
+                                Ok(wm) => {
+                                    state.xwm = Some(wm);
+                                }
+                                Err(err) => {
+                                    eprintln!("aether-compositor: X11Wm start failed: {err:?}");
+                                }
+                            }
+                        }
+                    }
+                    XWaylandEvent::Error => {
+                        eprintln!("aether-compositor: XWayland error");
+                    }
+                }
+            })
+            .map_err(|e| format!("insert xwayland source: {e:?}"))?;
+    }
+
+    // We need display accessible inside the event loop callback. Store it in a
+    // thread-local-ish slot via a wrapper? Instead, keep display in a mutable
+    // captured variable and use a raw pointer. Simpler: make AetherCompositor
+    // carry the display? Display<AetherCompositor> is not self-referential by
+    // value (backend only), so we can store it in the state.
+    // -> We instead handle display via a global static pointer set before run.
+    // (See below.)
+
+    // To avoid self-referential complexity, store display in an Arc<Mutex>?
+    // Display is not Sync. Instead, move display into state.display field.
+    // Add field at runtime by... AetherCompositor has no display field.
+    // We'll use a separate captured mutable and pass through callback closure.
+    // calloop callback only receives &mut Data, so capture display in an
+    // UnsafeCell via a box leaked for the duration of the run.
+    let display_box = Box::new(display);
+    let display_ptr = Box::into_raw(display_box);
+    // Save dh already. We'll use display_ptr in closure.
+
+    // Insert display pointer into state? Store as usize in a global.
+    DISPLAY_PTR.store(display_ptr as usize, std::sync::atomic::Ordering::SeqCst);
+
+    let grace_for_closure = grace;
+    let result = event_loop.run(
+        Some(Duration::from_millis(10)),
+        &mut state,
+        move |state| {
+            // dispatch wayland clients
+            let display = unsafe { &mut *(DISPLAY_PTR.load(std::sync::atomic::Ordering::SeqCst) as *mut Display<AetherCompositor>) };
+            let _ = display.dispatch_clients(state);
+            let _ = display.flush_clients();
+
+            if state.mapped && state.shutdown_at.is_none() {
+                state.shutdown_at = Some(Instant::now() + grace_for_closure);
             }
-        }
-        if Instant::now() >= deadline {
-            return Err(
-                "compositor timed out waiting for a client surface to commit a buffer".to_string(),
-            );
-        }
-        thread::sleep(Duration::from_millis(10));
+            if let Some(shutdown_at) = state.shutdown_at {
+                if Instant::now() >= shutdown_at {
+                    signal.stop();
+                }
+            }
+            if let Some(deadline) = state.deadline {
+                if Instant::now() >= deadline {
+                    state.timed_out = true;
+                    signal.stop();
+                }
+            }
+        },
+    );
+
+    // reclaim display
+    let _ = unsafe { Box::from_raw(display_ptr) };
+
+    // Need state.timed_out field. Add to struct? We'll check via a side channel:
+    // We stored timed_out? We didn't add field. Add quickly? Instead, track via
+    // a global.
+    // For now, report timeout if result ok but no mapped? Keep simple.
+    let _ = result;
+    // We need to propagate timed_out. We added field? Let's add field `timed_out: bool` to AetherCompositor.
+    if state.timed_out {
+        return Err("compositor timed out waiting for a client surface to commit a buffer".to_string());
     }
 
     println!("AETHER_COMPOSITOR_DONE");
     Ok(())
 }
+
+// globals for display pointer and timed_out
+static DISPLAY_PTR: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);

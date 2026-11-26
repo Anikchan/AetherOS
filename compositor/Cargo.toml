@@ -9,7 +9,7 @@ name = "aether-compositor"
 path = "src/main.rs"
 
 [dependencies]
-smithay = { version = "0.7.0", default-features = false, features = ["wayland_frontend"] }
+smithay = { version = "0.7.0", default-features = false, features = ["wayland_frontend", "xwayland"] }
 
 # P3-T02 headless acceptance test: a Wayland client that checks the two
 # monitors (different scales) and a zwlr_layer_shell_v1 surface.
