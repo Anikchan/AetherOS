@@ -49,6 +49,39 @@ disk-image-test: ## Boot a raw disk image in QEMU: make disk-image-test IMAGE=pa
 fetch-kernel: ## Download/cache the upstream kernel tarball for kernel-config checks
 	bash $(OS_BUILD_DIR)/scripts/fetch-kernel.sh
 
+.PHONY: live-usb
+live-usb: ## Build the live USB image (Linux host): make live-usb [PERSIST_MB=1024]
+	bash $(OS_BUILD_DIR)/scripts/make-live-usb.sh \
+		--binaries $(OS_BUILD_DIR)/buildroot/output/images \
+		--persist-mb $(or $(PERSIST_MB),1024)
+
+.PHONY: live-usb-plan
+live-usb-plan: ## Print the live USB layout without writing (works on macOS)
+	bash $(OS_BUILD_DIR)/scripts/make-live-usb.sh \
+		--binaries $(OS_BUILD_DIR)/buildroot/output/images --dry-run
+
+.PHONY: rauc-bundle
+rauc-bundle: ## Build a RAUC bundle: make rauc-bundle VERSION=0.1.0 [IMAGE=rootfs]
+	bash $(OS_BUILD_DIR)/scripts/rauc-bundle.sh \
+		--image $(or $(IMAGE),$(OS_BUILD_DIR)/buildroot/output/images/rootfs.squashfs) \
+		--version $(or $(VERSION),0.1.0)
+
+.PHONY: soak-smoke
+soak-smoke: ## Compressed soak smoke test (G-PM5 harness, model host)
+	cd $(ROOT_DIR) && cargo build -q -p aether-lifecycled --bin aether-bench
+	cd $(ROOT_DIR) && PATH="$(ROOT_DIR)/target/debug:$$PATH" SOAK_HOURS=0.01 \
+		CYCLES=$(or $(CYCLES),2) CYCLE_SECONDS=0 APPS=$(or $(APPS),50) \
+		OUT_DIR=$(or $(OUT_DIR),/tmp/aether-soak) \
+		bash lifecycled/bench/soak-72h.sh
+
+.PHONY: gate-report-selftest
+gate-report-selftest: ## Self-test the G-PM1/G-PM5 gate report generator
+	cd $(ROOT_DIR) && python3 lifecycled/bench/gate-report.py --self-test
+
+.PHONY: energy-contract
+energy-contract: ## Print the Activity Manager Energy column contract (JSON)
+	cd $(ROOT_DIR) && cargo run -q -p aether-taskmanager -- --energy-contract
+
 .PHONY: ci-local
 ci-local: ## Run the local CI checks (build + test + budgets)
 	bash $(OS_BUILD_DIR)/scripts/ci-local.sh

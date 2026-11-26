@@ -294,3 +294,18 @@ Implemented in `lifecycled/` (S4, P5-T01..T06/T08):
 Limits: real freeze/reclaim-on-a-process, G-PM1 figures, G-PM3 cgroup values,
 B2/B6 and the full 72-hour soak need the reference machines. PSI is polled in
 the daemon loop; event-driven `poll()` on the pressure file is still open.
+
+### 2026-11-26 — gate report and soak baseline (P5-T08)
+
+- `lifecycled/bench/gate-report.py` turns `aether-bench --json` into a D6 gate
+  report for G-PM1 and G-PM5 with explicit `PASS`/`FAIL`/`PENDING`/
+  `INCOMPLETE` verdicts; a model host can never produce a gate PASS.
+- `soak-72h.sh` now samples `/proc/meminfo` `MemAvailable` before and after
+  every cycle (`p5-t08-soak-samples.tsv`), so G-PM5's "memory returns to
+  baseline" rule is measured instead of assumed; the per-cycle JSON is merged
+  for the report. Exit codes: 0 pass/pending, 1 fail, 2 missing reference
+  evidence.
+- `bench-50.sh` emits the G-PM1 report; reference runs pass `REFERENCE_HARDWARE=1
+  B2_RESTORE_MS=… B6_SHARE=…`. Without those values the gate stays
+  `INCOMPLETE`, matching 04 §10.
+

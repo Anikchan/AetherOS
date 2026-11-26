@@ -101,6 +101,27 @@ Notes:
 - `Availability::NotReported` is the value shown when a sensor is missing. It is never stored as zero.
 - `ProcessRow` and `ProcessDetail` hold the Details tab fields (F13 TM-16).
 
+### 5.1 Energy-impact column binding (P5-T15, 2026-11-26)
+
+`apps/taskmanager` is the single owner of the column contract; the Slint window
+reads it through `aether-taskmanager --energy-contract` instead of hard-coding
+labels or thresholds:
+
+| Field | Value |
+| --- | --- |
+| key / header | `energy` / `Energy` |
+| default sort | descending |
+| null label | `Not reported` |
+| refresh | 60 s (section 3 roll-up) |
+| levels | High ≥ 66 % of the top consumer, Medium ≥ 33 %, Low > 0 Wh, None |
+| tones | `danger`, `accent`, `success`, `text_muted` (D1 tokens) |
+| source 1 | `powerd battery-history.json → energy_by_app` (measured) |
+| source 2 | `EnergyImpact::classify(cpu, wakeups, gpu)` (relative score) |
+
+The same thresholds are used by `apply_energy_impact` and
+`EnergyImpact::from_share`, so the CLI, export and window cannot disagree.
+
+
 ## 6. Storage
 
 | Store | Format | Resolution and retention | Size estimate |

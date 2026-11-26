@@ -5,6 +5,13 @@
 //! installed, and when to roll back. A failed health check or too many boot
 //! attempts on a pending slot returns to the last good slot.
 
+pub mod rauc;
+
+pub use rauc::{
+    bootname, bundle_manifest, parse_status, sync_state, validate_system_conf, RaucCommand,
+    RaucError, RaucSlot, RaucStatus, MANIFEST_TEMPLATE, SYSTEM_CONF,
+};
+
 use std::collections::BTreeMap;
 use std::fs;
 use std::io;
@@ -236,9 +243,25 @@ pub fn install(
     Ok(())
 }
 
+/// Mark the inactive slot pending after RAUC has written it (P9-T01).
+///
+/// RAUC owns the image write, so there is no manifest to compare against here;
+/// the bootloader and `rauc status` are the source of truth on the next boot.
+pub fn stage_pending(state: &mut UpdateState, slot: SlotId) -> Result<(), UpdateError> {
+    if slot == state.active {
+        return Err(UpdateError::NoInactiveSlot(
+            "cannot stage the running slot".into(),
+        ));
+    }
+    let entry = state.slot_mut(slot);
+    entry.state = SlotState::Pending;
+    state.update_in_progress = true;
+    state.boot_attempts = 0;
+    Ok(())
+}
+
 /// Switch to the inactive slot after a successful write.
-pub fn activate_pending(state: &mut UpdateState) -> Result<(), UpdateError> {
-    let target = state.active.other();
+pub fn activate_pending(state: &mut UpdateState) -> Result<(), UpdateError> {    let target = state.active.other();
     let slot = state
         .slot(target)
         .ok_or_else(|| UpdateError::NoInactiveSlot("missing slot".into()))?
@@ -450,6 +473,18 @@ mod tests {
         let loaded = UpdateState::load(&path).unwrap();
         assert_eq!(loaded, state);
         let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn staging_the_inactive_slot_marks_it_pending() {
+        let mut state = seeded();
+        stage_pending(&mut state, SlotId::B).unwrap();
+        assert_eq!(state.slots.get("b").unwrap().state, SlotState::Pending);
+        assert!(state.update_in_progress);
+        assert!(matches!(
+            stage_pending(&mut state, SlotId::A),
+            Err(UpdateError::NoInactiveSlot(_))
+        ));
     }
 
     #[test]

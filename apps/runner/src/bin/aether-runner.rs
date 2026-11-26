@@ -4,8 +4,10 @@
 //!   aether-runner list [--root DIR]
 //!   aether-runner plan APP-ID [--root DIR]
 //!   aether-runner launch APP-ID [--root DIR] [--dry-run]
-//!   aether-runner engines [--engine-root DIR]
+//!   aether-runner engines [verify|package] [--engine-root DIR] [--from DIR] [--version V] [--name wine] [--arch x86_64]
 //!   aether-runner prefixes list|remove APP-ID [--root DIR]
+//!   aether-runner windows install --installer FILE [--id ID] [--entry REL] [--dry-run]
+//!   aether-runner windows uninstall APP-ID [--dry-run]
 //!   aether-runner compat list|plan|set|report [--db FILE]
 
 use std::collections::BTreeSet;
@@ -14,7 +16,7 @@ use std::path::PathBuf;
 use aether_pkg::manifest::AppId;
 use aether_pkg::{Paths, Registry};
 use aether_runner::compat::{CompatDb, CompatTier};
-use aether_runner::{EngineRegistry, PrefixManager, Runner};
+use aether_runner::{EngineRegistry, PrefixManager, Runner, WindowsInstallRequest, WindowsInstallerFlow};
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -23,6 +25,14 @@ fn main() {
     let mut engine_root: Option<PathBuf> = None;
     let mut db_path = PathBuf::from("docs/2026/11/23/results/compat-db.json");
     let mut dry_run = false;
+    let mut from_dir: Option<PathBuf> = None;
+    let mut version: Option<String> = None;
+    let mut engine_name = "wine".to_string();
+    let mut arch = "x86_64".to_string();
+    let mut installer: Option<PathBuf> = None;
+    let mut app_id: Option<String> = None;
+    let mut entry: Option<String> = None;
+    let mut installer_args: Vec<String> = Vec::new();
     let mut positional = Vec::new();
     let mut index = 1;
     while index < args.len() {
@@ -42,8 +52,42 @@ fn main() {
                 }
             }
             "--dry-run" => dry_run = true,
+            "--from" => {
+                index += 1;
+                from_dir = args.get(index).map(PathBuf::from);
+            }
+            "--version" => {
+                index += 1;
+                version = args.get(index).cloned();
+            }
+            "--name" => {
+                index += 1;
+                engine_name = args.get(index).cloned().unwrap_or(engine_name);
+            }
+            "--arch" => {
+                index += 1;
+                arch = args.get(index).cloned().unwrap_or(arch);
+            }
+            "--installer" => {
+                index += 1;
+                installer = args.get(index).map(PathBuf::from);
+            }
+            "--id" => {
+                index += 1;
+                app_id = args.get(index).cloned();
+            }
+            "--entry" => {
+                index += 1;
+                entry = args.get(index).cloned();
+            }
+            "--arg" => {
+                index += 1;
+                if let Some(value) = args.get(index) {
+                    installer_args.push(value.clone());
+                }
+            }
             "-h" | "--help" => {
-                println!("usage: aether-runner <list|plan|launch|engines|prefixes|compat> [args]");
+                println!("usage: aether-runner <list|plan|launch|engines|prefixes|windows|compat> [args]");
                 return;
             }
             value => positional.push(value.to_string()),
@@ -124,12 +168,59 @@ fn main() {
             }
         }
         "engines" => {
+            let action = positional.first().map(|s| s.as_str()).unwrap_or("list");
+            if action == "package" {
+                let (Some(source), Some(version)) = (from_dir.clone(), version.clone()) else {
+                    eprintln!("engines package needs --from DIR --version V");
+                    std::process::exit(2);
+                };
+                match engines.package(&source, &engine_name, &version, &arch) {
+                    Ok(package) => println!(
+                        "ENGINE_PACKAGED {} files={} bytes={}",
+                        package.dir_name(),
+                        package.files.len(),
+                        package.installed_bytes
+                    ),
+                    Err(error) => {
+                        eprintln!("packaging failed: {error}");
+                        std::process::exit(1);
+                    }
+                }
+                return;
+            }
+            if action == "verify" {
+                let mut failed = false;
+                for (version, problems) in engines.verify_all() {
+                    if problems.is_empty() {
+                        println!("wine-{version}\tverified");
+                    } else {
+                        failed = true;
+                        println!("wine-{version}\tFAILED: {}", problems.join("; "));
+                    }
+                }
+                if failed {
+                    std::process::exit(1);
+                }
+                return;
+            }
             let versions = engines.wine_versions();
             if versions.is_empty() {
                 println!("No Windows engine installed (Pack B).");
             } else {
+                let packaged: BTreeSet<String> = engines
+                    .packages()
+                    .into_iter()
+                    .map(|package| package.version)
+                    .collect();
                 for version in versions {
-                    println!("wine-{version}");
+                    println!(
+                        "wine-{version}\t{}",
+                        if packaged.contains(&version) {
+                            "packaged"
+                        } else {
+                            "unpackaged"
+                        }
+                    );
                 }
             }
             println!(
@@ -139,6 +230,74 @@ fn main() {
                     .map(|p| p.display().to_string())
                     .unwrap_or_else(|| "not found".into())
             );
+        }
+        "windows" => {
+            let action = positional.first().map(|s| s.as_str()).unwrap_or("install");
+            let flow = WindowsInstallerFlow::new(paths.clone(), engines.clone());
+            let flow = if dry_run { flow.dry_run() } else { flow };
+            if action == "uninstall" {
+                let Some(raw) = positional.get(1).or(app_id.as_ref()) else {
+                    eprintln!("windows uninstall needs APP-ID");
+                    std::process::exit(2);
+                };
+                let id = AppId::new(raw.clone()).unwrap_or_else(|error| {
+                    eprintln!("invalid app id: {error}");
+                    std::process::exit(2);
+                });
+                match flow.uninstall(&id) {
+                    Ok(outcome) => println!(
+                        "WINDOWS_UNINSTALLED {} prefix_removed={} engine_kept={}",
+                        outcome.app,
+                        !outcome.removed_prefix.exists(),
+                        outcome.kept_engine
+                    ),
+                    Err(error) => {
+                        eprintln!("uninstall failed: {error}");
+                        std::process::exit(1);
+                    }
+                }
+                return;
+            }
+            let Some(installer) = installer.clone() else {
+                eprintln!("windows install needs --installer FILE");
+                std::process::exit(2);
+            };
+            let id = app_id
+                .clone()
+                .map(|raw| {
+                    AppId::new(raw).unwrap_or_else(|error| {
+                        eprintln!("invalid app id: {error}");
+                        std::process::exit(2);
+                    })
+                })
+                .unwrap_or_else(|| {
+                    let stem = installer
+                        .file_stem()
+                        .map(|stem| stem.to_string_lossy().to_ascii_lowercase())
+                        .unwrap_or_else(|| "app".into())
+                        .replace(' ', "-");
+                    AppId::new(format!("win.{stem}")).unwrap()
+                });
+            let request = WindowsInstallRequest {
+                id,
+                installer,
+                entry,
+                args: installer_args.clone(),
+            };
+            match flow.install(&request) {
+                Ok(outcome) => println!(
+                    "WINDOWS_INSTALLED {} prefix={} entry={} launcher={} executed={}",
+                    outcome.app,
+                    outcome.prefix.display(),
+                    outcome.entry,
+                    outcome.launcher.display(),
+                    outcome.executed
+                ),
+                Err(error) => {
+                    eprintln!("install failed: {error}");
+                    std::process::exit(1);
+                }
+            }
         }
         "prefixes" => {
             let manager = PrefixManager::new(&paths);

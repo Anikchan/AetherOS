@@ -14,8 +14,8 @@ pub use manager::{
     app_id_from_scope, parse_loginctl, parse_systemctl, ActivityManager, EndTaskOutcome, Snapshot,
 };
 pub use model::{
-    BatteryView, Column, EnergyImpact, ExportFormat, GraphPoint, PerformanceHistory, ProcessRow,
-    SensorKind, SensorReading, ServiceRow, StartupItem, StartupScope, SystemSample, Tab,
-    UserSession,
+    BatteryView, Column, EnergyColumnContract, EnergyImpact, EnergyLevelSpec, EnergySourceSpec,
+    ExportFormat, GraphPoint, PerformanceHistory, ProcessRow, SensorKind, SensorReading, ServiceRow,
+    StartupItem, StartupScope, SystemSample, Tab, UserSession,
 };
 pub use s7::{run as run_spike_s7, to_markdown as spike_s7_markdown, SpikeS7Report, SpikeVerdict};

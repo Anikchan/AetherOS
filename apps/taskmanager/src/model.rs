@@ -97,6 +97,117 @@ impl EnergyImpact {
             Self::None
         }
     }
+
+    /// Level from the measured share of the top app's energy in the F14
+    /// analytics store. Thresholds are the ones published in the column
+    /// contract (`EnergyColumnContract::default`).
+    pub fn from_share(share: f64, watt_hours: f64) -> Self {
+        if share >= 0.66 {
+            Self::High
+        } else if share >= 0.33 {
+            Self::Medium
+        } else if watt_hours > 0.0 {
+            Self::Low
+        } else {
+            Self::None
+        }
+    }
+
+    /// Stable machine-readable binding for the Activity Manager Energy column
+    /// (P5-T15, F7 PWR-12). The Slint window reads this instead of hard-coding
+    /// labels or thresholds; tests pin the values.
+    pub fn contract() -> EnergyColumnContract {
+        EnergyColumnContract::default()
+    }
+}
+
+/// One level in the energy column contract.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct EnergyLevelSpec {
+    pub level: EnergyImpact,
+    pub label: String,
+    /// Lower bound of the app's share of the top consumer's energy.
+    pub min_share: f64,
+    /// Design token (`ui` theme) used for the label.
+    pub tone: String,
+}
+
+/// Where the column data comes from, in priority order.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EnergySourceSpec {
+    pub id: String,
+    pub description: String,
+    pub path: String,
+    pub priority: u8,
+}
+
+/// Contract for the Energy column (P5-T15, D10 §5, F7 PWR-12).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct EnergyColumnContract {
+    pub key: String,
+    pub header: String,
+    pub unit: String,
+    pub default_sort: String,
+    pub null_label: String,
+    pub refresh_seconds: u32,
+    pub levels: Vec<EnergyLevelSpec>,
+    pub sources: Vec<EnergySourceSpec>,
+    pub tooltip: String,
+}
+
+impl Default for EnergyColumnContract {
+    fn default() -> Self {
+        Self {
+            key: "energy".into(),
+            header: "Energy".into(),
+            unit: "impact".into(),
+            default_sort: "desc".into(),
+            null_label: "Not reported".into(),
+            // F14 rolls energy per app up once a minute.
+            refresh_seconds: 60,
+            levels: vec![
+                EnergyLevelSpec {
+                    level: EnergyImpact::High,
+                    label: EnergyImpact::High.label().into(),
+                    min_share: 0.66,
+                    tone: "danger".into(),
+                },
+                EnergyLevelSpec {
+                    level: EnergyImpact::Medium,
+                    label: EnergyImpact::Medium.label().into(),
+                    min_share: 0.33,
+                    tone: "accent".into(),
+                },
+                EnergyLevelSpec {
+                    level: EnergyImpact::Low,
+                    label: EnergyImpact::Low.label().into(),
+                    min_share: 0.0,
+                    tone: "success".into(),
+                },
+                EnergyLevelSpec {
+                    level: EnergyImpact::None,
+                    label: EnergyImpact::None.label().into(),
+                    min_share: 0.0,
+                    tone: "text_muted".into(),
+                },
+            ],
+            sources: vec![
+                EnergySourceSpec {
+                    id: "battery-history".into(),
+                    description: "Measured energy per app from the F14 battery history (preferred)".into(),
+                    path: "powerd battery-history.json -> energy_by_app".into(),
+                    priority: 1,
+                },
+                EnergySourceSpec {
+                    id: "computed".into(),
+                    description: "Relative score from CPU time, wakeups and GPU use when no history exists".into(),
+                    path: "ProcessRow cpu_percent + wakeups + gpu_percent".into(),
+                    priority: 2,
+                },
+            ],
+            tooltip: "Relative energy use: a share of the top app's measured energy, or a score from CPU, wakeups and GPU use before history exists.".into(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -346,6 +457,26 @@ mod tests {
             EnergyImpact::High
         );
         assert_eq!(EnergyImpact::High.label(), "High");
+        assert_eq!(EnergyImpact::from_share(0.7, 25.0), EnergyImpact::High);
+        assert_eq!(EnergyImpact::from_share(0.4, 10.0), EnergyImpact::Medium);
+        assert_eq!(EnergyImpact::from_share(0.1, 0.4), EnergyImpact::Low);
+        assert_eq!(EnergyImpact::from_share(0.0, 0.0), EnergyImpact::None);
+    }
+
+    #[test]
+    fn energy_column_contract_is_stable() {
+        let contract = EnergyImpact::contract();
+        assert_eq!(contract.key, "energy");
+        assert_eq!(contract.header, "Energy");
+        assert_eq!(contract.default_sort, "desc");
+        assert_eq!(contract.refresh_seconds, 60);
+        assert_eq!(contract.levels.len(), 4);
+        assert_eq!(contract.levels[0].level, EnergyImpact::High);
+        assert_eq!(contract.levels[0].min_share, 0.66);
+        assert_eq!(contract.levels[0].tone, "danger");
+        assert_eq!(contract.sources[0].priority, 1);
+        let json = serde_json::to_string(&contract).unwrap();
+        assert!(json.contains("\"null_label\":\"Not reported\""));
     }
 
     #[test]

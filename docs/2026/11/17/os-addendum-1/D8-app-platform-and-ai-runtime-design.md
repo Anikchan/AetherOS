@@ -131,17 +131,52 @@ Paths are created by `nexa-pkg` on first use. Removing an app deletes its regist
 
 ## 5. Launch Flow and Sandbox Rules
 
-1. The launcher sends a launch request to `nexa-lifecycled` (D3 protocol).
+1. The launcher sends a launch request to `aether-lifecycled` (D3 protocol).
 2. `EngineRegistry` selects the engine by package kind.
 3. `Sandbox::profile_for` builds the profile from the manifest permissions.
 4. `Runner::launch` starts the app inside the sandbox. Native apps use Landlock for file access, user and mount namespaces, and a seccomp filter. Windows programs run in their prefix under the Windows engine with the same restrictions where the engine allows.
 5. The app's window appears; the lifecycle state becomes Foreground (D3).
 
 Sandbox rules:
-- Files outside the app's folder need a file picker through `nexa-permissions`. The picker returns a handle; the app never sees the rest of the folder tree.
+- Files outside the app's folder need a file picker through `aether-permissions`. The picker returns a handle; the app never sees the rest of the folder tree.
 - Network is off unless the manifest asks for it and the user accepts.
 - Devices (camera, microphone) are granted only when the user accepts the matching permission.
 - Windows programs are isolated by prefix. Their access to the rest of the home folder is limited by the same file rules where the engine supports them; this is a known limit (F3 section 4).
+
+### 5.1 Windows engine packaging and installer flow (P6-T05/T06, 2026-11-26)
+
+Engine package (`apps/runner/src/engine_package.rs`):
+
+```toml
+# engines/wine-10.0/aether-engine.toml
+name = "wine"
+version = "10.0"
+arch = "x86_64"
+installed_bytes = 812345678
+[[files]]
+path = "bin/wine"
+size = 1234
+sha256 = "…"
+```
+
+- `EngineRegistry::packages()` lists packaged engines; `verify_all()` rejects a
+  tampered engine before it runs a Windows app.
+- `aether-runner engines package --from DIR --version V` writes the manifest;
+  `engines verify` checks every file; `engines` marks legacy directories
+  (no manifest) as `unpackaged`.
+
+Installer flow (`apps/runner/src/windows.rs`):
+
+1. The user opens a `.exe`/`.msi`; the payload is installed through `aether-pkg`
+   as `windows-installer`.
+2. `WindowsInstallerFlow::install` creates the app's own WINEPREFIX, runs the
+   vendor installer there, discovers the produced program (or takes
+   `--entry`), and writes `aether-windows-app.json` inside the prefix.
+3. A launcher entry is written with `Exec=aether-runner launch <app-id>`;
+   `Runner::plan` prefers the recorded program over the installer payload.
+4. `uninstall` removes **only** the prefix and its launcher (AP-AC-04); the
+   shared engine, other prefixes and the payload are untouched.
+
 
 ## 6. AI Runtime State Machine
 

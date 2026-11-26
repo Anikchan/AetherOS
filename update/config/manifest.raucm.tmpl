@@ -1,0 +1,15 @@
+# RAUC bundle manifest template (P9-T01).
+# Rendered by aether-update bundle-manifest / os-build/scripts/rauc-bundle.sh.
+
+[update]
+compatible=aetheros
+version=@VERSION@
+description=@DESCRIPTION@
+
+[bundle]
+format=verity
+
+[image.rootfs]
+filename=@IMAGE@
+sha256=@IMAGE_SHA256@
+size=@IMAGE_SIZE@

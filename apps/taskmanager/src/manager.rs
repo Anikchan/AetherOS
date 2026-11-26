@@ -296,15 +296,7 @@ impl ActivityManager {
                 .unwrap_or_else(|| row.name.clone());
             if let Some(wh) = by_app.get(&key) {
                 let share = if max > 0.0 { wh / max } else { 0.0 };
-                row.energy = if share >= 0.66 {
-                    crate::model::EnergyImpact::High
-                } else if share >= 0.33 {
-                    crate::model::EnergyImpact::Medium
-                } else if *wh > 0.0 {
-                    crate::model::EnergyImpact::Low
-                } else {
-                    crate::model::EnergyImpact::None
-                };
+                row.energy = crate::model::EnergyImpact::from_share(share, *wh);
             }
         }
     }

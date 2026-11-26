@@ -23,6 +23,25 @@ uses the S3 design system (`ui/`) and is not wired yet — see Status.
 | TM-19 Export | CSV, JSON and text |
 | TM-20 Alerts / TM-21 menu-bar indicator | v1, not started |
 
+## Energy column contract (P5-T15)
+
+`aether-taskmanager --energy-contract` prints the JSON binding the Slint window
+consumes, so labels, thresholds, tones, sort order and refresh cadence live in
+one place instead of the UI:
+
+```json
+{"key":"energy","header":"Energy","unit":"impact","default_sort":"desc",
+ "null_label":"Not reported","refresh_seconds":60,
+ "levels":[{"level":"high","label":"High","min_share":0.66,"tone":"danger"}, ...],
+ "sources":[{"id":"battery-history","priority":1,...},
+            {"id":"computed","priority":2,...}]}
+```
+
+Source priority: measured F14 `energy_by_app` first; when no history exists the
+row falls back to `EnergyImpact::classify(cpu, wakeups, gpu)` (F7 PWR-12).
+`apply_energy_impact` and `EnergyImpact::from_share` use the same thresholds.
+
+
 ## Commands
 
 ```bash
@@ -36,6 +55,7 @@ aether-taskmanager --efficiency 1234 on --yes
 aether-taskmanager --startup-list
 aether-taskmanager --startup-disable ~/.config/autostart/mail.desktop
 aether-taskmanager --services
+aether-taskmanager --energy-contract      # JSON binding for the Energy column
 ```
 
 Integration flags: `--lifecycle-status` (lifecycled `--once` JSON) adds app

@@ -28,7 +28,7 @@ Battery management is a top priority (03 and 01 section 2). The goal is the long
 | PWR-09 | Low-battery actions | MVP | Notify at 20% and 10%. Switch to Saver at 10%. At 5%, suspend or hibernate (configurable). Hibernate at 3% if not charging. |
 | PWR-10 | Sleep policy | MVP (suspend-to-idle), v1 (suspend-then-hibernate) | Suspend-to-idle by default. Optional: suspend first, then hibernate after a set time, to save battery during long sleep. Needs a disk swap file (D5 section 8). |
 | PWR-11 | Thermal management | MVP (basic), v1 (fan curves) | Keeps temperatures in range while saving power. Intel thermal daemon where used; platform fan control where supported. |
-| PWR-12 | Energy impact per app | v1 | Relative energy score in the activity monitor, from CPU time, wakeups, and GPU use. |
+| PWR-12 | Energy impact per app | v1 | Relative energy score in the activity monitor, from measured energy per app (F14) when available, else CPU time, wakeups, and GPU use. The column contract (labels, thresholds, tones, 60 s refresh) is printed by `aether-taskmanager --energy-contract`. |
 | PWR-13 | Wakeup control | v1 | Flags apps that wake the CPU often; limits their timers in background. |
 | PWR-14 | Power report | v1 | `aetherctl power report` writes a text report: drain sources, profile history, sleep events, and battery health. |
 | PWR-15 | Low-power mode switch | MVP | One toggle in the control center. Sets Saver and reduces effects (F6 tiers). |
@@ -100,3 +100,13 @@ battery numbers are recorded yet; spike S4 lands in P2 bring-up.
 
 - Whether suspend-then-hibernate is needed in Personal Edition or can wait. Proposed: Later unless the owner's laptop drains too quickly in sleep.
 - The default low-battery action at 5%: suspend or hibernate. Proposed: hibernate if a swap file exists; suspend otherwise.
+
+## 9. Implementation note (2026-11-26)
+
+PWR-12 is wired end to end: `powerd` records measured energy per app (F14
+`energy_by_app`), `aether-taskmanager` ranks rows by that share and falls back
+to the CPU/wakeup/GPU score, and the window binds to the published contract
+(High ≥ 66 %, Medium ≥ 33 %, Low > 0 Wh, None; tones `danger`/`accent`/
+`success`/`text_muted`; 60 s refresh). Hardware energy numbers still need the
+owner's laptop (G-BAT1/G-BAT2).
+

@@ -28,8 +28,9 @@ aether-installer apply --plan plan.json   # refused outside the live image
 
 ## Honest limits
 
-- No live image yet (P8-T01) and no disk writes; INS-AC-01/03/04/05/06/07/09
-  need real hardware.
+- The live USB image build path is ready (`installer/LIVE-USB.md`,
+  `os-build/scripts/make-live-usb.sh`); a real stick boot and disk writes still
+  need hardware, so INS-AC-01/03/04/05/06/07/09 stay open.
 - BitLocker/Fast Startup markers are read from a mounted Windows volume; the
   full `chkdsk`/BitLocker probing on the live image is a follow-up.
 - Secure Boot (P8-T05) is deferred to the public release.

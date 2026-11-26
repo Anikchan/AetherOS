@@ -12,6 +12,7 @@
 //!   aether-taskmanager --export PATH [--format csv|json|text]
 //!   aether-taskmanager --startup-list | --startup-disable FILE | --startup-enable FILE
 //!   aether-taskmanager --services | --users
+//!   aether-taskmanager --energy-contract
 //!
 //! `--yes` is required for real signals and nice changes; without it actions
 //! run in dry-run mode and print what they would do.
@@ -34,6 +35,7 @@ struct Args {
     json: bool,
     tui: bool,
     spike_s7: bool,
+    energy_contract: bool,
     limit: Option<usize>,
     interval: u64,
     end_task: Option<u32>,
@@ -72,6 +74,7 @@ fn parse_args() -> Args {
             "--json" => args.json = true,
             "--tui" => args.tui = true,
             "--spike-s7" => args.spike_s7 = true,
+            "--energy-contract" => args.energy_contract = true,
             "--limit" => args.limit = value("--limit").parse().ok(),
             "--interval" => args.interval = value("--interval").parse().unwrap_or(1),
             "--end-task" => args.end_task = value("--end-task").parse().ok(),
@@ -123,6 +126,11 @@ fn epoch_ms() -> u64 {
 
 fn main() {
     let args = parse_args();
+    if args.energy_contract {
+        let contract = aether_taskmanager::EnergyImpact::contract();
+        println!("{}", serde_json::to_string_pretty(&contract).unwrap_or_default());
+        return;
+    }
     let roots = ProcFs::system();
     let mut manager = ActivityManager::new(roots.clone(), !args.yes);
 
@@ -236,7 +244,7 @@ fn main() {
         BatteryAnalytics::load(path).ok()
     });
 
-    let mut apply_context = |manager: &mut ActivityManager, rows: &mut Vec<_>| {
+    let apply_context = |manager: &mut ActivityManager, rows: &mut Vec<_>| {
         if let Some(metrics) = &lifecycle {
             manager.merge_lifecycle(rows, metrics);
         }

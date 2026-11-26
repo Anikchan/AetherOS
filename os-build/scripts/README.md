@@ -10,6 +10,8 @@
 | `kernel-config-check.sh` | Cached reimplementation of the kernel-config workflow (optimization proposal for S1). |
 | `spike-runner.sh` | Reusable harness for running a spike script with timeout, log capture, and marker verification (supports S2). |
 | `image-checksum.sh` | Create/verify SHA-256 sidecar files for ISO/IMG artifacts (P9-T05; signing deferred to public release). |
+| `make-live-usb.sh` | Assemble the GPT live USB image (ESP + squashfs root + persistence) rootlessly (P8-T01). `--dry-run` prints the plan anywhere. |
+| `rauc-bundle.sh` | Render `manifest.raucm` and build a signed RAUC update bundle (P9-T01). `--dry-run` prints the plan anywhere. |
 
 ## Local type-check recipe
 

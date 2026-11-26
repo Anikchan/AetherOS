@@ -38,6 +38,37 @@ Notes:
 - Windows partitions are never moved or modified except for the shrink step in F5 INS-04.
 - Data partition is encrypted when the user chooses LUKS2 (F5 INS-08).
 
+## 2.1 Live USB Layout (P8-T01)
+
+The live USB is a separate, disposable image built from the same Buildroot
+artifacts; it does not touch the installed-disk layout above.
+
+| Partition | Type | Size | Purpose |
+| --- | --- | --- | --- |
+| AETHEROS-ESP | FAT32 | 64 MB | GRUB2 EFI (`EFI/BOOT/BOOTX64.EFI`), `bzImage`, live `grub.cfg` |
+| AETHEROS-ROOT | squashfs | rootfs size | Read-only live root |
+| AETHEROS-PERSIST | ext4 | 1024 MB (default) | Live overlay store (`.aether-persistence/`) |
+
+Build:
+
+```bash
+os-build/scripts/make-live-usb.sh --binaries os-build/buildroot/output/images \
+  --out os-build/buildroot/output/images/aetheros-live.img --persist-mb 1024
+```
+
+- Runs without root and without loop mounts (GPT written with `sgdisk`, FAT with
+  `mkfs.vfat`/`mcopy`, ext4 populated with `mke2fs -d`, partitions copied with
+  `dd`), so CI can build it.
+- Partition UUIDs are fixed (`a0e50001…`/`a0e50002…`/`a0e50003…`) so `grub.cfg`
+  and the docs never drift.
+- The live entry passes `live=1 persistence=PARTUUID=…`; the live overlay
+  service (image overlay, S1) mounts the persistence partition. Without it the
+  live session runs read-only.
+- Verify with `os-build/test/disk-image-test.sh <image> uefi`, then write with
+  `dd if=<image> of=/dev/sdX bs=4M status=progress`.
+- BIOS live boot is out of scope for P8-T01; `aetheros-bios.img` remains the P1
+  legacy test image.
+
 ## 3. Size Budget
 
 Compressed sizes. Targets with limits per component. Measured on every build.
@@ -108,6 +139,26 @@ UEFI (Secure Boot on, with Microsoft keys) -> shim (signed by a Microsoft-signed
 | Data | `/var` and `/home` are not part of the slots; they survive updates |
 
 Update size is about the size of the root image (around 1 GB uncompressed for a full root). Delta updates are a later improvement (P9 evaluation).
+
+### 6.1 RAUC wiring (P9-T01, 2026-11-26)
+
+The A/B configuration is real, not a sketch:
+
+- `update/config/system.conf` — `compatible=aetheros`, `bootloader=grub`,
+  `grubenv=/boot/grub/grubenv`, `rootfs.0`/`rootfs.1` on
+  `/dev/disk/by-partlabel/aetheros-a|b` as `type=raw` with boot names `A`/`B`.
+  It is embedded in `update/src/rauc.rs` (`include_str!`) and validated by
+  `validate_system_conf()`.
+- `update/config/manifest.raucm.tmpl` — bundle manifest (verity format, one
+  rootfs image with sha256 and size).
+- `os-build/scripts/rauc-bundle.sh` — renders the manifest, copies the image and
+  calls `rauc bundle --cert … --key …`, then `rauc info`.
+- `aether-update` — `rauc-status` parses `rauc status --output-format=json`,
+  `rauc-sync` makes the bootloader authoritative, `rauc-install` writes the
+  inactive slot via RAUC, `rauc-mark-good`/`rauc-mark-bad` drive the health
+  handshake. Development keys are in `update/config/README.md`; production keys
+  stay offline (P9-T05).
+
 
 ## 7. Reproducibility and CI
 

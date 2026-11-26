@@ -260,3 +260,23 @@ Implemented in `powerd/` (S4, P5-T09..T17):
 Limits: G-BAT1/G-BAT2 values, real charge-limit writes, tuner device-error
 detection and UPower D-Bus events need the owner's laptop. UPower is read via
 its CLI for now; lifecycled applies `background-policy.json` on its next poll.
+
+### 2026-11-26 — Energy-impact column contract (P5-T15, F7 PWR-12)
+
+`apps/taskmanager` publishes a machine-readable contract that the Activity
+Manager window binds to (`aether-taskmanager --energy-contract`):
+
+| Field | Value |
+| --- | --- |
+| key / header | `energy` / `Energy` |
+| default sort | descending |
+| null label | `Not reported` |
+| refresh | 60 s (F14 roll-up cadence) |
+| levels | High ≥ 66 % of the top consumer, Medium ≥ 33 %, Low > 0 Wh, None |
+| tones | `danger`, `accent`, `success`, `text_muted` (D1 tokens) |
+| sources | `powerd battery-history.json → energy_by_app` (priority 1), then computed CPU/wakeup/GPU score (priority 2) |
+
+`EnergyImpact::from_share` and `apply_energy_impact` use the same thresholds, so
+the UI and the CLI can never disagree. Without a history file every row uses
+the computed score; with it, measured energy wins.
+

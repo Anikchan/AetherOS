@@ -4,9 +4,11 @@
 //! available, otherwise launch fails with an explanation (D8 failure modes).
 
 pub mod compat;
+pub mod engine_package;
+pub mod windows;
 
 use std::collections::BTreeSet;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Stdio;
 
 use serde::{Deserialize, Serialize};
@@ -15,6 +17,12 @@ use thiserror::Error;
 use aether_pkg::manifest::{AppId, PackageKind};
 use aether_pkg::{InstalledApp, Installer, Paths, Registry};
 use aether_sandbox::{Enforcer, Sandbox, SandboxCapabilities, SandboxError, SandboxProfile};
+
+pub use engine_package::{EngineError, EngineFile, EnginePackage, ENGINE_MANIFEST};
+pub use windows::{
+    WindowsAppRecord, WindowsError, WindowsInstallOutcome, WindowsInstallPlan,
+    WindowsInstallRequest, WindowsInstallerFlow, WindowsUninstallOutcome, WINDOWS_APP_RECORD,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case", tag = "engine")]
@@ -127,6 +135,50 @@ impl EngineRegistry {
         }
         let candidate = self.engine_root.join(format!("wine-{version}")).join("bin/wine");
         candidate.is_file().then_some(candidate)
+    }
+
+    /// Packaged engines with their manifests, sorted by version.
+    pub fn packages(&self) -> Vec<EnginePackage> {
+        let mut packages = Vec::new();
+        let Ok(entries) = std::fs::read_dir(&self.engine_root) else {
+            return packages;
+        };
+        for entry in entries.flatten() {
+            if !entry.path().is_dir() {
+                continue;
+            }
+            if let Ok(package) = EnginePackage::read(&entry.path()) {
+                packages.push(package);
+            }
+        }
+        packages.sort_by(|a, b| a.version.cmp(&b.version));
+        packages.reverse();
+        packages
+    }
+
+    /// Verify every packaged engine; returns `(version, problems)`.
+    pub fn verify_all(&self) -> Vec<(String, Vec<String>)> {
+        self.packages()
+            .into_iter()
+            .map(|package| {
+                let root = self.engine_root.join(package.dir_name());
+                let problems = package.verify(&root).unwrap_or_else(|error| vec![error.to_string()]);
+                (package.version.clone(), problems)
+            })
+            .collect()
+    }
+
+    /// Write `aether-engine.toml` into a staged engine directory (P6-T05).
+    pub fn package(
+        &self,
+        source: &Path,
+        name: &str,
+        version: &str,
+        arch: &str,
+    ) -> Result<EnginePackage, EngineError> {
+        let package = EnginePackage::compute(source, name, version, arch)?;
+        package.write(source)?;
+        Ok(package)
     }
 }
 
@@ -294,7 +346,10 @@ impl Runner {
                     .ok_or_else(|| LaunchError::EngineMissing(format!("wine {version}")))?;
                 let prefix = PrefixManager::new(&self.paths).prefix(id);
                 profile.file_write.push(prefix.clone());
-                let entry = installed.target.join(&manifest.entry);
+                // Once the vendor installer has run, launch the program it
+                // produced; before that the payload is the installer itself.
+                let entry = windows::program_path(&prefix)
+                    .unwrap_or_else(|| installed.target.join(&manifest.entry));
                 (wine, vec![entry.display().to_string()], Some(prefix))
             }
             EngineId::NativeRunner
