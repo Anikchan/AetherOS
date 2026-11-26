@@ -3,7 +3,7 @@
 //! One test per process because the Slint testing backend installs a global
 //! platform. The engine is a `NullEngine`, so no external process is spawned.
 
-use i_slint_backend_testing::{ElementHandle, ElementQuery};
+use i_slint_backend_testing::ElementQuery;
 use slint::{ComponentHandle, Model};
 use slint::platform::PointerEventButton;
 
