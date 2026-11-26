@@ -15,6 +15,8 @@ slint-build.workspace = true
 [dependencies]
 slint.workspace = true
 aether-ui.workspace = true
+# Decoding poppler's rendered PNG pages into a Slint image (P4-T13).
+png = "0.18"
 
 [dev-dependencies]
 i-slint-backend-testing = "1.19.0"

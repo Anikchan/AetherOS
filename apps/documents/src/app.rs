@@ -2,8 +2,9 @@
 //! (P4-T13, DA-AC-05).
 //!
 //! Holds the open document, the recent-file list, the current search and the
-//! PDF availability note. Tests build it against temporary files and drive it
-//! through headless element queries.
+//! PDF state (page count, rendered page image, poppler availability). Tests
+//! build it against temporary files and drive it through headless element
+//! queries.
 
 use std::cell::RefCell;
 use std::fs;
@@ -14,7 +15,7 @@ use slint::{ModelRc, VecModel};
 
 use crate::document::{short_path, Document, RecentFiles, SearchHit};
 use crate::markdown::Block;
-use crate::pdf::PdfAdapter;
+use crate::pdf::{PdfAdapter, PdfDocument, PdfError};
 use crate::{BlockView, DocEntry, DocumentsApp, HitView};
 
 /// How many match chips fit in the results bar.
@@ -23,33 +24,49 @@ const MAX_HIT_CHIPS: usize = 6;
 pub struct DocumentsController {
     ui: DocumentsApp,
     document: RefCell<Option<Document>>,
+    pdf: RefCell<Option<PdfDocument>>,
+    pdf_image: RefCell<slint::Image>,
     recent: RefCell<RecentFiles>,
     hits: RefCell<Vec<SearchHit>>,
     query: RefCell<String>,
+    pdf_adapter: Option<PdfAdapter>,
     pdf_note: String,
     pdf_available: bool,
 }
 
 impl DocumentsController {
     pub fn new(ui: DocumentsApp, recent: RecentFiles) -> Rc<DocumentsController> {
-        let (pdf_note, pdf_available) = match PdfAdapter::detect() {
-            Ok(_) => ("poppler-utils".to_string(), true),
+        DocumentsController::with_pdf_adapter(ui, recent, PdfAdapter::detect())
+    }
+
+    /// Build the controller with an explicit poppler adapter (tests use a fake
+    /// `PATH`; the binary uses the process environment).
+    pub fn with_pdf_adapter(
+        ui: DocumentsApp,
+        recent: RecentFiles,
+        adapter: Result<PdfAdapter, PdfError>,
+    ) -> Rc<DocumentsController> {
+        let (pdf_adapter, pdf_note, pdf_available) = match adapter {
+            Ok(adapter) => (Some(adapter), "poppler-utils".to_string(), true),
             Err(error) => {
                 let note = match &error {
-                    crate::pdf::PdfError::NotAvailable { missing } => {
-                        format!("Missing {}", missing.join(", "))
+                    PdfError::NotAvailable { missing } => {
+                        format!("Missing {} (poppler-utils)", missing.join(", "))
                     }
                     other => other.message(),
                 };
-                (note, false)
+                (None, note, false)
             }
         };
         let controller = Rc::new(DocumentsController {
             ui,
             document: RefCell::new(None),
+            pdf: RefCell::new(None),
+            pdf_image: RefCell::new(slint::Image::default()),
             recent: RefCell::new(recent),
             hits: RefCell::new(Vec::new()),
             query: RefCell::new(String::new()),
+            pdf_adapter,
             pdf_note,
             pdf_available,
         });
@@ -116,8 +133,24 @@ impl DocumentsController {
         self.document.borrow()
     }
 
+    pub fn pdf(&self) -> std::cell::Ref<'_, Option<PdfDocument>> {
+        self.pdf.borrow()
+    }
+
+    /// True when the open file is a PDF (the surface shows the rendered page).
+    pub fn is_pdf(&self) -> bool {
+        self.pdf.borrow().is_some()
+    }
+
     /// Open a document from disk (used by the recent list and by tests).
     pub fn open_path(&self, path: &Path) {
+        if is_pdf_path(path) {
+            self.open_pdf(path);
+            return;
+        }
+        *self.pdf.borrow_mut() = None;
+        *self.pdf_image.borrow_mut() = slint::Image::default();
+        self.ui.set_is_pdf(false);
         match Document::open(path) {
             Ok(document) => {
                 {
@@ -136,15 +169,82 @@ impl DocumentsController {
         self.sync();
     }
 
+    /// Open a PDF through poppler. A missing backend is reported in the status
+    /// line instead of failing silently (DA-AC-05).
+    fn open_pdf(&self, path: &Path) {
+        let Some(adapter) = self.pdf_adapter.clone() else {
+            self.ui.set_status(self.pdf_note.clone().into());
+            return;
+        };
+        let cache = std::env::temp_dir().join(format!(
+            "aether-documents-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|elapsed| elapsed.as_nanos())
+                .unwrap_or(0)
+        ));
+        match PdfDocument::open(adapter, path, cache) {
+            Ok(pdf) => {
+                {
+                    let mut recent = self.recent.borrow_mut();
+                    recent.push(path);
+                    let _ = recent.save();
+                }
+                *self.document.borrow_mut() = None;
+                *self.pdf.borrow_mut() = Some(pdf);
+                self.hits.borrow_mut().clear();
+                self.query.borrow_mut().clear();
+                self.ui.set_find_text("".into());
+                self.ui.set_status("".into());
+                self.render_pdf_page();
+            }
+            Err(error) => self.ui.set_status(error.message().into()),
+        }
+        self.sync();
+    }
+
+    /// Render the current PDF page at the current zoom and hand the decoded
+    /// image to the surface. Errors keep the previous page visible.
+    fn render_pdf_page(&self) {
+        let rendered = self
+            .pdf
+            .borrow()
+            .as_ref()
+            .map(|pdf| pdf.render())
+            .transpose();
+        match rendered {
+            Ok(Some(path)) => match decode_png(&path) {
+                Ok(image) => {
+                    *self.pdf_image.borrow_mut() = image;
+                    self.ui.set_status("".into());
+                }
+                Err(error) => self.ui.set_status(error.into()),
+            },
+            Ok(None) => {}
+            Err(error) => self.ui.set_status(error.message().into()),
+        }
+    }
+
     /// Search the open document; the results bar shows the first few matches.
     pub fn apply_find(&self, query: &str) {
         *self.query.borrow_mut() = query.to_string();
-        let hits = self
-            .document
-            .borrow()
-            .as_ref()
-            .map(|document| document.find(query))
-            .unwrap_or_default();
+        let hits = if let Some(pdf) = self.pdf.borrow().as_ref() {
+            pdf.find(query)
+                .into_iter()
+                .map(|hit| SearchHit {
+                    page: hit.page as usize,
+                    block: 0,
+                    preview: hit.preview,
+                })
+                .collect()
+        } else {
+            self.document
+                .borrow()
+                .as_ref()
+                .map(|document| document.find(query))
+                .unwrap_or_default()
+        };
         *self.hits.borrow_mut() = hits;
         self.sync();
     }
@@ -152,14 +252,24 @@ impl DocumentsController {
     // ------------------------------------------------------------- actions ---
 
     fn next_page(&self) {
-        if let Some(document) = self.document.borrow_mut().as_mut() {
+        if self.is_pdf() {
+            if let Some(pdf) = self.pdf.borrow_mut().as_mut() {
+                pdf.next_page();
+            }
+            self.render_pdf_page();
+        } else if let Some(document) = self.document.borrow_mut().as_mut() {
             document.next_page();
         }
         self.sync();
     }
 
     fn prev_page(&self) {
-        if let Some(document) = self.document.borrow_mut().as_mut() {
+        if self.is_pdf() {
+            if let Some(pdf) = self.pdf.borrow_mut().as_mut() {
+                pdf.prev_page();
+            }
+            self.render_pdf_page();
+        } else if let Some(document) = self.document.borrow_mut().as_mut() {
             document.prev_page();
         }
         self.sync();
@@ -167,21 +277,36 @@ impl DocumentsController {
 
     /// Jump to a page (toolbar, page thumbnails and search chips).
     pub fn goto_page(&self, index: usize) {
-        if let Some(document) = self.document.borrow_mut().as_mut() {
+        if self.is_pdf() {
+            if let Some(pdf) = self.pdf.borrow_mut().as_mut() {
+                pdf.set_page(index as u32);
+            }
+            self.render_pdf_page();
+        } else if let Some(document) = self.document.borrow_mut().as_mut() {
             document.set_page(index);
         }
         self.sync();
     }
 
-    fn zoom_in(&self) {
-        if let Some(document) = self.document.borrow_mut().as_mut() {
+    pub fn zoom_in(&self) {
+        if self.is_pdf() {
+            if let Some(pdf) = self.pdf.borrow_mut().as_mut() {
+                pdf.zoom_in();
+            }
+            self.render_pdf_page();
+        } else if let Some(document) = self.document.borrow_mut().as_mut() {
             document.zoom_in();
         }
         self.sync();
     }
 
-    fn zoom_out(&self) {
-        if let Some(document) = self.document.borrow_mut().as_mut() {
+    pub fn zoom_out(&self) {
+        if self.is_pdf() {
+            if let Some(pdf) = self.pdf.borrow_mut().as_mut() {
+                pdf.zoom_out();
+            }
+            self.render_pdf_page();
+        } else if let Some(document) = self.document.borrow_mut().as_mut() {
             document.zoom_out();
         }
         self.sync();
@@ -261,9 +386,13 @@ impl DocumentsController {
         let query = self.query.borrow().clone();
         let hits = self.hits.borrow().clone();
         let document = self.document.borrow();
+        let pdf = self.pdf.borrow();
 
         self.ui.set_pdf_status(self.pdf_note.clone().into());
         self.ui.set_pdf_available(self.pdf_available);
+        self.ui.set_is_pdf(pdf.is_some());
+        self.ui
+            .set_pdf_page_image(self.pdf_image.borrow().clone());
 
         let recents: Vec<DocEntry> = self
             .recent
@@ -283,7 +412,38 @@ impl DocumentsController {
             .collect();
         self.ui.set_recents(ModelRc::new(VecModel::from(recents)));
 
-        match document.as_ref() {
+        if let Some(pdf) = pdf.as_ref() {
+            self.ui.set_doc_title(
+                pdf.path()
+                    .file_name()
+                    .map(|name| name.to_string_lossy().to_string())
+                    .unwrap_or_else(|| "PDF".to_string())
+                    .into(),
+            );
+            self.ui.set_doc_path(short_path(pdf.path()).into());
+            self.ui.set_page_label(
+                format!("Page {} of {}", pdf.page_number(), pdf.page_count()).into(),
+            );
+            self.ui.set_page_index(pdf.page_index() as i32);
+            self.ui.set_page_count(pdf.page_count() as i32);
+            self.ui
+                .set_zoom_label(format!("{}%", pdf.zoom_percent()).into());
+            self.ui.set_font_scale(1.0);
+            // The rendered page is the content; Markdown blocks stay empty.
+            self.ui
+                .set_blocks(ModelRc::new(VecModel::from(Vec::<BlockView>::new())));
+
+            let pages: Vec<DocEntry> = (0..pdf.page_count())
+                .map(|page| DocEntry {
+                    title: format!("Page {}", page + 1).into(),
+                    subtitle: pdf.page_summary(page).into(),
+                    page: page as i32,
+                    path: "".into(),
+                })
+                .collect();
+            self.ui.set_pages(ModelRc::new(VecModel::from(pages)));
+        } else {
+            match document.as_ref() {
             Some(document) => {
                 self.ui.set_doc_title(document.title().into());
                 self.ui
@@ -354,6 +514,7 @@ impl DocumentsController {
                 self.ui
                     .set_pages(ModelRc::new(VecModel::from(Vec::<DocEntry>::new())));
             }
+            }
         }
 
         let find_label = if query.trim().is_empty() {
@@ -408,4 +569,86 @@ fn block_view(block: &Block) -> BlockView {
         level,
         marker: marker.into(),
     }
+}
+
+fn is_pdf_path(path: &Path) -> bool {
+    path.extension()
+        .map(|extension| extension.eq_ignore_ascii_case("pdf"))
+        .unwrap_or(false)
+}
+
+/// Decode a PNG (what `pdftoppm` writes) into a Slint image the software
+/// renderer can draw. Supports the RGB/RGBA/greyscale 8-bit output poppler
+/// produces.
+fn decode_png(path: &Path) -> Result<slint::Image, String> {
+    let file = std::fs::File::open(path)
+        .map_err(|error| format!("cannot open rendered page {}: {error}", path.display()))?;
+    let mut decoder = png::Decoder::new(std::io::BufReader::new(file));
+    decoder.set_transformations(png::Transformations::EXPAND);
+    let mut reader = decoder
+        .read_info()
+        .map_err(|error| format!("cannot read page image: {error}"))?;
+    let buffer_size = reader
+        .output_buffer_size()
+        .ok_or_else(|| "page image is too large".to_string())?;
+    let mut bytes = vec![0u8; buffer_size];
+    let info = reader
+        .next_frame(&mut bytes)
+        .map_err(|error| format!("cannot decode page image: {error}"))?;
+    let (width, height) = (info.width, info.height);
+    if width == 0 || height == 0 {
+        return Err("rendered page is empty".to_string());
+    }
+    let mut pixels = slint::SharedPixelBuffer::<slint::Rgba8Pixel>::new(width, height);
+    let output = pixels.make_mut_slice();
+    match info.color_type {
+        png::ColorType::Rgb => {
+            for (index, pixel) in output.iter_mut().enumerate() {
+                let source = &bytes[index * 3..index * 3 + 3];
+                *pixel = slint::Rgba8Pixel {
+                    r: source[0],
+                    g: source[1],
+                    b: source[2],
+                    a: 255,
+                };
+            }
+        }
+        png::ColorType::Rgba => {
+            for (index, pixel) in output.iter_mut().enumerate() {
+                let source = &bytes[index * 4..index * 4 + 4];
+                *pixel = slint::Rgba8Pixel {
+                    r: source[0],
+                    g: source[1],
+                    b: source[2],
+                    a: source[3],
+                };
+            }
+        }
+        png::ColorType::Grayscale => {
+            for (index, pixel) in output.iter_mut().enumerate() {
+                let value = bytes[index];
+                *pixel = slint::Rgba8Pixel {
+                    r: value,
+                    g: value,
+                    b: value,
+                    a: 255,
+                };
+            }
+        }
+        png::ColorType::GrayscaleAlpha => {
+            for (index, pixel) in output.iter_mut().enumerate() {
+                let value = bytes[index * 2];
+                *pixel = slint::Rgba8Pixel {
+                    r: value,
+                    g: value,
+                    b: value,
+                    a: bytes[index * 2 + 1],
+                };
+            }
+        }
+        png::ColorType::Indexed => {
+            return Err("indexed PNG pages are not supported".to_string());
+        }
+    }
+    Ok(slint::Image::from_rgba8_premultiplied(pixels))
 }

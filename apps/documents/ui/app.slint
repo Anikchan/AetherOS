@@ -75,6 +75,9 @@ export component DocumentsApp inherits Window {
     in property <string> status: "";
     in property <string> pdf-status: "";
     in property <bool> pdf-available: false;
+    // PDF mode (P4-T13): the rendered page replaces the Markdown blocks.
+    in property <bool> is-pdf: false;
+    in property <image> pdf-page-image;
 
     in-out property <int> page-index: 0;
     in property <int> page-count: 0;
@@ -243,10 +246,26 @@ export component DocumentsApp inherits Window {
                 VerticalLayout {
                     spacing: Tokens.space(3);
 
+                    if root.is-pdf : Rectangle {
+                        horizontal-stretch: 1;
+                        vertical-stretch: 1;
+                        background: Tokens.background-alt;
+                        border-radius: Tokens.radius-button;
+
+                        Image {
+                            source: root.pdf-page-image;
+                            width: 100%;
+                            height: 100%;
+                            image-fit: contain;
+                            accessible-label: "PDF page";
+                        }
+                    }
+
                     Rectangle {
                         horizontal-stretch: 1;
                         vertical-stretch: 1;
                         clip: true;
+                        visible: !root.is-pdf;
 
                         VerticalLayout {
                             x: 0;
