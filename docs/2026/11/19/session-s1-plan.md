@@ -56,17 +56,20 @@ Own the build verification loop, defconfig, kernel fragment, and boot chains; dr
 - `docs/2026/11/16/os-project/03-roadmap-plan.md` (tracker only)
 - `docs/2026/11/17/os-implementation/plan.md`
 
-## Status (2026-11-23, M1 achieved)
+## Status (2026-11-26, M1 achieved, P2 in progress)
 
-**P1 DONE — M1 achieved.** All tasks T01–T08 complete. UEFI fix (linuxefi module
-preference in post-image.sh) verified by CI run 45141636923: S_UEFI_BOOT_OK,
-33 s TCG. Image 14 MB (gate 150 MB). Direct 25 s, BIOS 30 s, UEFI 33 s (all TCG).
+**P1 DONE — M1 achieved.** All tasks T01–T08 complete. UEFI fixed (linuxefi module
+preference + PARTUUID root + rootwait + VT/fbcon + getty@tty1). Verified on QEMU
+and bare-metal display. Image 14 MB (gate 150 MB). Direct 25 s, BIOS 30 s, UEFI 33 s (TCG).
 P0 essentially complete (T10 battery spike passed on Dell).
-P2 In progress: T01 (firmware list), T02 (Mesa+Vulkan merged, CI green), T07 (matrix),
-T08 (coverage report) Done. Image 27 MB (≤150 MB). T03–T06 (Wi-Fi/BT, audio, input,
-sleep/resume) pending hardware tests on the Dell (need AetherOS booting).
-**Dell is ready** (Ubuntu 22.04, SSH, sudo, self-hosted runner, reserved IP
-192.168.68.112, lid-close disabled).
+P2 In progress:
+- T01 (firmware list) ✅, T02 (Mesa+Vulkan, CI green, 27 MB) ✅
+- T07 (matrix) ✅, T08 (coverage report) ✅
+- T03–T06 (Wi-Fi/BT, audio, input, sleep/resume) — image fixes in flight
+  (ath10k/i2c-hid/uvcvideo modules, regdb, ALSA/BT tools, openssh, rootwait,
+  PARTUUID, console=tty0). New build 45788955461 in progress; auto-test loop
+  running on the Dell.
+**Dell is ready** (Ubuntu, SSH, sudo, runner, reserved IP 192.168.68.112).
 
 P1 verification (run 44936414669 + 44948381548) completed. Results:
 - P1-T01 Done (kernel config verified, run 44936411307 PASS).
