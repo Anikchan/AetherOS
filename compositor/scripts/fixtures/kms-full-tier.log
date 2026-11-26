@@ -1,0 +1,37 @@
+AETHER_COMPOSITOR_BACKEND: drm
+AETHER_COMPOSITOR_DRM_SESSION: seat=seat0 backend=libseat
+AETHER_COMPOSITOR_DRM_DEVICE_LIST: count=1
+AETHER_COMPOSITOR_DRM_PRIMARY_GPU: path=/dev/dri/card0
+AETHER_COMPOSITOR_DRM_DEVICE: path=/dev/dri/card0 atomic=true cursor=256x256
+AETHER_COMPOSITOR_DRM_CONNECTOR: name=eDP-1 mode=1920x1080@60000mhz crtc=Handle(45)
+AETHER_COMPOSITOR_DRM_RENDERER: backend=gles render_formats=37
+AETHER_COMPOSITOR_GLASS_SHADER: programs=3 backend=gles shaders=kawase-down,kawase-up,glass-composite
+AETHER_COMPOSITOR_DRM_OUTPUT: connector=eDP-1 mode=1920x1080 refresh_mhz=60000
+AETHER_COMPOSITOR_SEAT: name=seat-0 keyboard=true pointer=true
+AETHER_COMPOSITOR_INPUT: backend=libinput seat=seat0
+AETHER_COMPOSITOR_SOCKET_READY: wayland-0
+AETHER_COMPOSITOR_EFFECT_TIER: full
+AETHER_COMPOSITOR_EFFECT_PIPELINE: tier=full blur=dual-kawase levels=5 res=1x radius=24 saturation=1.20 tint=0.18 edge=1px:0.40 refraction=on shadow=12px:0.12 corner=18
+AETHER_COMPOSITOR_GLASS_GPU_PROFILE: name=reference-igpu-modelled measured=false blur_px_per_ms=3000000 refraction_px_per_ms=800000 composite_px_per_ms=20000000
+AETHER_COMPOSITOR_OUTPUT: name=eDP-1 mode=1920x1080 scale=1 logical=1920x1080 position=0,0
+AETHER_COMPOSITOR_OUTPUT_COUNT: 1
+AETHER_COMPOSITOR_OUTPUT_BOUND: name=eDP-1
+AETHER_COMPOSITOR_CLIENT_MAPPED
+AETHER_COMPOSITOR_XDG_TOPLEVEL: id=0 title="foot"
+AETHER_COMPOSITOR_FRAME: n=1 time_ms=842 damage_rects=1 damage_px=32000 frost_px=54464 windows=1 tier=full est_ms=0.059
+AETHER_COMPOSITOR_GLASS_SHADER: tier=full blur=dual-kawase frosted=1 frosted_total=1 damage_px=32000 frost_px=54464 surface_px=746496 backdrop=1152x648
+AETHER_COMPOSITOR_DRM_VBLANK: n=1 time_ms=842 total=1
+AETHER_COMPOSITOR_FRAME_CALLBACKS: n=1 time_ms=842
+AETHER_COMPOSITOR_INPUT_BUTTON: button=272 state=pressed
+AETHER_COMPOSITOR_INPUT_KEY: code=KEY_A state=pressed
+AETHER_COMPOSITOR_DRM_VBLANK: n=120 time_ms=2042 total=120
+AETHER_COMPOSITOR_EFFECT_TIER_SWITCH: from=full to=reduced reason=frame-budget
+AETHER_COMPOSITOR_DRM_SESSION_EVENT: state=paused
+AETHER_COMPOSITOR_DRM_SESSION_EVENT: state=active
+AETHER_COMPOSITOR_DRM_VBLANK: n=240 time_ms=4042 total=240
+AETHER_COMPOSITOR_IDLE: idle_ms=1800 idle_pct=71.2 frames=240
+AETHER_COMPOSITOR_DRM_STATS: frames_queued=241 vblanks=240 direct_frames=0
+AETHER_COMPOSITOR_GLASS_STATS: surfaces=90 passes=990 textures=12 failures=0 frosted_px=4901760 surface_px=67184640
+AETHER_COMPOSITOR_FRAME_STATS: frames=241 idle_skips=0 idle_pct=71.2 skipped=0 avg_gap_ms=16.7
+AETHER_COMPOSITOR_SCANOUT_STATS: mode=composite direct_frames=0
+AETHER_COMPOSITOR_DONE

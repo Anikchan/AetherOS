@@ -559,19 +559,44 @@ impl AetherCompositor {
                 );
             }
         } else {
-            let pairs: Vec<(GlassSurface, Vec<Rect>)> = self
-                .visible_glass_surfaces()
-                .into_iter()
-                .map(|surface| (surface, frame.damage.clone()))
+            let surfaces = self.visible_glass_surfaces();
+            let pairs: Vec<(GlassSurface, Vec<Rect>)> = surfaces
+                .iter()
+                .map(|surface| (*surface, frame.damage.clone()))
                 .collect();
             let cost = self.effects.frame_cost(&pairs);
             if frame.index <= 5 || frame.index % 120 == 0 {
+                // P3-T06 damage-scoped frost: the physical area the glass chain
+                // rewrites this frame (the same region the DRM renderer hands to
+                // `GlassPasses::frost`), versus a full-surface repaint.
+                let scale = self
+                    .outputs
+                    .first()
+                    .map(|output| output.current_scale().fractional_scale())
+                    .unwrap_or(1.0);
+                let material = self.effects.material();
+                let halo = crate::glass_shader::halo_px(
+                    &crate::glass_shader::physical_material(&material, scale),
+                );
+                let frost_px: u64 = surfaces
+                    .iter()
+                    .filter_map(|surface| {
+                        crate::glass_shader::frost_region_scaled(
+                            surface.rect,
+                            &frame.damage,
+                            scale,
+                            halo,
+                        )
+                    })
+                    .map(|region| region.w.max(0) as u64 * region.h.max(0) as u64)
+                    .sum();
                 println!(
-                    "AETHER_COMPOSITOR_FRAME: n={} time_ms={} damage_rects={} damage_px={} windows={} tier={} est_ms={:.3}",
+                    "AETHER_COMPOSITOR_FRAME: n={} time_ms={} damage_rects={} damage_px={} frost_px={} windows={} tier={} est_ms={:.3}",
                     frame.index,
                     frame.time_ms,
                     frame.damage.len(),
                     frame.damage_pixels,
+                    frost_px,
                     cost.windows,
                     self.effects.tier().name(),
                     cost.estimated_ms

@@ -1,0 +1,24 @@
+AETHER_COMPOSITOR_BACKEND: drm
+AETHER_COMPOSITOR_DRM_SESSION: seat=seat0 backend=libseat
+AETHER_COMPOSITOR_DRM_DEVICE_LIST: count=1
+AETHER_COMPOSITOR_DRM_PRIMARY_GPU: path=/dev/dri/card0
+AETHER_COMPOSITOR_DRM_DEVICE: path=/dev/dri/card0 atomic=true cursor=256x256
+AETHER_COMPOSITOR_DRM_CONNECTOR: name=eDP-1 mode=1920x1080@60000mhz crtc=Handle(45)
+AETHER_COMPOSITOR_DRM_RENDERER: backend=gles render_formats=37
+AETHER_COMPOSITOR_GLASS_SHADER: programs=3 backend=gles shaders=kawase-down,kawase-up,glass-composite
+AETHER_COMPOSITOR_DRM_OUTPUT: connector=eDP-1 mode=1920x1080 refresh_mhz=60000
+AETHER_COMPOSITOR_SEAT: name=seat-0 keyboard=true pointer=true
+AETHER_COMPOSITOR_INPUT: backend=libinput seat=seat0
+AETHER_COMPOSITOR_SOCKET_READY: wayland-0
+AETHER_COMPOSITOR_EFFECT_TIER: minimal
+AETHER_COMPOSITOR_EFFECT_PIPELINE: tier=minimal blur=none saturation=1.00 tint=0.92 edge=1px:0.20 refraction=off shadow=4px:0.10 corner=18
+AETHER_COMPOSITOR_OUTPUT: name=eDP-1 mode=1920x1080 scale=1 logical=1920x1080 position=0,0
+AETHER_COMPOSITOR_OUTPUT_COUNT: 1
+AETHER_COMPOSITOR_CLIENT_MAPPED
+AETHER_COMPOSITOR_FRAME: n=1 time_ms=640 damage_rects=1 damage_px=32000 frost_px=32000 windows=1 tier=minimal est_ms=0.002
+AETHER_COMPOSITOR_GLASS_SHADER: tier=minimal blur=none frosted=1 frosted_total=1 damage_px=32000 frost_px=32000 surface_px=746496 backdrop=none
+AETHER_COMPOSITOR_DRM_VBLANK: n=1 time_ms=640 total=1
+AETHER_COMPOSITOR_DRM_STATS: frames_queued=61 vblanks=60 direct_frames=0
+AETHER_COMPOSITOR_GLASS_STATS: surfaces=60 passes=300 textures=9 failures=0 frosted_px=1920000 surface_px=44789760
+AETHER_COMPOSITOR_FRAME_STATS: frames=61 idle_skips=0 idle_pct=64.0 skipped=0 avg_gap_ms=16.7
+AETHER_COMPOSITOR_DONE

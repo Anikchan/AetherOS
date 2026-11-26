@@ -26,7 +26,8 @@
 //! The blur is *damage-based*: every stage runs at the size of the surface's
 //! damaged region (the union of the frame damage clipped to the surface), so an
 //! idle strip repaint costs a strip-sized blur, matching the design rule in D1
-//! section 4.
+//! section 4. [`frost_region`] resolves that region for the DRM renderer and
+//! grows it by `halo_px` so the chain never reads a clamped strip edge.
 
 use crate::glass::{EffectPlan, GlassMaterial, GlassTier, PassKind, REFRACTION_BAND_PX};
 use crate::wm::Rect;
@@ -199,6 +200,95 @@ pub fn damage_region(surface: Rect, damage: &[Rect]) -> Rect {
         w: 0,
         h: 0,
     })
+}
+
+/// Share of a surface above which a damage-scoped frost is not worth its own
+/// pass setup: one full-surface pass is cheaper than scoping the chain.
+pub const FULL_FROST_RATIO: f64 = 0.5;
+
+/// Extra pixels (physical) the frost chain needs on every side of the damaged
+/// strip so every blur level samples freshly written texels instead of the
+/// clamped edge of the strip, plus the refraction band the composite pass reads
+/// around the rim.
+pub fn halo_px(material: &GlassMaterial) -> i32 {
+    let blur = material.blur.map(|blur| blur.radius_px).unwrap_or(0.0);
+    let refraction = if material.edge_refraction {
+        REFRACTION_BAND_PX as f32
+    } else {
+        0.0
+    };
+    (blur + refraction).ceil() as i32
+}
+
+/// Region of one surface (physical px, origin at the surface's top-left) that
+/// must be re-frosted for a frame.
+///
+/// - empty `damage` → the whole surface (first map, resize, VT switch);
+/// - otherwise the damage clipped to the surface and grown by `halo` on every
+///   side, clipped again to the surface;
+/// - `None` when no damage reaches the surface;
+/// - the whole surface once the grown region covers [`FULL_FROST_RATIO`] of it.
+pub fn frost_region(surface: (i32, i32), damage: &[Rect], halo: i32) -> Option<Rect> {
+    if surface.0 <= 0 || surface.1 <= 0 {
+        return None;
+    }
+    let whole = Rect {
+        x: 0,
+        y: 0,
+        w: surface.0,
+        h: surface.1,
+    };
+    if damage.is_empty() {
+        return Some(whole);
+    }
+    let clipped = damage_region(whole, damage);
+    if clipped.w <= 0 || clipped.h <= 0 {
+        return None;
+    }
+    let halo = halo.max(0);
+    let x0 = (clipped.x - halo).max(0);
+    let y0 = (clipped.y - halo).max(0);
+    let x1 = (clipped.x + clipped.w + halo).min(whole.w);
+    let y1 = (clipped.y + clipped.h + halo).min(whole.h);
+    let grown = Rect {
+        x: x0,
+        y: y0,
+        w: x1 - x0,
+        h: y1 - y0,
+    };
+    let whole_area = whole.w as i64 * whole.h as i64;
+    let grown_area = grown.w as i64 * grown.h as i64;
+    if grown_area as f64 >= whole_area as f64 * FULL_FROST_RATIO {
+        Some(whole)
+    } else {
+        Some(grown)
+    }
+}
+
+/// [`frost_region`] for a logical surface rect and logical frame damage at an
+/// output scale. `halo` is in physical pixels.
+pub fn frost_region_scaled(surface: Rect, damage: &[Rect], scale: f64, halo: i32) -> Option<Rect> {
+    if surface.w <= 0 || surface.h <= 0 {
+        return None;
+    }
+    let physical_surface = (
+        (surface.w as f64 * scale).round().max(1.0) as i32,
+        (surface.h as f64 * scale).round().max(1.0) as i32,
+    );
+    if damage.is_empty() {
+        return frost_region(physical_surface, &[], halo);
+    }
+    let clipped = damage_region(surface, damage);
+    if clipped.w <= 0 || clipped.h <= 0 {
+        return None;
+    }
+    let physical = Rect {
+        x: ((clipped.x - surface.x) as f64 * scale).round() as i32,
+        y: ((clipped.y - surface.y) as f64 * scale).round() as i32,
+        w: (clipped.w as f64 * scale).round().max(1.0) as i32,
+        h: (clipped.h as f64 * scale).round().max(1.0) as i32,
+    };
+    frost_region(physical_surface, &[physical], halo)
 }
 
 /// Scale the pixel-valued material fields for an output scale.
@@ -403,6 +493,107 @@ mod tests {
         let material = pipeline.material();
         let region = damage_region(surface(), &[DAMAGE]);
         (material, plan, surface(), region)
+    }
+
+    #[test]
+    fn halo_covers_the_blur_radius_and_the_refraction_band() {
+        // Full: 24 px blur + 24 px refraction band.
+        assert_eq!(halo_px(&GlassMaterial::for_tier(GlassTier::Full)), 48);
+        // Reduced has no refraction: only the 16 px blur.
+        assert_eq!(halo_px(&GlassMaterial::for_tier(GlassTier::Reduced)), 16);
+        // Minimal samples no backdrop at all.
+        assert_eq!(halo_px(&GlassMaterial::for_tier(GlassTier::Minimal)), 0);
+    }
+
+    #[test]
+    fn frost_region_is_the_damaged_strip_plus_the_halo() {
+        let strip = Rect {
+            x: 100,
+            y: 200,
+            w: 320,
+            h: 100,
+        };
+        // Away from the edges the halo grows every side.
+        assert_eq!(
+            frost_region((1152, 648), &[strip], 48),
+            Some(Rect {
+                x: 52,
+                y: 152,
+                w: 416,
+                h: 196
+            })
+        );
+        // Strip area 32 000 px → region 81 536 px, 10.9 % of the surface.
+        let region = frost_region((1152, 648), &[strip], 48).unwrap();
+        assert!(
+            region.w * region.h * 4 < 1152 * 648,
+            "region must stay under a quarter of the surface"
+        );
+    }
+
+    #[test]
+    fn frost_region_halo_is_clipped_to_the_surface() {
+        let corner = Rect {
+            x: 0,
+            y: 0,
+            w: 40,
+            h: 30,
+        };
+        assert_eq!(
+            frost_region((1152, 648), &[corner], 48),
+            Some(Rect {
+                x: 0,
+                y: 0,
+                w: 88,
+                h: 78
+            })
+        );
+    }
+
+    #[test]
+    fn frost_region_falls_back_to_the_whole_surface() {
+        // No damage (first map, resize, VT switch) → full repaint.
+        assert_eq!(
+            frost_region((1152, 648), &[], 48),
+            Some(surface())
+        );
+        // Damage outside the surface → nothing to frost.
+        assert_eq!(
+            frost_region(
+                (1152, 648),
+                &[Rect {
+                    x: 2000,
+                    y: 2000,
+                    w: 10,
+                    h: 10
+                }],
+                48
+            ),
+            None
+        );
+        // Once the grown region covers half the surface, one pass wins.
+        let big = Rect {
+            x: 0,
+            y: 0,
+            w: 900,
+            h: 500,
+        };
+        assert_eq!(frost_region((1152, 648), &[big], 48), Some(surface()));
+    }
+
+    #[test]
+    fn frost_region_scaled_converts_to_physical_pixels() {
+        let strip = Rect {
+            x: 100,
+            y: 200,
+            w: 320,
+            h: 100,
+        };
+        let at_1x = frost_region_scaled(surface(), &[strip], 1.0, 48).unwrap();
+        let at_2x = frost_region_scaled(surface(), &[strip], 2.0, 48).unwrap();
+        // The logical surface doubles, so the physical strip does too.
+        assert_eq!(at_1x, Rect { x: 52, y: 152, w: 416, h: 196 });
+        assert_eq!(at_2x, Rect { x: 152, y: 352, w: 736, h: 296 });
     }
 
     #[test]

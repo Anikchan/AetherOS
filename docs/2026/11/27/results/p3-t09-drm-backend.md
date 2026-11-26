@@ -115,3 +115,9 @@ Run on the device: `cargo build -p aether-compositor --features drm` then
 (see `compositor/README.md`). Requirements: libseat (seatd/logind), libgbm,
 libdrm, libinput, libudev, a DRM device on the session seat and a connected
 display.
+
+The graded version of that run is `compositor/scripts/kms-checklist.sh`: it sets
+`AETHER_COMPOSITOR_BACKEND=drm` and `AETHER_COMPOSITOR_RUN_SECS`, captures every
+marker into a log and scores EGL/GLES context, modeset, page flips, input, seat,
+glass programs, tier/blur, `failures=0` and damage-scoped frost. See the
+damage-scope section of `docs/2026/11/27/results/p3-t05-gles-glass-passes.md`.

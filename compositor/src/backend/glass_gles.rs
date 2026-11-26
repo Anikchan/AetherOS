@@ -25,13 +25,15 @@
 //! `glass_shader`'s tests, and `compositor/scripts/check-linux-target.sh`
 //! type-checks the GL code for the device target.
 //!
-//! **Damage scope:** [`super::drm`] renders every element into a fresh
-//! swapchain slot each frame (`DrmCompositor::render_frame` without an
-//! `OutputDamageTracker`), so the frost element must cover the whole surface —
-//! a strip-sized frost would leave the rest of the surface empty in the new
-//! slot. The damage region still decides *whether* a surface is frosted this
-//! frame and is reported in the markers; scoping the blur to the damaged strip
-//! is the remaining piece of P3-T06 (needs buffer-age tracking).
+//! **Damage scope:** the chain only rewrites the strip the frame damaged. The
+//! frost element covers the same [region](crate::glass_shader::frost_region),
+//! i.e. the damage plus a halo that keeps the blur away from clamped strip
+//! edges, because each frame lands in a different KMS swapchain slot: a
+//! whole-surface element would repaint the entire window every frame, while a
+//! strip-sized element only repaints the strip the damaged content actually
+//! changed. `DrmCompositor::render_frame` adds the frame's element damage to
+//! the buffer-age damage of the slot it draws into, so the rest of the slot
+//! keeps the strip written into it the last time that slot was used.
 //!
 //! Failure policy: any GL error in the chain is logged, counted in
 //! [`GlassPasses::failures`] and the surface falls back to plain composition
@@ -47,6 +49,9 @@ use smithay::backend::renderer::gles::{
     GlesError, GlesRenderer, GlesTexProgram, GlesTexture, Uniform, UniformName, UniformType,
 };
 use smithay::backend::renderer::{Bind, ContextId, Frame, Offscreen, Renderer, Texture};
+use smithay::reexports::wayland_server::backend::ObjectId;
+use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
+use smithay::reexports::wayland_server::Resource;
 use smithay::utils::{Buffer, Physical, Point, Rectangle, Scale, Size, Transform};
 
 use crate::glass::{EffectPlan, GlassMaterial};
@@ -74,15 +79,18 @@ pub struct Backdrop {
 #[derive(Debug, Clone)]
 pub struct Frost {
     pub texture: GlesTexture,
-    /// Region of the output (physical px) the texture covers.
+    /// Region of the output (physical px) the texture covers: the damaged strip
+    /// plus the blur halo, not the whole surface.
     pub region: Rectangle<i32, Physical>,
+    /// Stable id of the surface's frost element (see [`GlassPasses::frost_id`]).
+    pub id: Id,
 }
 
 impl Frost {
     /// Wrap the frost in a render element placed at its output region.
     pub fn element(&self, context: ContextId<GlesTexture>) -> DrmRenderElement {
         DrmRenderElement::Frost(TextureRenderElement::from_static_texture(
-            Id::new(),
+            self.id.clone(),
             context,
             Point::<f64, Physical>::from((self.region.loc.x as f64, self.region.loc.y as f64)),
             self.texture.clone(),
@@ -110,7 +118,14 @@ pub struct GlassPasses {
     backdrop: Option<GlesTexture>,
     /// Offscreen targets pooled by pixel size, so steady-state frames allocate
     /// no textures at all.
-    scratch: HashMap<(i32, i32), GlesTexture>,
+    scratch: HashMap<(i32, i32), Vec<GlesTexture>>,
+    /// Targets still referenced by the previous frame's elements; they go back
+    /// to the pool at the start of the next frame.
+    pending: Vec<((i32, i32), GlesTexture)>,
+    /// Frost element id per client surface: stable between frames so the KMS
+    /// damage tracker recognises "the same element, new strip" instead of a
+    /// brand-new element that has to repaint its whole geometry.
+    frost_ids: HashMap<ObjectId, (Id, u64)>,
     /// Surfaces frosted since start-up.
     pub surfaces: u64,
     /// Shader passes executed since start-up.
@@ -119,6 +134,13 @@ pub struct GlassPasses {
     pub textures: u64,
     /// Surfaces that fell back to plain composition because of a GL error.
     pub failures: u64,
+    /// Physical px rewritten by the frost chain since start-up.
+    pub frosted_px: u64,
+    /// Physical px a whole-surface frost would have rewritten since start-up.
+    pub surface_px: u64,
+    /// Same counters for the frame being built (`start_frame` resets them).
+    pub frame_frosted_px: u64,
+    pub frame_surface_px: u64,
 }
 
 impl std::fmt::Debug for GlassPasses {
@@ -128,6 +150,8 @@ impl std::fmt::Debug for GlassPasses {
             .field("passes", &self.passes)
             .field("textures", &self.textures)
             .field("failures", &self.failures)
+            .field("frosted_px", &self.frosted_px)
+            .field("surface_px", &self.surface_px)
             .finish()
     }
 }
@@ -142,11 +166,50 @@ impl GlassPasses {
             empty: renderer.create_buffer(Fourcc::Argb8888, Size::from((1, 1)))?,
             backdrop: None,
             scratch: HashMap::new(),
+            pending: Vec::new(),
+            frost_ids: HashMap::new(),
             surfaces: 0,
             passes: 0,
             textures: 0,
             failures: 0,
+            frosted_px: 0,
+            surface_px: 0,
+            frame_frosted_px: 0,
+            frame_surface_px: 0,
         })
+    }
+
+    /// Reset the per-frame area counters and return the previous frame's
+    /// targets to the pool, before the elements of a frame are built.
+    pub fn start_frame(&mut self) {
+        self.frame_frosted_px = 0;
+        self.frame_surface_px = 0;
+        for (size, texture) in std::mem::take(&mut self.pending) {
+            self.scratch.entry(size).or_default().push(texture);
+        }
+    }
+
+    /// Stable frost element id for one client surface.
+    ///
+    /// The frost of a surface moves and changes size as strips are repainted;
+    /// keeping one id per `wl_surface` lets the KMS damage tracker diff the
+    /// instances (and repaint exactly the old and new strip) instead of
+    /// treating every frame as a freshly created element.
+    pub fn frost_id(&mut self, surface: &WlSurface, frame: u64) -> Id {
+        let entry = self
+            .frost_ids
+            .entry(surface.id())
+            .or_insert_with(|| (Id::new(), frame));
+        entry.1 = frame;
+        entry.0.clone()
+    }
+
+    /// Forget the ids of surfaces that have not been frosted for a while (a
+    /// closed window), while keeping them stable across short idle periods.
+    pub fn sweep(&mut self, frame: u64) {
+        const KEEP_FRAMES: u64 = 120;
+        self.frost_ids
+            .retain(|_, (_, last_frame)| frame.saturating_sub(*last_frame) <= KEEP_FRAMES);
     }
 
     /// Render the backdrop behind the given glass surfaces into one texture.
@@ -176,9 +239,12 @@ impl GlassPasses {
 
     /// Run the blur and composite chain for one surface.
     ///
-    /// `damage` is the frame damage in logical coordinates (empty = whole
-    /// surface). Returns `None` when the surface has no damage this frame, GL
-    /// failed, or the surface has no visible area.
+    /// `damage` is the frame damage in logical coordinates (empty = full
+    /// repaint). The chain only runs over the surface's damage-scoped region
+    /// ([`crate::glass_shader::frost_region_scaled`]), so an idle strip costs a
+    /// strip-sized blur. Returns `None` when the surface has no damage this
+    /// frame, GL failed, or the surface has no visible area.
+    #[allow(clippy::too_many_arguments)]
     pub fn frost(
         &mut self,
         renderer: &mut GlesRenderer,
@@ -188,17 +254,10 @@ impl GlassPasses {
         surface: Rect,
         damage: &[Rect],
         scale: f64,
+        id: Id,
     ) -> Option<Frost> {
         if surface.w <= 0 || surface.h <= 0 {
             return None;
-        }
-        // Damage only decides whether this surface is frosted this frame; see
-        // the module docs for why the frost itself covers the whole surface.
-        if !damage.is_empty() {
-            let damaged = glass_shader::damage_region(surface, damage);
-            if damaged.w <= 0 || damaged.h <= 0 {
-                return None;
-            }
         }
         // A blur tier without a captured backdrop (capture failed this frame)
         // falls back to plain composition: the fill path would sample the
@@ -208,21 +267,47 @@ impl GlassPasses {
         }
 
         let output_rect = physical(surface, scale);
-        let region = output_rect;
-        // The source patch of the backdrop under this surface. The Minimal
-        // tier samples nothing (`fill = 1`), so a 1x1 placeholder is enough.
+        if output_rect.size.w <= 0 || output_rect.size.h <= 0 {
+            return None;
+        }
+        let physical_material = glass_shader::physical_material(material, scale);
+
+        // The strip this frame has to rewrite, in surface-local physical px.
+        let local = glass_shader::frost_region_scaled(
+            surface,
+            damage,
+            scale,
+            glass_shader::halo_px(&physical_material),
+        )?;
+
+        // Output-space region. It is clipped to the captured backdrop because
+        // that texture is what the blur samples.
+        let mut region = Rectangle::<i32, Physical>::new(
+            Point::from((output_rect.loc.x + local.x, output_rect.loc.y + local.y)),
+            Size::from((local.w, local.h)),
+        );
+        if let Some(backdrop) = backdrop {
+            region = region.intersection(backdrop.region)?;
+        }
+        // Stage sizes, uniforms and the composite's region are surface-local.
+        let shader_region = Rect {
+            x: region.loc.x - output_rect.loc.x,
+            y: region.loc.y - output_rect.loc.y,
+            w: region.size.w,
+            h: region.size.h,
+        };
+
+        // The source patch of the backdrop under this strip. The Minimal tier
+        // samples nothing (`fill = 1`), so a 1x1 placeholder is enough.
         let (mut source, mut source_rect) = match backdrop {
             Some(backdrop) => (
                 backdrop.texture.clone(),
                 Rectangle::<f64, Buffer>::new(
                     Point::from((
-                        (output_rect.loc.x - backdrop.region.loc.x) as f64,
-                        (output_rect.loc.y - backdrop.region.loc.y) as f64,
+                        (region.loc.x - backdrop.region.loc.x) as f64,
+                        (region.loc.y - backdrop.region.loc.y) as f64,
                     )),
-                    Size::<f64, Buffer>::from((
-                        output_rect.size.w as f64,
-                        output_rect.size.h as f64,
-                    )),
+                    Size::<f64, Buffer>::from((region.size.w as f64, region.size.h as f64)),
                 ),
             ),
             None => (
@@ -231,15 +316,16 @@ impl GlassPasses {
             ),
         };
 
-        // Shader sizes and the material's pixel values are physical px.
-        let physical_material = glass_shader::physical_material(material, scale);
+        // Shader sizes and the material's pixel values are physical px; the
+        // surface rect stays whole because the composite pass needs it for the
+        // rim and the corner mask.
         let logical_surface = Rect {
             x: 0,
             y: 0,
             w: output_rect.size.w,
             h: output_rect.size.h,
         };
-        let logical_region = logical_surface;
+        let logical_region = shader_region;
         let stages =
             glass_shader::shader_stages(&physical_material, plan, logical_surface, logical_region);
 
@@ -271,30 +357,40 @@ impl GlassPasses {
             }
             // The pass sampled the previous stage: it can go back to the pool.
             if let Some((size, previous)) = owned.take() {
-                self.scratch.insert(size, previous);
+                self.scratch.entry(size).or_default().push(previous);
             }
             // The next stage samples this whole target.
             source_rect = Rectangle::from_size(target.size().to_f64());
             source = target.clone();
             owned = Some((stage.size, target));
         }
-        // `owned` still holds the last target: it stays the frost texture and
-        // is not returned to the pool while the frame references it.
+        // The last target is referenced by the element this frame pushes, so it
+        // only goes back to the pool once that frame is done.
+        if let Some((size, texture)) = owned.take() {
+            self.pending.push((size, texture));
+        }
 
         self.surfaces += 1;
         self.passes += stages.len() as u64;
+        let frosted = (region.size.w * region.size.h).max(0) as u64;
+        let full = (output_rect.size.w * output_rect.size.h).max(0) as u64;
+        self.frosted_px += frosted;
+        self.surface_px += full;
+        self.frame_frosted_px += frosted;
+        self.frame_surface_px += full;
 
         Some(Frost {
             texture: source,
             region,
+            id,
         })
     }
 
     /// One-line marker with the counters, for `AETHER_COMPOSITOR_GLASS_SHADER`.
     pub fn stats_line(&self) -> String {
         format!(
-            "surfaces={} passes={} textures={} failures={}",
-            self.surfaces, self.passes, self.textures, self.failures
+            "surfaces={} passes={} textures={} failures={} frosted_px={} surface_px={}",
+            self.surfaces, self.passes, self.textures, self.failures, self.frosted_px, self.surface_px
         )
     }
 
@@ -354,8 +450,10 @@ impl GlassPasses {
         renderer: &mut GlesRenderer,
         size: (i32, i32),
     ) -> Result<GlesTexture, GlesError> {
-        if let Some(texture) = self.scratch.remove(&size) {
-            return Ok(texture);
+        if let Some(textures) = self.scratch.get_mut(&size) {
+            if let Some(texture) = textures.pop() {
+                return Ok(texture);
+            }
         }
         self.textures += 1;
         renderer.create_buffer(Fourcc::Argb8888, Size::<i32, Buffer>::from(size))

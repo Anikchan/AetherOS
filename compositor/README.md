@@ -113,7 +113,9 @@ Per frame the backend:
 
 1. renders the Background/Bottom layer surfaces (wallpaper) into one offscreen
    backdrop texture covering the union of the glass surfaces;
-2. runs the blur chain per surface at the sizes the plan resolved;
+2. runs the blur chain per surface over that surface's **damage-scoped region**
+   (the frame damage clipped to the surface, grown by a blur halo), not the
+   whole surface;
 3. composites saturation/tint/edge/refraction into a frost texture and pushes it
    as a `DrmRenderElement::Frost` element *under* the surface's own content;
 4. draws shell chrome (Top/Overlay layer surfaces) and windows through the same
@@ -124,12 +126,26 @@ the surface is composited plainly for that frame and the failure is counted in
 `AETHER_COMPOSITOR_GLASS_STATS`. A broken shader must never take the desktop
 down.
 
-Damage scope (residual): `DrmCompositor::render_frame` renders every element
-into a fresh swapchain slot, so a frost element has to cover the whole surface —
-a strip-sized frost would leave the rest of the surface empty in the new slot.
-The damage region still decides whether a surface is frosted and is reported in
-the markers; scoping the blur to the damaged strip needs buffer-age tracking and
-belongs to the P3-T06 follow-up.
+Damage scope: every frame lands in a different KMS swapchain slot, so a
+whole-surface frost element would repaint the entire window each frame.
+`glass_shader::frost_region` therefore resolves the strip to rewrite — the
+damage clipped to the surface plus `halo_px` (blur radius + refraction band) on
+every side so the blur never samples a clamped strip edge — and the frost
+element covers exactly that region. `DrmCompositor::render_frame` adds each
+element's damage to the buffer-age damage of the slot it draws into, so the rest
+of the slot keeps the strip written the last time that slot was used. When the
+grown region covers half the surface (`FULL_FROST_RATIO`) the whole surface is
+repainted in one pass, which is cheaper than scoping it. The frost element keeps
+one stable `Id` per `wl_surface` so the tracker diffs instances between frames
+instead of treating every frost as a brand-new element.
+
+Evidence: `AETHER_COMPOSITOR_FRAME: … damage_px=… frost_px=…` (both backends)
+and `AETHER_COMPOSITOR_GLASS_SHADER: … frost_px=… surface_px=…` (DRM) report the
+rewritten area; `AETHER_COMPOSITOR_GLASS_STATS` accumulates `frosted_px` against
+`surface_px`. Headless acceptance: `tests/p3_t05_t06_effects_frames.rs` (three
+1152×648 windows with a 320×100 damage strip each → `frost_px` ≈ 7 % of
+`covered_px`, and exactly `damage_px × 3` at the Minimal tier, which has no
+halo).
 
 ### Checking the shaders without a GPU
 
@@ -153,8 +169,8 @@ AETHER_COMPOSITOR_DRM_DEVICE: path=… atomic=true cursor=64x64
 AETHER_COMPOSITOR_DRM_CONNECTOR: name=eDP-1 mode=1920x1080@60000mhz crtc=…
 AETHER_COMPOSITOR_DRM_RENDERER: backend=gles render_formats=<n>
 AETHER_COMPOSITOR_GLASS_SHADER: programs=3 backend=gles shaders=kawase-down,kawase-up,glass-composite
-AETHER_COMPOSITOR_GLASS_SHADER: tier=… blur=dual-kawase|none frosted=<n> frosted_total=<n> damage_px=<n> backdrop=<WxH>|none
-AETHER_COMPOSITOR_GLASS_STATS: surfaces=… passes=… textures=… failures=…
+AETHER_COMPOSITOR_GLASS_SHADER: tier=… blur=dual-kawase|none frosted=<n> frosted_total=<n> damage_px=<n> frost_px=<n> surface_px=<n> backdrop=<WxH>|none
+AETHER_COMPOSITOR_GLASS_STATS: surfaces=… passes=… textures=… failures=… frosted_px=… surface_px=…
 AETHER_COMPOSITOR_DRM_OUTPUT: connector=eDP-1 mode=1920x1080 refresh_mhz=60000
 AETHER_COMPOSITOR_DRM_VBLANK: n=<frame> time_ms=<t> total=<n>
 AETHER_COMPOSITOR_DRM_SESSION_EVENT: state=paused|active
@@ -187,3 +203,25 @@ Still to be validated on the Dell:
    highlight on the top edge, refraction band at Full tier), and the 60 fps
    budget with three windows (`AETHER_COMPOSITOR_GLASS_SHADER`).
    `./compositor/scripts/check-shaders.sh` only proves the sources compile.
+9. Damage-scoped frost on the real swapchain: `frosted_px` must stay well below
+   `surface_px` across a run (`AETHER_COMPOSITOR_GLASS_STATS`) and no strip may
+   show a stale or torn frost after a window drag.
+
+### On-device checklist (the Dell)
+
+```sh
+./compositor/scripts/kms-checklist.sh            # build + 15 s Full, 6 s Minimal
+./compositor/scripts/kms-checklist.sh --duration 60 --client 'foot'   # with a window
+./compositor/scripts/kms-checklist.sh --grade kms-checklist-*/primary-full.log
+./compositor/scripts/kms-checklist.sh --selftest  # score the fixtures, no device
+```
+
+The script sets `AETHER_COMPOSITOR_BACKEND=drm`, bounds the run with
+`AETHER_COMPOSITOR_RUN_SECS` so the compositor prints its exit markers, writes
+`compositor.log`/`.err` per run, and grades: EGL/GLES context, modeset, page
+flips, libinput input, seat, glass programs, effect tier + blur, `failures=0`,
+damage-scoped frost (`frosted_px < surface_px`), frame stats and clean shutdown.
+Exit code 0 = all checks passed (keypress-dependent input checks are warnings,
+never passes). `--grade` re-scores a captured log on any host; `--selftest`
+scores `scripts/fixtures/*.log` (one good Full, one good Minimal, one broken) so
+the grader itself is verifiable without hardware.

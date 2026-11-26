@@ -33,7 +33,13 @@
 //! dual-Kawase chain and composited with the tint/edge/refraction shader
 //! ([`crate::backend::glass_gles`]) before the surface content is drawn on top.
 //! `minimal` runs the same composite program in `fill` mode (solid tinted
-//! panel, no backdrop sample).
+//! panel, no backdrop sample). The chain and its frost element cover only the
+//! surface's **damage-scoped region** (frame damage clipped to the surface plus
+//! a blur halo), so a strip repaint costs a strip-sized blur and the KMS
+//! buffer-age damage keeps the rest of the swapchain slot intact.
+//!
+//! Env: `AETHER_COMPOSITOR_RUN_SECS` bounds a run (default 12 h) so the exit
+//! markers are printed; `scripts/kms-checklist.sh` uses it on the Dell.
 //!
 //! Markers: `AETHER_COMPOSITOR_DRM_SESSION`, `_DRM_PRIMARY_GPU`, `_DRM_DEVICE`,
 //! `_DRM_CONNECTOR`, `_DRM_RENDERER`, `_DRM_OUTPUT`, `_DRM_VBLANK`,
@@ -358,7 +364,16 @@ pub fn run() -> Result<(), String> {
     // the same approach the headless backend uses.
     let display_ptr = Box::into_raw(Box::new(display));
     DISPLAY_PTR.store(display_ptr as usize, Ordering::SeqCst);
-    state.deadline = Some(Instant::now() + Duration::from_secs(60 * 60 * 12));
+    // Run deadline: 12 h by default. `AETHER_COMPOSITOR_RUN_SECS` bounds a
+    // validation run (used by `scripts/kms-checklist.sh`) so the exit markers
+    // (`DRM_STATS`, `GLASS_STATS`, `DONE`) are printed instead of the operator
+    // having to kill the process.
+    let run_secs = std::env::var("AETHER_COMPOSITOR_RUN_SECS")
+        .ok()
+        .and_then(|value| value.trim().parse::<u64>().ok())
+        .unwrap_or(60 * 60 * 12)
+        .max(1);
+    state.deadline = Some(Instant::now() + Duration::from_secs(run_secs));
 
     let result = event_loop.run(Some(Duration::from_millis(4)), &mut state, move |state| {
         let display =
@@ -650,6 +665,9 @@ impl DrmBackend {
             }
         };
 
+        if let Some(glass) = self.glass.as_mut() {
+            glass.start_frame();
+        }
         let elements = collect_elements(
             &mut self.renderer,
             self.glass.as_mut(),
@@ -658,7 +676,11 @@ impl DrmBackend {
             scale,
             &frame.damage,
             backdrop.as_ref(),
+            frame.index,
         );
+        if let Some(glass) = self.glass.as_mut() {
+            glass.sweep(frame.index);
+        }
 
         if frame.index <= 5 || frame.index % 120 == 0 {
             let frosted = elements
@@ -667,7 +689,7 @@ impl DrmBackend {
                 .count();
             if let Some(glass) = self.glass.as_ref() {
                 println!(
-                    "AETHER_COMPOSITOR_GLASS_SHADER: tier={} blur={} frosted={} frosted_total={} damage_px={} backdrop={}",
+                    "AETHER_COMPOSITOR_GLASS_SHADER: tier={} blur={} frosted={} frosted_total={} damage_px={} frost_px={} surface_px={} backdrop={}",
                     tier.name(),
                     if glass_shader::tier_blurs(tier) {
                         "dual-kawase"
@@ -677,6 +699,8 @@ impl DrmBackend {
                     frosted,
                     glass.surfaces,
                     frame.damage_pixels,
+                    glass.frame_frosted_px,
+                    glass.frame_surface_px,
                     backdrop
                         .as_ref()
                         .map(|backdrop| format!(
@@ -753,6 +777,7 @@ fn collect_elements(
     scale: f64,
     damage: &[Rect],
     backdrop: Option<&Backdrop>,
+    frame_index: u64,
 ) -> Vec<DrmRenderElement> {
     let mut elements = Vec::new();
 
@@ -774,10 +799,12 @@ fn collect_elements(
                 renderer,
                 glass,
                 state,
+                toplevel.wl_surface(),
                 window.rect,
                 damage,
                 scale,
                 backdrop,
+                frame_index,
                 &mut elements,
             );
         }
@@ -802,10 +829,12 @@ fn collect_elements(
                 renderer,
                 glass,
                 state,
+                entry.surface.wl_surface(),
                 layer_rect(entry, output_size),
                 damage,
                 scale,
                 backdrop,
+                frame_index,
                 &mut elements,
             );
         }
@@ -830,25 +859,36 @@ fn collect_elements(
 }
 
 /// Resolve the glass plan for one surface and push its frosted element.
+///
+/// The element covers only the surface's damage-scoped region, not the whole
+/// surface: the KMS damage tracker repaints the union of the element damage of
+/// this frame and the damage the swapchain slot still holds, so a strip-sized
+/// frost leaves the rest of the slot intact.
+#[allow(clippy::too_many_arguments)]
 fn push_frost(
     renderer: &mut GlesRenderer,
     glass: &mut GlassPasses,
     state: &AetherCompositor,
+    surface: &WlSurface,
     rect: Rect,
     damage: &[Rect],
     scale: f64,
     backdrop: Option<&Backdrop>,
+    frame_index: u64,
     elements: &mut Vec<DrmRenderElement>,
 ) {
     let material = state.effects.material();
-    let surface = GlassSurface {
+    let glass_surface = GlassSurface {
         id: 0,
         rect,
         corner_radius: material.corner_radius,
         opacity: 1.0,
     };
-    let plan = state.effects.plan(&surface, Some(damage));
-    if let Some(frost) = glass.frost(renderer, backdrop, &material, &plan, rect, damage, scale) {
+    let plan = state.effects.plan(&glass_surface, Some(damage));
+    let id = glass.frost_id(surface, frame_index);
+    if let Some(frost) = glass.frost(
+        renderer, backdrop, &material, &plan, rect, damage, scale, id,
+    ) {
         elements.push(frost.element(renderer.context_id()));
     }
 }

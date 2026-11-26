@@ -9,8 +9,10 @@
 //! - `AETHER_COMPOSITOR_GLASS_PLAN` reports three windows, the resolved pass
 //!   count and the modelled frame cost against the 60 Hz budget;
 //! - `AETHER_COMPOSITOR_FRAME` shows damage-based repaint (fewer pixels than a
-//!   full repaint) and `AETHER_COMPOSITOR_FRAME_CALLBACKS` answers the
-//!   client's frame callbacks (the client asserts it received them);
+//!   full repaint) and its `frost_px` field shows the glass chain is scoped to
+//!   the damaged strip plus the blur halo, not the whole surface;
+//! - `AETHER_COMPOSITOR_FRAME_CALLBACKS` answers the client's frame callbacks
+//!   (the client asserts it received them);
 //! - a run at the Minimal tier produces a shorter pipeline than Full, i.e. the
 //!   tier switch really changes the effect plan.
 //!
@@ -226,6 +228,31 @@ fn effect_tiers_and_damage_based_frames() {
     assert!(
         full.contains("idle_pct="),
         "no idle measurement in the frame stats:\n{full}"
+    );
+
+    // --- P3-T06: the frost only rewrites the damaged strip ----------------
+    // Three 1152x648 glass windows, 320x100 damaged each: a whole-surface frost
+    // would rewrite `covered_px`; the damage-scoped one adds only the 48 px blur
+    // halo (24 px radius + 24 px refraction band) around each strip.
+    let frost_px: u64 = value_usize(frame, "frost_px=") as u64;
+    assert!(
+        frost_px >= damage_px,
+        "frost {frost_px} must at least cover the {damage_px} damaged pixels"
+    );
+    assert!(
+        frost_px * 2 < covered_px,
+        "frost {frost_px} should stay far below a full repaint of {covered_px} px: {frame}"
+    );
+
+    // Minimal has no blur, so its frost region is exactly the damaged strips.
+    let minimal_frame = marker_line(&minimal, &["AETHER_COMPOSITOR_FRAME: n=", "windows=3"])
+        .unwrap_or_else(|| panic!("no minimal frame marker:\n{minimal}"));
+    let minimal_damage: u64 = value_usize(minimal_frame, "damage_px=") as u64;
+    let minimal_frost: u64 = value_usize(minimal_frame, "frost_px=") as u64;
+    assert_eq!(
+        minimal_frost,
+        minimal_damage * 3,
+        "minimal tier frost must be the three damaged strips: {minimal_frame}"
     );
 }
 
