@@ -1,7 +1,10 @@
 //! P3-T04 window management skeleton: floating, snap, tiling, workspaces.
 //!
 //! Pure data model (no Wayland/DRM) so it unit-tests on the dev host and in CI.
-//! Integration with toplevels/layer surfaces lands in a follow-up.
+//! `AetherCompositor` in `lib.rs` owns a `WorkspaceManager`, registers each
+//! xdg-toplevel as a floating window on the active workspace, and pushes the
+//! managed geometry back to clients (`snap_toplevel`, `tile_active_workspace`,
+//! `activate_workspace`). Layer surfaces are shell chrome and are not managed.
 
 use std::collections::HashMap;
 
@@ -202,5 +205,32 @@ mod tests {
         wm.set_mode(WindowId(1), WindowMode::Fullscreen);
         let r = wm.windows.get(&WindowId(1)).unwrap().rect;
         assert_eq!((r.w, r.h), (1920, 1080));
+    }
+
+    #[test]
+    fn grid_tiling_uses_whole_output() {
+        // Four windows tile into a 2x2 grid that covers the output exactly
+        // (no gaps, no overlap) since the output divides evenly.
+        let mut wm = WorkspaceManager::new(1920, 1080);
+        for id in 0..4 {
+            wm.add_window(WindowId(id), None);
+        }
+        wm.tile_all(WorkspaceId(0));
+        let mut covered = 0;
+        for w in wm.windows.values() {
+            assert_eq!(w.mode, WindowMode::Tiled);
+            assert_eq!((w.rect.w, w.rect.h), (960, 540));
+            covered += w.rect.w * w.rect.h;
+        }
+        assert_eq!(covered, 1920 * 1080);
+    }
+
+    #[test]
+    fn snapping_right_half() {
+        let mut wm = WorkspaceManager::new(800, 600);
+        wm.add_window(WindowId(1), None);
+        wm.set_mode(WindowId(1), WindowMode::Snapped(SnapEdge::Right));
+        let r = wm.windows.get(&WindowId(1)).unwrap().rect;
+        assert_eq!((r.x, r.y, r.w, r.h), (400, 0, 400, 600));
     }
 }

@@ -183,6 +183,11 @@ pub struct AetherCompositor {
     surface_scales: HashMap<ObjectId, f64>,
     /// Surfaces whose buffer scale has already been reported.
     scaled_surfaces: HashSet<ObjectId>,
+    /// P3-T04 window-management model: floating/snap/tile + workspaces.
+    /// Layer surfaces (shell chrome) are deliberately *not* managed here.
+    pub wm: WorkspaceManager,
+    /// Monotonic id source for managed toplevels.
+    next_window_id: u64,
     pub mapped: bool,
     pub shutdown_at: Option<Instant>,
     pub deadline: Option<Instant>,
@@ -215,6 +220,10 @@ impl AetherCompositor {
             xwayland_display: None,
             surface_scales: HashMap::new(),
             scaled_surfaces: HashSet::new(),
+            // Replaced with the primary output's logical size once outputs are
+            // added below.
+            wm: WorkspaceManager::new(0, 0),
+            next_window_id: 0,
             mapped: false,
             shutdown_at: None,
             deadline: None,
@@ -224,6 +233,15 @@ impl AetherCompositor {
         for spec in HEADLESS_OUTPUTS {
             state.add_headless_output(dh, spec);
         }
+        // Seed the WM with the primary output's logical size so snap/tile
+        // geometry matches what clients are configured at.
+        let (ow, oh) = state
+            .outputs
+            .first()
+            .map(|output| state.logical_size(output))
+            .map(|size| (size.w, size.h))
+            .unwrap_or((1920, 1080));
+        state.wm = WorkspaceManager::new(ow, oh);
         println!("AETHER_COMPOSITOR_OUTPUT_COUNT: {}", state.outputs.len());
         state
     }
@@ -339,6 +357,85 @@ impl AetherCompositor {
             );
         }
     }
+
+    /// Push a managed geometry to the toplevel at `index` (the WM `WindowId`
+    /// equals the toplevel index). No-op if the index is unknown.
+    fn configure_toplevel(&mut self, index: usize, rect: Rect) {
+        let Some(toplevel) = self.toplevels.get(index) else {
+            return;
+        };
+        let size = Size::from((rect.w.max(1), rect.h.max(1)));
+        toplevel.with_pending_state(|state| {
+            state.size = Some(size);
+        });
+        if toplevel.send_pending_configure().is_some() {
+            println!(
+                "AETHER_COMPOSITOR_WM_CONFIGURE: id={index} size={}x{}",
+                rect.w, rect.h
+            );
+        }
+    }
+
+    /// P3-T04: snap the toplevel at `index` to an output edge.
+    pub fn snap_toplevel(&mut self, index: usize, edge: SnapEdge) {
+        let id = WindowId(index as u64);
+        self.wm.set_mode(id, WindowMode::Snapped(edge));
+        let Some(rect) = self.wm.windows.get(&id).map(|window| window.rect) else {
+            return;
+        };
+        println!(
+            "AETHER_COMPOSITOR_WM_SNAP: id={index} edge={edge:?} rect={},{},{}x{}",
+            rect.x, rect.y, rect.w, rect.h
+        );
+        self.configure_toplevel(index, rect);
+    }
+
+    /// P3-T04: assign the toplevel at `index` to a workspace.
+    pub fn move_toplevel_to_workspace(&mut self, index: usize, workspace: WorkspaceId) {
+        let id = WindowId(index as u64);
+        if self.wm.move_to_workspace(id, workspace) {
+            println!(
+                "AETHER_COMPOSITOR_WM_MOVE: id={index} workspace={}",
+                workspace.0
+            );
+        }
+    }
+
+    /// P3-T04: tile every window on the active workspace into a grid.
+    pub fn tile_active_workspace(&mut self) {
+        let workspace = self.wm.active;
+        self.wm.tile_all(workspace);
+        let rects: Vec<(usize, Rect)> = self
+            .wm
+            .visible_on(workspace)
+            .into_iter()
+            .filter_map(|id| {
+                self.wm
+                    .windows
+                    .get(&id)
+                    .map(|window| (id.0 as usize, window.rect))
+            })
+            .collect();
+        for (index, rect) in rects {
+            println!(
+                "AETHER_COMPOSITOR_WM_TILE: id={index} rect={},{},{}x{}",
+                rect.x, rect.y, rect.w, rect.h
+            );
+            self.configure_toplevel(index, rect);
+        }
+    }
+
+    /// P3-T04: switch the active workspace (creating it if unknown).
+    pub fn activate_workspace(&mut self, workspace: WorkspaceId) {
+        if !self.wm.workspaces.contains(&workspace) {
+            self.wm.workspaces.push(workspace);
+        }
+        self.wm.active = workspace;
+        println!(
+            "AETHER_COMPOSITOR_WM_WORKSPACE: active={}",
+            workspace.0
+        );
+    }
 }
 
 /// Layer-shell size negotiation (the subset the shell needs): anchored edges
@@ -388,6 +485,15 @@ impl CompositorHandler for AetherCompositor {
     fn client_compositor_state<'a>(&self, client: &'a Client) -> &'a CompositorClientState {
         if let Some(data) = client.get_data::<ClientState>() {
             return &data.compositor;
+        }
+        // XWayland is inserted with smithay's own `XWaylandClientData` (it is
+        // not a `ClientState` client). Its `wl_surface`/`wl_region` requests
+        // still need the compositor client state; without this branch the
+        // compositor would `exit(1)` the moment XWayland creates its root
+        // surface, so XWayland never reaches `XWaylandEvent::Ready`.
+        #[cfg(target_os = "linux")]
+        if let Some(data) = client.get_data::<smithay::xwayland::XWaylandClientData>() {
+            return &data.compositor_state;
         }
         eprintln!("aether-compositor: client without ClientState data");
         std::process::exit(1);
@@ -463,7 +569,39 @@ impl XdgShellHandler for AetherCompositor {
         }
         println!("AETHER_COMPOSITOR_XDG_TOPLEVEL: output={output_name}");
         self.toplevels.push(surface.clone());
-        let _ = surface.send_configure();
+
+        // P3-T04: register the toplevel with the window manager as a floating
+        // window on the active workspace and configure it to its managed
+        // geometry. The window id equals the toplevel's index so the WM model
+        // and `self.toplevels` stay in lock-step.
+        let index = self.toplevels.len() - 1;
+        let id = WindowId(self.next_window_id);
+        self.next_window_id += 1;
+        let (ow, oh) = self
+            .outputs
+            .first()
+            .map(|output| self.logical_size(output))
+            .map(|size| (size.w.max(1), size.h.max(1)))
+            .unwrap_or((1920, 1080));
+        self.wm.output_size = (ow, oh);
+        self.wm.add_window(id, None);
+        // Default floating geometry: a centered window at 60% of the output.
+        let win_w = (ow * 3 / 5).max(1);
+        let win_h = (oh * 3 / 5).max(1);
+        let rect = Rect {
+            x: (ow - win_w) / 2,
+            y: (oh - win_h) / 2,
+            w: win_w,
+            h: win_h,
+        };
+        if let Some(window) = self.wm.windows.get_mut(&id) {
+            window.rect = rect;
+        }
+        println!(
+            "AETHER_COMPOSITOR_WM_WINDOW: id={} workspace={} output={} mode=floating rect={},{},{}x{}",
+            id.0, self.wm.active.0, output_name, rect.x, rect.y, rect.w, rect.h
+        );
+        self.configure_toplevel(index, rect);
     }
 
     fn new_popup(&mut self, _surface: PopupSurface, _positioner: PositionerState) {}
@@ -517,6 +655,10 @@ impl WlrLayerShellHandler for AetherCompositor {
             layer,
             output: target.as_ref().map(Output::name),
         });
+        // Layer surfaces are shell chrome (menu bar, dock, wallpapers) and are
+        // intentionally excluded from the P3-T04 window manager: they are never
+        // tiled/snapped and have no workspace. Their geometry is negotiated by
+        // `configure_layer_surface` instead.
         // Immediate initial configure; a sized configure follows on the first
         // commit once anchors and the requested size are known.
         let _ = surface.send_configure();
@@ -644,14 +786,18 @@ pub fn run() -> Result<(), String> {
     // Spawn XWayland if available (Linux CI). Failure is non-fatal: the
     // compositor keeps running as a pure Wayland compositor, but log the
     // reason so a missing binary / socket dir is diagnosable in CI.
+    //
+    // stdout/stderr are inherited (not `Stdio::null()`) so XWayland's own
+    // `-verbose` diagnostics reach the compositor's log/console and a startup
+    // failure is visible in CI instead of silent.
     #[cfg(target_os = "linux")]
     let xwayland_pair = match XWayland::spawn(
         &dh,
         None,
         std::iter::empty::<(String, String)>(),
         false,
-        std::process::Stdio::null(),
-        std::process::Stdio::null(),
+        std::process::Stdio::inherit(),
+        std::process::Stdio::inherit(),
         |_ud| {},
     ) {
         Ok(pair) => Some(pair),

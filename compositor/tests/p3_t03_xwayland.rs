@@ -55,7 +55,11 @@ impl CompositorProcess {
         fs::read_to_string(self.runtime_dir.join("compositor.log")).unwrap_or_default()
     }
 
-    fn wait_for_display(&self) -> Option<u32> {
+    fn stderr_log(&self) -> String {
+        fs::read_to_string(self.runtime_dir.join("compositor.err")).unwrap_or_default()
+    }
+
+    fn wait_for_display(&mut self) -> Option<u32> {
         let deadline = Instant::now() + Duration::from_secs(15);
         while Instant::now() < deadline {
             let log = self.log();
@@ -65,6 +69,13 @@ impl CompositorProcess {
                         return Some(n);
                     }
                 }
+            }
+            if let Ok(Some(status)) = self.child.try_wait() {
+                panic!(
+                    "compositor exited before XWayland became ready ({status})\n--- stdout ---\n{}\n--- stderr (incl. XWayland) ---\n{}",
+                    log,
+                    self.stderr_log()
+                );
             }
             thread::sleep(Duration::from_millis(50));
         }
@@ -98,11 +109,15 @@ fn xwayland_xeyes_maps() {
         return;
     }
 
-    let comp = CompositorProcess::start();
+    let mut comp = CompositorProcess::start();
     let display = match comp.wait_for_display() {
         Some(n) => n,
         None => {
-            eprintln!("compositor log:\n{}", comp.log());
+            eprintln!(
+                "compositor stdout:\n{}\ncompositor stderr (incl. XWayland):\n{}",
+                comp.log(),
+                comp.stderr_log()
+            );
             panic!("XWayland did not become ready");
         }
     };
