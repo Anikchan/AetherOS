@@ -31,6 +31,26 @@ export struct EventView {
     day-label: string,
 }
 
+// One column of the week view.
+export struct WeekDayView {
+    weekday: string,
+    date: string,
+    day: int,
+    today: bool,
+    selected: bool,
+    iso: string,
+    events: [string],
+}
+
+// One alarm row.
+export struct AlarmView {
+    id: string,
+    label: string,
+    time: string,
+    days: string,
+    enabled: bool,
+}
+
 // A labelled single-line text field (title and time entry of the add form).
 component Field inherits Rectangle {
     in property <string> label: "";
@@ -87,7 +107,11 @@ export component CalendarApp inherits Window {
     in-out property <string> new-end: "10:00";
     in-out property <string> form-error: "";
 
-    // Clock tab.
+    // Week view (tab 1).
+    in property <string> week-label: "";
+    in property <[WeekDayView]> week-days: [];
+
+    // Clock tab (tab 2).
     in property <string> clock-digital: "";
     in property <string> clock-date: "";
     in property <string> dial-command: "";
@@ -101,8 +125,20 @@ export component CalendarApp inherits Window {
     in property <float> timer-progress: 0.0;
     in-out property <bool> timer-running: false;
 
+    // Time zones and alarms.
+    in property <[string]> zones: [];
+    in-out property <int> zone: 0;
+    in property <string> zone-label: "";
+    in property <string> zone-time: "";
+    in property <[AlarmView]> alarms: [];
+    in-out property <string> new-alarm-label: "";
+    in-out property <string> new-alarm-time: "07:30";
+    in property <string> alarm-banner: "";
+
     callback prev-month();
     callback next-month();
+    callback prev-week();
+    callback next-week();
     callback today();
     callback day-selected(string);
     callback add-event();
@@ -114,6 +150,11 @@ export component CalendarApp inherits Window {
     callback timer-toggle();
     callback timer-reset();
     callback timer-add(int);
+    callback zone-selected(int);
+    callback alarm-add();
+    callback alarm-toggle(string);
+    callback alarm-remove(string);
+    callback alarm-dismiss();
 
     VerticalLayout {
         padding: Tokens.space(5);
@@ -139,9 +180,9 @@ export component CalendarApp inherits Window {
             }
             Rectangle { horizontal-stretch: 1; background: transparent; }
             SegmentedControl {
-                items: ["Month", "Clock"];
+                items: ["Month", "Week", "Clock"];
                 current <=> root.tab;
-                width: 210px;
+                width: 290px;
             }
         }
 
@@ -388,9 +429,133 @@ export component CalendarApp inherits Window {
             }
         }
 
+        // -------------------------------------------------------- week tab ---
+        if root.tab == 1 : GlassPanel {
+            vertical-stretch: 1;
+            pad: Tokens.space(4);
+
+            VerticalLayout {
+                spacing: Tokens.space(3);
+
+                HorizontalLayout {
+                    spacing: Tokens.space(2);
+                    Text {
+                        text: root.week-label;
+                        color: Tokens.text;
+                        font-size: Tokens.font-title;
+                        font-weight: 600;
+                        vertical-alignment: center;
+                    }
+                    Rectangle { horizontal-stretch: 1; background: transparent; }
+                    IconButton {
+                        kind: IconKind.chevron-left;
+                        label: "Previous week";
+                        clicked => { root.prev-week(); }
+                    }
+                    AetherButton {
+                        text: "Today";
+                        clicked => { root.today(); }
+                    }
+                    IconButton {
+                        kind: IconKind.chevron-right;
+                        label: "Next week";
+                        clicked => { root.next-week(); }
+                    }
+                }
+
+                HorizontalLayout {
+                    spacing: 8px;
+                    vertical-stretch: 1;
+
+                    for day[idx] in root.week-days : Rectangle {
+                        horizontal-stretch: 1;
+                        vertical-stretch: 1;
+                        border-radius: Tokens.radius-button;
+                        background: day.selected
+                            ? Tokens.accent-soft
+                            : (day.today
+                                ? Tokens.accent-soft.with-alpha(0.45)
+                                : Tokens.surface-low.with-alpha(0.7));
+                        border-width: day.today ? 1px : 0px;
+                        border-color: Tokens.accent;
+                        accessible-role: button;
+                        accessible-label: day.iso;
+
+                        VerticalLayout {
+                            padding: Tokens.space(2);
+                            spacing: 4px;
+                            Text {
+                                text: day.weekday;
+                                color: Tokens.text-faint;
+                                font-size: Tokens.font-small;
+                                font-weight: 700;
+                            }
+                            Text {
+                                text: "" + day.day;
+                                color: Tokens.text;
+                                font-size: Tokens.font-title;
+                                font-weight: 600;
+                            }
+                            Text {
+                                text: day.date;
+                                color: Tokens.text-muted;
+                                font-size: Tokens.font-small;
+                            }
+                            Divider {}
+                            for entry in day.events : Text {
+                                text: entry;
+                                color: Tokens.text-muted;
+                                font-size: Tokens.font-small;
+                                overflow: elide;
+                            }
+                            Rectangle { vertical-stretch: 1; background: transparent; }
+                        }
+
+                        TouchArea {
+                            x: 0;
+                            y: 0;
+                            width: parent.width;
+                            height: parent.height;
+                            clicked => { root.day-selected(day.iso); }
+                        }
+                    }
+                }
+            }
+        }
+
         // ------------------------------------------------------- clock tab ---
-        if root.tab == 1 : HorizontalLayout {
+        if root.tab == 2 : VerticalLayout {
             spacing: Tokens.space(4);
+
+            // Ringing alarm: a banner above the clock panels.
+            if root.alarm-banner != "" : Rectangle {
+                height: 44px;
+                border-radius: Tokens.radius-button;
+                background: Tokens.accent-soft;
+
+                HorizontalLayout {
+                    padding-left: Tokens.space(3);
+                    padding-right: Tokens.space(2);
+                    spacing: Tokens.space(2);
+                    Text {
+                        text: root.alarm-banner;
+                        color: Tokens.text;
+                        font-size: Tokens.font-body;
+                        font-weight: 600;
+                        vertical-alignment: center;
+                        horizontal-stretch: 1;
+                        overflow: elide;
+                    }
+                    AetherButton {
+                        text: "Dismiss";
+                        clicked => { root.alarm-dismiss(); }
+                    }
+                }
+            }
+
+            HorizontalLayout {
+                spacing: Tokens.space(4);
+                vertical-stretch: 1;
 
             GlassPanel {
                 width: 480px;
@@ -598,6 +763,122 @@ export component CalendarApp inherits Window {
                     AetherButton {
                         text: "+5 min";
                         clicked => { root.timer-add(5); }
+                    }
+                }
+            }
+            }
+
+            // Alarms and time zones (DA-07 v1).
+            HorizontalLayout {
+                spacing: Tokens.space(4);
+                height: 244px;
+
+                GlassPanel {
+                    horizontal-stretch: 1;
+                    vertical-stretch: 1;
+                    pad: Tokens.space(4);
+
+                    VerticalLayout {
+                        spacing: Tokens.space(2);
+                        SectionLabel { label: "ALARMS"; }
+                        if root.alarms.length == 0 : Text {
+                            text: "No alarms yet — add one below.";
+                            color: Tokens.text-faint;
+                            font-size: Tokens.font-small;
+                        }
+                        VerticalLayout {
+                            spacing: 4px;
+                            for alarm in root.alarms : HorizontalLayout {
+                                spacing: Tokens.space(2);
+                                Text {
+                                    text: alarm.time;
+                                    color: Tokens.text;
+                                    font-size: Tokens.font-body;
+                                    font-weight: 600;
+                                    font-family: Tokens.font-family-mono;
+                                    vertical-alignment: center;
+                                }
+                                VerticalLayout {
+                                    spacing: 0px;
+                                    Text {
+                                        text: alarm.label;
+                                        color: Tokens.text;
+                                        font-size: Tokens.font-body;
+                                        overflow: elide;
+                                    }
+                                    Text {
+                                        text: alarm.days;
+                                        color: Tokens.text-muted;
+                                        font-size: Tokens.font-small;
+                                    }
+                                }
+                                Rectangle { horizontal-stretch: 1; background: transparent; }
+                                ToggleSwitch {
+                                    label: "Enable " + alarm.label;
+                                    checked: alarm.enabled;
+                                    toggled(value) => { root.alarm-toggle(alarm.id); }
+                                }
+                                IconButton {
+                                    kind: IconKind.close;
+                                    label: "Remove alarm " + alarm.label;
+                                    button-size: 22px;
+                                    icon-size: 12px;
+                                    clicked => { root.alarm-remove(alarm.id); }
+                                }
+                            }
+                        }
+                        Rectangle { vertical-stretch: 1; background: transparent; }
+                        HorizontalLayout {
+                            spacing: Tokens.space(2);
+                            Field {
+                                label: "Alarm label";
+                                text <=> root.new-alarm-label;
+                                horizontal-stretch: 1;
+                            }
+                            Field {
+                                label: "Alarm time";
+                                text <=> root.new-alarm-time;
+                                width: 120px;
+                            }
+                            AetherButton {
+                                text: "Add alarm";
+                                primary: true;
+                                clicked => { root.alarm-add(); }
+                            }
+                        }
+                    }
+                }
+
+                GlassPanel {
+                    width: 340px;
+                    vertical-stretch: 1;
+                    pad: Tokens.space(4);
+
+                    VerticalLayout {
+                        spacing: Tokens.space(2);
+                        SectionLabel { label: "TIME ZONES"; }
+                        Text {
+                            text: root.zone-label;
+                            color: Tokens.text-muted;
+                            font-size: Tokens.font-small;
+                        }
+                        Text {
+                            text: root.zone-time;
+                            color: Tokens.text;
+                            font-size: 30px;
+                            font-weight: 300;
+                        }
+                        GridLayout {
+                            spacing: 4px;
+                            for zone[idx] in root.zones : AetherButton {
+                                row: Math.floor(idx / 2);
+                                col: Math.mod(idx, 2);
+                                horizontal-stretch: 1;
+                                text: zone;
+                                primary: root.zone == idx;
+                                clicked => { root.zone-selected(idx); }
+                            }
+                        }
                     }
                 }
             }

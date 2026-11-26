@@ -536,6 +536,35 @@ mod tests {
     }
 
     #[test]
+    fn folder_errors_and_cache_lookups_are_reported() {
+        let root = temp_dir("folder-errors");
+        let missing = root.join("does-not-exist");
+        match folder_images(&missing) {
+            Err(ViewerError::Io { path, .. }) => assert_eq!(path, missing),
+            other => panic!("expected an Io error, got {other:?}"),
+        }
+
+        // The cache only answers after a render, and rotation wraps negative
+        // steps like positive ones.
+        let path = root.join("cached.png");
+        gradient(10, 20).save(&path).unwrap();
+        let mut cache = ThumbnailCache::new();
+        assert!(cache.get(&path).is_none());
+        cache.render(&path, 64).unwrap();
+        assert!(cache.get(&path).is_some());
+        assert_eq!(cache.get(&path).unwrap().height, 20);
+
+        let image = gradient(30, 10);
+        assert_eq!(rotate(image.clone(), -1).dimensions(), (10, 30));
+        assert_eq!(
+            rotate(image.clone(), -4).to_rgba8().into_raw(),
+            image.to_rgba8().into_raw(),
+            "four negative steps return the original"
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn display_path_shortens_deep_paths() {
         assert_eq!(display_path(Path::new("Pictures")), "Pictures");
         assert_eq!(display_path(Path::new("/home/aether/Pictures")), "…/aether/Pictures");

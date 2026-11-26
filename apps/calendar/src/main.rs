@@ -7,12 +7,13 @@
 //! ```text
 //! aether-calendar --render docs/2026/11/23/results/screenshots
 //! aether-calendar --events          print the stored events as JSON
+//! aether-calendar --alarms          print the stored alarms as JSON
 //! aether-calendar --help
 //! ```
 
 use std::path::PathBuf;
 
-use aether_calendar::{CalendarApp, CalendarController, EventStore};
+use aether_calendar::{AlarmStore, CalendarApp, CalendarController, EventStore};
 use slint::{ModelRc, VecModel};
 
 fn usage() {
@@ -22,6 +23,7 @@ fn usage() {
          Usage:\n\
          \x20 aether-calendar --render <dir>  render app-calendar.png into <dir>\n\
          \x20 aether-calendar --events         print stored events and exit\n\
+         \x20 aether-calendar --alarms         print stored alarms and exit\n\
          \x20 aether-calendar --help           this message"
     );
 }
@@ -54,8 +56,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 frame.height
             );
 
-            // The clock tab is a second surface of the same window.
+            // Week view (tab 1).
             controller.ui().set_tab(1);
+            let week_path = dir.join("app-calendar-week.png");
+            let frame = aether_ui::render::render_png(controller.ui(), 1200, 800, &week_path)?;
+            println!(
+                "AETHER_APP_CALENDAR_WEEK_RENDERED {} -> {} ({}x{})",
+                dir.display(),
+                week_path.display(),
+                frame.width,
+                frame.height
+            );
+
+            // The clock tab (Month = 0, Week = 1, Clock = 2) is a second
+            // surface of the same window.
+            controller.ui().set_tab(2);
             controller.ui().set_stopwatch_text("00:12.3".into());
             controller
                 .ui()
@@ -79,6 +94,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let mut store = EventStore::at_config_dir();
             let error = store.load().err();
             println!("{}", serde_json::to_string_pretty(store.events())?);
+            if let Some(error) = error {
+                eprintln!("warning: {error}");
+            }
+        }
+        Some("--alarms") => {
+            let mut store = AlarmStore::at_config_dir();
+            let error = store.load().err();
+            println!("{}", serde_json::to_string_pretty(store.alarms())?);
             if let Some(error) = error {
                 eprintln!("warning: {error}");
             }

@@ -1228,6 +1228,43 @@ mod tests {
         let _ = fs::remove_dir_all(dir);
     }
     #[test]
+    fn documents_without_a_path_refuse_to_save_and_recent_loading_is_optional() {
+        let mut doc = Document::from_text("draft");
+        match doc.save() {
+            Err(DocumentError::Io(message)) => {
+                assert!(message.contains("no file path"), "{message}");
+            }
+            other => panic!("expected an Io error, got {other:?}"),
+        }
+
+        // A missing recent-files list is the first run, not an error.
+        let dir = temp_dir("recent-missing");
+        let mut recent = RecentFiles::new(dir.join("recent.txt"), 4);
+        assert_eq!(recent.load(), Ok(()));
+        assert!(recent.is_empty());
+        // Nothing to persist yet stores an empty file, not an error.
+        recent.persist().unwrap();
+        assert_eq!(fs::read_to_string(recent.store_path()).unwrap(), "");
+        assert!(autosave_path().ends_with("text/autosave.txt"));
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn short_path_only_rewrites_the_home_prefix() {
+        let home = std::env::var("HOME").expect("HOME is set");
+        let inside = Path::new(&home).join("Documents/notes.md");
+        assert_eq!(short_path(&inside), "~/Documents/notes.md");
+        let outside = Path::new("/aether/not-home/file.txt");
+        assert_eq!(
+            short_path(outside),
+            "/aether/not-home/file.txt",
+            "paths outside HOME are unchanged"
+        );
+        assert_eq!(Encoding::Windows1252.label(), "Windows-1252");
+        assert_eq!(Encoding::Utf16Be.label(), "UTF-16 BE");
+    }
+
+    #[test]
     fn find_and_replace_ten_megabyte_file_within_a_second() {
         // DA-AC-02: find/replace across ~10 MB with no UI freeze over 1 s.
         let line = "lorem ipsum dolor sit amet 0123456789 aether\n"; // 44 bytes
@@ -1262,8 +1299,7 @@ mod tests {
     }
 
     #[test]
-    fn ten_megabyte_file_loads_and_saves_within_a_second() {
-        let path = temp_file("large", "txt");
+    fn ten_megabyte_file_loads_and_saves_within_a_second() {        let path = temp_file("large", "txt");
         let line = "0123456789abcdefghijklmnopqrstuvwxyz\n"; // 37 bytes
         let body = line.repeat((10 * 1024 * 1024) / line.len() + 1);
         fs::write(&path, body.as_bytes()).unwrap();

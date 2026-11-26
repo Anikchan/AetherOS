@@ -114,9 +114,31 @@ fn calendar_window_clicking_updates_rust_state() {
         assert_eq!(controller.store().len(), 0);
         assert_eq!(controller.ui().get_events().row_count(), 0);
 
+        // --- week tab (v1 week view) ---------------------------------------
+        click(controller.ui(), "Week").await;
+        assert_eq!(controller.ui().get_tab(), 1, "the segmented control switched");
+        assert_eq!(controller.ui().get_week_days().row_count(), 7);
+        let week = controller.week();
+        assert_eq!(week.start, controller.selected().start_of_week());
+        assert_eq!(week.start.weekday_index(), 0, "Monday first");
+        let before = controller.selected();
+        click(controller.ui(), "Next week").await;
+        assert_eq!(
+            controller.selected(),
+            before.add_days(7),
+            "Next week moves the selection by seven days"
+        );
+        assert!(controller
+            .ui()
+            .get_week_label()
+            .to_string()
+            .contains(" – "));
+        click(controller.ui(), "Previous week").await;
+        assert_eq!(controller.selected(), before);
+
         // --- clock tab ------------------------------------------------------
         click(controller.ui(), "Clock").await;
-        assert_eq!(controller.ui().get_tab(), 1, "the segmented control switches tab");
+        assert_eq!(controller.ui().get_tab(), 2, "the segmented control switches tab");
         assert!(
             controller.ui().get_clock_digital().to_string().contains(':'),
             "the digital clock is formatted"
@@ -125,6 +147,47 @@ fn calendar_window_clicking_updates_rust_state() {
             controller.ui().get_hands_command().to_string().contains('L'),
             "the analogue hands are real path geometry"
         );
+
+        // --- time zones (DA-07) --------------------------------------------
+        assert_eq!(controller.zone().name, "UTC");
+        click(controller.ui(), "New Delhi").await;
+        assert_eq!(controller.zone().name, "New Delhi");
+        assert!(controller
+            .ui()
+            .get_zone_label()
+            .to_string()
+            .contains("UTC+05:30"));
+        assert!(controller.ui().get_zone_time().to_string().contains(':'));
+
+        // --- alarms (DA-07) -------------------------------------------------
+        let alarm_label = ElementHandle::find_by_accessible_label(controller.ui(), "Alarm label")
+            .next()
+            .expect("alarm label field is in the tree");
+        alarm_label.set_accessible_value("Wake up");
+        let alarm_time = ElementHandle::find_by_accessible_label(controller.ui(), "Alarm time")
+            .next()
+            .expect("alarm time field is in the tree");
+        alarm_time.set_accessible_value("07:30");
+        click(controller.ui(), "Add alarm").await;
+        assert_eq!(controller.alarms().len(), 1);
+        assert_eq!(controller.ui().get_alarms().row_count(), 1);
+        assert!(controller.ui().get_alarms().row_data(0).unwrap().days == "Every day");
+
+        let ringing = controller.poll_alarms(0, 7, 30);
+        assert_eq!(ringing, vec!["Wake up · 07:30".to_string()]);
+        assert!(
+            controller.ui().get_alarm_banner().to_string().contains("Wake up"),
+            "the banner shows the ringing alarm"
+        );
+        assert!(
+            controller.poll_alarms(0, 7, 30).is_empty(),
+            "an alarm rings once per minute"
+        );
+        click(controller.ui(), "Dismiss").await;
+        assert!(controller.ui().get_alarm_banner().is_empty());
+
+        click(controller.ui(), "Remove alarm Wake up").await;
+        assert!(controller.alarms().is_empty());
 
         let _ = std::fs::remove_dir_all(
             std::path::Path::new(&store_path)

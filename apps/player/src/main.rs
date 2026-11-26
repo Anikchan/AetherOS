@@ -59,7 +59,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let playlist = demo_playlist(7);
             println!("backend: {backend}");
             println!("discoverer: {discoverer}");
-            println!("restricted-codecs: H.264, H.265/HEVC, AAC (optional bundle, P0-T03)");
+            println!(
+                "restricted-codecs: {} (optional bundle, P0-T03)",
+                aether_media::RESTRICTED_CODECS.join(", ")
+            );
             println!("engine-name: {}", MockEngine::new().name());
             println!("tracks: {}", playlist.len());
             println!("total: {}", playlist.total_label());

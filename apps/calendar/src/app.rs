@@ -12,32 +12,47 @@ use chrono::Local;
 use slint::{ModelRc, VecModel};
 
 use crate::calendar::{
-    month_grid, parse_time, Date, Event, EventColor, EventStore, MonthYear,
+    month_grid, parse_time, week_grid, week_label, Date, Event, EventColor, EventStore,
+    MonthYear, WEEKDAY_NAMES, WeekGrid,
 };
-use crate::clock::{self, Stopwatch, Timer};
-use crate::{CalendarApp, DayCellView, EventView};
+use crate::clock::{self, Alarm, AlarmStore, Stopwatch, Timer, Zone, ZONES};
+use crate::{AlarmView, CalendarApp, DayCellView, EventView, WeekDayView};
 
 pub struct CalendarController {
     ui: CalendarApp,
     store: RefCell<EventStore>,
+    alarms: RefCell<AlarmStore>,
     view: RefCell<MonthYear>,
     selected: RefCell<Date>,
     use_24h: RefCell<bool>,
     stopwatch: RefCell<Stopwatch>,
     timer: RefCell<Timer>,
+    /// Index into [`ZONES`] for the second clock.
+    zone: RefCell<usize>,
+    /// Minute that already fired, so one alarm does not ring repeatedly.
+    fired_alarms: RefCell<Option<(u32, u32)>>,
+    alarm_banner: RefCell<String>,
 }
 
 impl CalendarController {
     pub fn new(ui: CalendarApp, store: EventStore) -> Rc<CalendarController> {
         let today = Date::today();
+        // Alarms live beside the events file, so a controller built against a
+        // temporary store never touches the user's config directory.
+        let mut alarms = AlarmStore::new(store.path().with_file_name("alarms.json"));
+        alarms.load_or_default();
         let controller = Rc::new(CalendarController {
             ui,
             store: RefCell::new(store),
+            alarms: RefCell::new(alarms),
             view: RefCell::new(MonthYear::from_date(today)),
             selected: RefCell::new(today),
             use_24h: RefCell::new(true),
             stopwatch: RefCell::new(Stopwatch::new()),
             timer: RefCell::new(Timer::with_seconds(5 * 60)),
+            zone: RefCell::new(0),
+            fired_alarms: RefCell::new(None),
+            alarm_banner: RefCell::new(String::new()),
         });
         controller.wire();
         controller.sync();
@@ -60,8 +75,28 @@ impl CalendarController {
         self.store.borrow()
     }
 
+    /// Alarms (loaded from `alarms.json` beside the events file).
+    pub fn alarms(&self) -> Ref<'_, AlarmStore> {
+        self.alarms.borrow()
+    }
+
     pub fn view(&self) -> MonthYear {
         *self.view.borrow()
+    }
+
+    /// The seven-day week shown by the Week tab (Monday first).
+    pub fn week(&self) -> WeekGrid {
+        week_grid(self.selected())
+    }
+
+    /// Zone of the second clock.
+    pub fn zone(&self) -> Zone {
+        ZONES[*self.zone.borrow()]
+    }
+
+    /// Text of the ringing-alarm banner (empty when no alarm rang).
+    pub fn alarm_banner(&self) -> String {
+        self.alarm_banner.borrow().clone()
     }
 
     pub fn selected(&self) -> Date {
@@ -73,11 +108,39 @@ impl CalendarController {
         self.store.borrow().on_day(day).len()
     }
 
-    /// Advance the clock tab state machines (called by the UI loop and tests).
+    /// Advance the clock tab state machines (called by the UI loop and tests)
+    /// and ring any alarm that becomes due.
     pub fn tick(&self, delta: Duration) {
         self.stopwatch.borrow_mut().tick(delta);
         self.timer.borrow_mut().tick(delta);
+        let (hour, minute, _) = crate::calendar::now_parts();
+        self.poll_alarms(Date::today().weekday_index(), hour, minute);
         self.sync_clock();
+    }
+
+    /// Ring the enabled alarms that match `hour:minute`, once per minute.
+    ///
+    /// Returns the labels that started ringing on this call (empty when none),
+    /// so both the UI loop and the tests can assert the alarm contract without
+    /// waiting for a wall-clock minute.
+    pub fn poll_alarms(&self, weekday: usize, hour: u32, minute: u32) -> Vec<String> {
+        if *self.fired_alarms.borrow() == Some((hour, minute)) {
+            return Vec::new();
+        }
+        let labels: Vec<String> = self
+            .alarms
+            .borrow()
+            .due(weekday, hour, minute)
+            .iter()
+            .map(|alarm| format!("{} · {}", alarm.label, alarm.time_label()))
+            .collect();
+        if labels.is_empty() {
+            return Vec::new();
+        }
+        *self.fired_alarms.borrow_mut() = Some((hour, minute));
+        *self.alarm_banner.borrow_mut() = format!("Alarm: {}", labels.join(", "));
+        self.sync_clock();
+        labels
     }
 
     /// A few events around today so the month grid, dots and day panel show
@@ -153,6 +216,39 @@ impl CalendarController {
         self.ui.set_days(ModelRc::new(VecModel::from(days)));
         self.ui.set_events(ModelRc::new(VecModel::from(events)));
 
+        // Week tab: the Monday-first week of the selected day, with the day's
+        // event titles listed per column.
+        let week = week_grid(selected);
+        let week_days: Vec<WeekDayView> = week
+            .cells
+            .iter()
+            .map(|cell| {
+                let titles: Vec<slint::SharedString> = self
+                    .store
+                    .borrow()
+                    .on_day(cell.date)
+                    .iter()
+                    .take(3)
+                    .map(|event| slint::SharedString::from(&event.title))
+                    .collect();
+                WeekDayView {
+                    weekday: WEEKDAY_NAMES[cell.date.weekday_index()][..3]
+                        .to_uppercase()
+                        .into(),
+                    date: cell.date.short_label().into(),
+                    day: cell.date.day as i32,
+                    today: cell.date == today,
+                    selected: cell.date == selected,
+                    iso: cell.date.iso().into(),
+                    events: ModelRc::new(VecModel::from(titles)),
+                }
+            })
+            .collect();
+        self.ui
+            .set_week_label(week_label(week.start).into());
+        self.ui
+            .set_week_days(ModelRc::new(VecModel::from(week_days)));
+
         self.sync_clock();
     }
 
@@ -186,6 +282,43 @@ impl CalendarController {
             .set_timer_text(clock::format_countdown(timer.remaining()).into());
         self.ui.set_timer_progress(timer.progress());
         self.ui.set_timer_running(timer.is_running());
+        drop(timer);
+
+        // Time zones: the list plus the selected zone's clock.
+        let zone_index = *self.zone.borrow();
+        let zone = ZONES[zone_index];
+        let (zone_hour, zone_minute, zone_second) =
+            clock::offset_clock(hour, minute, second, zone.offset_minutes);
+        let zone_names: Vec<slint::SharedString> =
+            ZONES.iter().map(|zone| zone.name.into()).collect();
+        self.ui.set_zones(ModelRc::new(VecModel::from(zone_names)));
+        self.ui.set_zone(zone_index as i32);
+        let zone_label = if zone.name == zone.offset_label() {
+            zone.name.to_string()
+        } else {
+            format!("{} · {}", zone.name, zone.offset_label())
+        };
+        self.ui.set_zone_label(zone_label.into());
+        self.ui
+            .set_zone_time(clock::digital(zone_hour, zone_minute, zone_second, use_24h).into());
+
+        // Alarms and the ringing banner.
+        let alarm_rows: Vec<AlarmView> = self
+            .alarms
+            .borrow()
+            .alarms()
+            .iter()
+            .map(|alarm| AlarmView {
+                id: alarm.id.clone().into(),
+                label: alarm.label.clone().into(),
+                time: alarm.time_label().into(),
+                days: alarm.day_label().into(),
+                enabled: alarm.enabled,
+            })
+            .collect();
+        self.ui.set_alarms(ModelRc::new(VecModel::from(alarm_rows)));
+        self.ui
+            .set_alarm_banner(self.alarm_banner.borrow().clone().into());
     }
 
     // ------------------------------------------------------------ actions ---
@@ -273,6 +406,68 @@ impl CalendarController {
         self.sync();
     }
 
+    fn shift_week(&self, days: i64) {
+        let next = self.selected.borrow().add_days(days);
+        *self.selected.borrow_mut() = next;
+        *self.view.borrow_mut() = MonthYear::from_date(next);
+        self.sync();
+    }
+
+    fn add_alarm(&self) {
+        let label = self.ui.get_new_alarm_label().to_string();
+        let Some(minutes) = parse_time(&self.ui.get_new_alarm_time().to_string()) else {
+            self.ui
+                .set_form_error("Alarm time must look like 07:30 (24-hour).".into());
+            return;
+        };
+        let label = if label.trim().is_empty() {
+            "Alarm".to_string()
+        } else {
+            label.trim().to_string()
+        };
+        let mut alarms = self.alarms.borrow_mut();
+        let alarm = Alarm::new(alarms.next_id(), label, minutes / 60, minutes % 60);
+        match alarms.add(alarm) {
+            Ok(()) => {
+                self.ui.set_new_alarm_label("".into());
+                self.ui.set_form_error("".into());
+                if let Err(error) = alarms.save() {
+                    self.ui.set_form_error(error.into());
+                }
+            }
+            Err(error) => self.ui.set_form_error(error.into()),
+        }
+        drop(alarms);
+        self.sync();
+    }
+
+    fn toggle_alarm(&self, id: &str) {
+        let mut alarms = self.alarms.borrow_mut();
+        if alarms.toggle(id).is_some() {
+            if let Err(error) = alarms.save() {
+                self.ui.set_form_error(error.into());
+            }
+        }
+        drop(alarms);
+        self.sync_clock();
+    }
+
+    fn remove_alarm(&self, id: &str) {
+        let mut alarms = self.alarms.borrow_mut();
+        if alarms.remove(id).is_some() {
+            if let Err(error) = alarms.save() {
+                self.ui.set_form_error(error.into());
+            }
+        }
+        drop(alarms);
+        self.sync_clock();
+    }
+
+    fn dismiss_alarm(&self) {
+        self.alarm_banner.borrow_mut().clear();
+        self.sync_clock();
+    }
+
     fn wire(self: &Rc<Self>) {
         let with = |f: fn(&CalendarController)| {
             let weak = Rc::downgrade(self);
@@ -284,6 +479,10 @@ impl CalendarController {
         };
         self.ui.on_prev_month(with(Self::handle_prev_month));
         self.ui.on_next_month(with(Self::handle_next_month));
+        self.ui.on_prev_week(with(Self::handle_prev_week));
+        self.ui.on_next_week(with(Self::handle_next_week));
+        self.ui.on_alarm_add(with(Self::add_alarm));
+        self.ui.on_alarm_dismiss(with(Self::dismiss_alarm));
         self.ui.on_today(with(Self::handle_today));
         self.ui.on_add_event(with(Self::add_event));
         self.ui.on_stopwatch_toggle(with(Self::handle_stopwatch_toggle));
@@ -325,6 +524,40 @@ impl CalendarController {
                 }
             });
         }
+        {
+            let weak = Rc::downgrade(self);
+            self.ui.on_alarm_toggle(move |id| {
+                if let Some(controller) = weak.upgrade() {
+                    controller.toggle_alarm(id.as_str());
+                }
+            });
+        }
+        {
+            let weak = Rc::downgrade(self);
+            self.ui.on_alarm_remove(move |id| {
+                if let Some(controller) = weak.upgrade() {
+                    controller.remove_alarm(id.as_str());
+                }
+            });
+        }
+        {
+            let weak = Rc::downgrade(self);
+            self.ui.on_zone_selected(move |index| {
+                if let Some(controller) = weak.upgrade() {
+                    let index = index.max(0) as usize;
+                    *controller.zone.borrow_mut() = index.min(ZONES.len() - 1);
+                    controller.sync_clock();
+                }
+            });
+        }
+    }
+
+    fn handle_prev_week(&self) {
+        self.shift_week(-7);
+    }
+
+    fn handle_next_week(&self) {
+        self.shift_week(7);
     }
 
     fn handle_prev_month(&self) {

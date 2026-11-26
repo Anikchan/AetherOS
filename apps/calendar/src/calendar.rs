@@ -123,6 +123,11 @@ impl Date {
         (year % 4 == 0 && year % 100 != 0) || year % 400 == 0
     }
 
+    /// Monday of the week that contains this date (v1 week view).
+    pub fn start_of_week(self) -> Date {
+        self.add_days(-(self.weekday_index() as i64))
+    }
+
     pub fn days_in_month(year: i32, month: u32) -> u32 {
         match month {
             1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
@@ -215,6 +220,64 @@ pub fn month_grid(year: i32, month: u32) -> MonthGrid {
         year: normalised.year,
         month: normalised.month,
         cells,
+    }
+}
+
+/// Seven days of the week that contains a date (Monday first).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WeekGrid {
+    /// Monday of the week.
+    pub start: Date,
+    /// Monday ... Sunday.
+    pub cells: Vec<DayCell>,
+}
+
+/// Build the seven-cell week around `date` (v1 week view).
+pub fn week_grid(date: Date) -> WeekGrid {
+    let start = date.start_of_week();
+    let cells = (0..7)
+        .map(|offset| {
+            let day = start.add_days(offset);
+            DayCell {
+                date: day,
+                in_month: day.month == date.month,
+            }
+        })
+        .collect();
+    WeekGrid { start, cells }
+}
+
+/// `23 – 29 November 2026`, `30 November – 6 December 2026`, or
+/// `29 December 2026 – 4 January 2027` when the week crosses a boundary.
+pub fn week_label(start: Date) -> String {
+    let end = start.add_days(6);
+    if start.year == end.year && start.month == end.month {
+        format!(
+            "{} – {} {} {}",
+            start.day,
+            end.day,
+            MONTH_NAMES[(end.month - 1) as usize],
+            end.year
+        )
+    } else if start.year == end.year {
+        format!(
+            "{}. {} – {}. {} {}",
+            start.day,
+            &MONTH_NAMES[(start.month - 1) as usize][..3],
+            end.day,
+            &MONTH_NAMES[(end.month - 1) as usize][..3],
+            end.year
+        )
+    } else {
+        format!(
+            "{}. {} {} – {}. {} {}",
+            start.day,
+            &MONTH_NAMES[(start.month - 1) as usize][..3],
+            start.year,
+            end.day,
+            &MONTH_NAMES[(end.month - 1) as usize][..3],
+            end.year
+        )
     }
 }
 
@@ -410,14 +473,7 @@ impl EventStore {
 
     /// `$XDG_CONFIG_HOME/aether/calendar/events.json` (or `~/.config/...`).
     pub fn at_config_dir() -> EventStore {
-        let root = match std::env::var("XDG_CONFIG_HOME") {
-            Ok(value) if !value.is_empty() => PathBuf::from(value),
-            _ => {
-                let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
-                Path::new(&home).join(".config")
-            }
-        };
-        EventStore::new(root.join("aether").join("calendar").join("events.json"))
+        EventStore::new(config_dir().join("calendar").join("events.json"))
     }
 
     pub fn path(&self) -> &Path {
@@ -550,6 +606,18 @@ pub fn now_parts() -> (u32, u32, u32) {
     (now.hour(), now.minute(), now.second())
 }
 
+/// AetherOS config root: `$XDG_CONFIG_HOME/aether` or `~/.config/aether`.
+pub fn config_dir() -> PathBuf {
+    let root = match std::env::var("XDG_CONFIG_HOME") {
+        Ok(value) if !value.is_empty() => PathBuf::from(value),
+        _ => {
+            let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
+            Path::new(&home).join(".config")
+        }
+    };
+    root.join("aether")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -620,6 +688,51 @@ mod tests {
             assert!(grid.cells.iter().any(|c| c.date == first.add_days(-1)));
             assert!(grid.cells.iter().any(|c| c.date == last.add_days(1)));
         }
+    }
+
+    #[test]
+    fn week_view_starts_on_monday_and_spans_seven_days() {
+        // 26 Nov 2026 is a Thursday, so its week starts on Monday 23 Nov.
+        let date = Date::new(2026, 11, 26).unwrap();
+        let week = week_grid(date);
+        assert_eq!(week.start, Date::new(2026, 11, 23).unwrap());
+        assert_eq!(week.cells.len(), 7);
+        assert_eq!(week.cells[0].date, week.start);
+        assert_eq!(week.cells[0].date.weekday_index(), 0, "Monday first");
+        assert_eq!(week.cells[6].date, Date::new(2026, 11, 29).unwrap());
+        assert_eq!(week.cells[6].date.weekday_name(), "Sunday");
+        assert!(week.cells.iter().all(|cell| cell.in_month));
+        // A date already on Monday keeps the same week.
+        let monday = Date::new(2026, 11, 23).unwrap();
+        assert_eq!(week_grid(monday).start, monday);
+
+        // Cross-month week: 1 Dec 2026 is a Tuesday, so the week starts 30 Nov.
+        let december = week_grid(Date::new(2026, 12, 1).unwrap());
+        assert_eq!(december.start, Date::new(2026, 11, 30).unwrap());
+        assert_eq!(december.cells[0].date.month, 11);
+        assert_eq!(december.cells[6].date, Date::new(2026, 12, 6).unwrap());
+        assert!(!december.cells[0].in_month, "the Monday is in November");
+
+        // Cross-year week: 1 Jan 2027 is a Friday, week starts 28 Dec 2026.
+        let new_year = week_grid(Date::new(2027, 1, 1).unwrap());
+        assert_eq!(new_year.start, Date::new(2026, 12, 28).unwrap());
+        assert_eq!(new_year.cells[6].date, Date::new(2027, 1, 3).unwrap());
+    }
+
+    #[test]
+    fn week_labels_cover_same_month_month_change_and_year_change() {
+        assert_eq!(
+            week_label(Date::new(2026, 11, 23).unwrap()),
+            "23 – 29 November 2026"
+        );
+        assert_eq!(
+            week_label(Date::new(2026, 11, 30).unwrap()),
+            "30. Nov – 6. Dec 2026"
+        );
+        assert_eq!(
+            week_label(Date::new(2026, 12, 28).unwrap()),
+            "28. Dec 2026 – 3. Jan 2027"
+        );
     }
 
     #[test]

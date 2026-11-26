@@ -1,13 +1,19 @@
-//! Clock core (P4-T16, DA-07): digital and analogue time, stopwatch and
-//! countdown timer.
+//! Clock core (P4-T16, DA-07): digital and analogue time, stopwatch,
+//! countdown timer, alarms and fixed-offset time zones.
 //!
 //! The module is pure Rust and time is passed in (or ticked by a delta) so the
-//! symmetry, lap and expiry rules are unit-testable without sleeping. The
+//! symmetry, lap, expiry and alarm rules are unit-testable without sleeping. The
 //! analogue path helpers return SVG command strings for the Slint `Path`
 //! elements, so the face geometry comes from the same angle math the tests
 //! check.
 
+use std::fs;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
+
+use serde::{Deserialize, Serialize};
+
+use crate::calendar::WEEKDAY_NAMES;
 
 /// One line of the analogue dial plus both hands, drawn in a 24x24-ish viewbox
 /// scaled by the caller (`dial_path(size)` uses a `size` x `size` viewbox).
@@ -296,10 +302,322 @@ impl Timer {
     }
 }
 
+/// A fixed-offset time zone for the second clock (DA-07 "time zones").
+///
+/// v1 uses fixed offsets: the host's own local zone is the main clock, and the
+/// extra clock answers "what time is it in …". DST-aware zone data is a later
+/// task (it needs the tz database in the image).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Zone {
+    pub name: &'static str,
+    pub offset_minutes: i32,
+}
+
+impl Zone {
+    /// `UTC+05:30`, `UTC-08:00`, or `UTC` for the zero offset.
+    pub fn offset_label(self) -> String {
+        if self.offset_minutes == 0 {
+            return "UTC".to_string();
+        }
+        let sign = if self.offset_minutes < 0 { '-' } else { '+' };
+        let total = self.offset_minutes.abs();
+        format!("UTC{sign}{:02}:{:02}", total / 60, total % 60)
+    }
+}
+
+/// Zones offered by the second clock (v1 fixture list, alphabetical by region).
+pub const ZONES: [Zone; 8] = [
+    Zone {
+        name: "UTC",
+        offset_minutes: 0,
+    },
+    Zone {
+        name: "London",
+        offset_minutes: 0,
+    },
+    Zone {
+        name: "Berlin",
+        offset_minutes: 60,
+    },
+    Zone {
+        name: "New Delhi",
+        offset_minutes: 330,
+    },
+    Zone {
+        name: "Tokyo",
+        offset_minutes: 540,
+    },
+    Zone {
+        name: "Sydney",
+        offset_minutes: 600,
+    },
+    Zone {
+        name: "New York",
+        offset_minutes: -300,
+    },
+    Zone {
+        name: "Los Angeles",
+        offset_minutes: -480,
+    },
+];
+
+/// Local time shifted into a fixed offset (day wrap included).
+pub fn offset_clock(hour: u32, minute: u32, second: u32, offset_minutes: i32) -> (u32, u32, u32) {
+    let total = hour as i64 * 60 + minute as i64 + offset_minutes as i64;
+    let total = total.rem_euclid(24 * 60);
+    (
+        (total / 60) as u32,
+        (total % 60) as u32,
+        second.min(59),
+    )
+}
+
+/// One alarm (DA-07: "clock, alarm, timer, stopwatch").
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Alarm {
+    pub id: String,
+    pub label: String,
+    pub hour: u32,
+    pub minute: u32,
+    #[serde(default = "alarm_enabled_default")]
+    pub enabled: bool,
+    /// Monday-first repeat days; empty means every day.
+    #[serde(default)]
+    pub days: Vec<usize>,
+}
+
+fn alarm_enabled_default() -> bool {
+    true
+}
+
+impl Alarm {
+    pub fn new(
+        id: impl Into<String>,
+        label: impl Into<String>,
+        hour: u32,
+        minute: u32,
+    ) -> Alarm {
+        Alarm {
+            id: id.into(),
+            label: label.into(),
+            hour,
+            minute,
+            enabled: true,
+            days: Vec::new(),
+        }
+    }
+
+    /// Alarm repeating only on the given Monday-first weekdays.
+    pub fn on_days(mut self, days: impl IntoIterator<Item = usize>) -> Alarm {
+        self.days = days.into_iter().filter(|day| *day < 7).collect();
+        self.days.sort_unstable();
+        self.days.dedup();
+        self
+    }
+
+    /// `07:30`.
+    pub fn time_label(&self) -> String {
+        format!("{:02}:{:02}", self.hour.min(23), self.minute.min(59))
+    }
+
+    /// `Every day`, `Weekdays`, `Weekends`, or `Mon, Wed`.
+    pub fn day_label(&self) -> String {
+        if self.days.is_empty() {
+            return "Every day".to_string();
+        }
+        if self.days == [0, 1, 2, 3, 4] {
+            return "Weekdays".to_string();
+        }
+        if self.days == [5, 6] {
+            return "Weekends".to_string();
+        }
+        self.days
+            .iter()
+            .map(|day| &WEEKDAY_NAMES[*day][..3])
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
+
+    /// Does this alarm repeat on `weekday` (Monday = 0)?
+    pub fn repeats_on(&self, weekday: usize) -> bool {
+        self.days.is_empty() || self.days.contains(&(weekday % 7))
+    }
+
+    /// Does the alarm fire at exactly this minute?
+    pub fn matches(&self, weekday: usize, hour: u32, minute: u32) -> bool {
+        self.enabled
+            && self.hour == hour
+            && self.minute == minute
+            && self.repeats_on(weekday)
+    }
+
+    /// Whole minutes until the next firing, 0 meaning "right now"; `None` when
+    /// the alarm is disabled.
+    pub fn minutes_until(&self, weekday: usize, hour: u32, minute: u32) -> Option<u32> {
+        if !self.enabled {
+            return None;
+        }
+        let now = hour.min(23) * 60 + minute.min(59);
+        let target = self.hour.min(23) * 60 + self.minute.min(59);
+        for day_offset in 0..7u32 {
+            let day = ((weekday % 7) as u32 + day_offset) % 7;
+            if !self.repeats_on(day as usize) {
+                continue;
+            }
+            let delta = day_offset as i64 * 24 * 60 + target as i64 - now as i64;
+            if delta >= 0 {
+                return Some(delta as u32);
+            }
+        }
+        None
+    }
+
+    pub fn validate(&self) -> Result<(), String> {
+        if self.id.trim().is_empty() {
+            return Err("an alarm needs an id".into());
+        }
+        if self.hour > 23 || self.minute > 59 {
+            return Err(format!("\"{}\" has a time outside 00:00–23:59", self.label));
+        }
+        if self.days.iter().any(|day| *day > 6) {
+            return Err(format!("\"{}\" has an invalid repeat day", self.label));
+        }
+        Ok(())
+    }
+}
+
+/// JSON-backed alarm store, the same atomic-write contract as [`crate::EventStore`].
+#[derive(Debug, Clone)]
+pub struct AlarmStore {
+    path: PathBuf,
+    alarms: Vec<Alarm>,
+}
+
+impl AlarmStore {
+    pub fn new(path: impl Into<PathBuf>) -> AlarmStore {
+        AlarmStore {
+            path: path.into(),
+            alarms: Vec::new(),
+        }
+    }
+
+    /// `$XDG_CONFIG_HOME/aether/calendar/alarms.json` (or `~/.config/...`).
+    pub fn at_config_dir() -> AlarmStore {
+        AlarmStore::new(crate::calendar::config_dir().join("calendar").join("alarms.json"))
+    }
+
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    pub fn alarms(&self) -> &[Alarm] {
+        &self.alarms
+    }
+
+    pub fn len(&self) -> usize {
+        self.alarms.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.alarms.is_empty()
+    }
+
+    /// Read the file; a missing file is the first run, a corrupt one is reported
+    /// and the loaded alarms are kept.
+    pub fn load(&mut self) -> Result<(), String> {
+        match fs::read_to_string(&self.path) {
+            Ok(text) => {
+                let parsed: Vec<Alarm> = serde_json::from_str(&text).map_err(|error| {
+                    format!(
+                        "{} is not valid alarm JSON ({error}); keeping the {} alarm(s) already loaded",
+                        self.path.display(),
+                        self.alarms.len()
+                    )
+                })?;
+                self.alarms = parsed
+                    .into_iter()
+                    .filter(|alarm| alarm.validate().is_ok())
+                    .collect();
+                Ok(())
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                self.alarms.clear();
+                Ok(())
+            }
+            Err(error) => Err(format!("cannot read {}: {error}", self.path.display())),
+        }
+    }
+
+    pub fn load_or_default(&mut self) {
+        let _ = self.load();
+    }
+
+    pub fn save(&self) -> Result<(), String> {
+        if let Some(parent) = self.path.parent() {
+            fs::create_dir_all(parent)
+                .map_err(|error| format!("cannot create {}: {error}", parent.display()))?;
+        }
+        let json = serde_json::to_string_pretty(&self.alarms)
+            .map_err(|error| format!("cannot serialise alarms: {error}"))?;
+        let temp = self.path.with_extension("json.tmp");
+        fs::write(&temp, json)
+            .map_err(|error| format!("cannot write {}: {error}", temp.display()))?;
+        fs::rename(&temp, &self.path)
+            .map_err(|error| format!("cannot replace {}: {error}", self.path.display()))
+    }
+
+    pub fn add(&mut self, alarm: Alarm) -> Result<(), String> {
+        alarm.validate()?;
+        if self.alarms.iter().any(|existing| existing.id == alarm.id) {
+            return Err(format!("alarm id \"{}\" already exists", alarm.id));
+        }
+        self.alarms.push(alarm);
+        Ok(())
+    }
+
+    pub fn remove(&mut self, id: &str) -> Option<Alarm> {
+        let index = self.alarms.iter().position(|alarm| alarm.id == id)?;
+        Some(self.alarms.remove(index))
+    }
+
+    pub fn get(&self, id: &str) -> Option<&Alarm> {
+        self.alarms.iter().find(|alarm| alarm.id == id)
+    }
+
+    /// Flip `enabled`; `None` when the id is unknown.
+    pub fn toggle(&mut self, id: &str) -> Option<bool> {
+        let alarm = self.alarms.iter_mut().find(|alarm| alarm.id == id)?;
+        alarm.enabled = !alarm.enabled;
+        Some(alarm.enabled)
+    }
+
+    /// Enabled alarms that match this minute, earliest first.
+    pub fn due(&self, weekday: usize, hour: u32, minute: u32) -> Vec<&Alarm> {
+        let mut due: Vec<&Alarm> = self
+            .alarms
+            .iter()
+            .filter(|alarm| alarm.matches(weekday, hour, minute))
+            .collect();
+        due.sort_by(|a, b| (a.hour, a.minute).cmp(&(b.hour, b.minute)));
+        due
+    }
+
+    /// Next free `alarm-N` id.
+    pub fn next_id(&self) -> String {
+        let mut sequence = self.alarms.len() + 1;
+        loop {
+            let candidate = format!("alarm-{sequence}");
+            if self.get(&candidate).is_none() {
+                return candidate;
+            }
+            sequence += 1;
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-
     #[test]
     fn digital_formatting_covers_12_and_24_hour_modes() {
         assert_eq!(digital(9, 41, 7, true), "09:41:07");
@@ -412,5 +730,133 @@ mod tests {
         assert!(!timer.is_finished());
         assert_eq!(timer.progress(), 0.0);
         assert_eq!(format_countdown(Duration::from_millis(1500)), "00:02", "rounds up");
+    }
+
+    #[test]
+    fn fixed_offset_zones_shift_and_wrap_the_clock() {
+        assert_eq!(offset_clock(9, 41, 7, 0), (9, 41, 7));
+        assert_eq!(offset_clock(9, 41, 7, 330), (15, 11, 7), "New Delhi is UTC+05:30");
+        assert_eq!(offset_clock(23, 30, 0, 60), (0, 30, 0), "wraps past midnight");
+        assert_eq!(offset_clock(1, 15, 0, -480), (17, 15, 0), "wraps back a day");
+        assert_eq!(ZONES.len(), 8);
+        assert_eq!(ZONES[0].offset_label(), "UTC");
+        assert_eq!(ZONES[3].offset_label(), "UTC+05:30");
+        assert_eq!(ZONES[7].offset_label(), "UTC-08:00");
+        // The zoned clock reuses the same digital formatter.
+        let (hour, minute, second) = offset_clock(9, 41, 7, 330);
+        assert_eq!(digital(hour, minute, second, true), "15:11:07");
+    }
+
+    #[test]
+    fn alarms_match_the_minute_and_repeat_days() {
+        let daily = Alarm::new("alarm-1", "Wake up", 7, 30);
+        assert!(daily.matches(0, 7, 30), "Monday 07:30 fires");
+        assert!(daily.matches(6, 7, 30), "Sunday 07:30 fires too");
+        assert!(!daily.matches(0, 7, 31), "a different minute does not");
+        assert_eq!(daily.time_label(), "07:30");
+        assert_eq!(daily.day_label(), "Every day");
+        assert!(daily.validate().is_ok());
+
+        let weekdays = Alarm::new("alarm-2", "Stand-up", 9, 30)
+            .on_days([0, 1, 2, 3, 4]);
+        assert_eq!(weekdays.day_label(), "Weekdays");
+        assert!(weekdays.matches(4, 9, 30));
+        assert!(!weekdays.matches(5, 9, 30), "no weekend firing");
+        let weekend = Alarm::new("alarm-3", "Long run", 8, 0).on_days([5, 6]);
+        assert_eq!(weekend.day_label(), "Weekends");
+        let custom = Alarm::new("alarm-4", "Bin day", 18, 0).on_days([2, 4, 9]);
+        assert_eq!(custom.day_label(), "Wed, Fri", "invalid days are dropped");
+
+        let mut disabled = Alarm::new("alarm-5", "Off", 7, 0);
+        disabled.enabled = false;
+        assert!(!disabled.matches(0, 7, 0));
+        assert_eq!(disabled.minutes_until(0, 6, 0), None);
+    }
+
+    #[test]
+    fn next_occurrence_counts_minutes_across_days() {
+        let alarm = Alarm::new("alarm-1", "Wake up", 7, 30);
+        assert_eq!(alarm.minutes_until(0, 7, 30), Some(0), "right now");
+        assert_eq!(alarm.minutes_until(0, 7, 0), Some(30));
+        assert_eq!(alarm.minutes_until(0, 8, 0), Some(24 * 60 - 30), "tomorrow");
+
+        let weekdays = Alarm::new("alarm-2", "Work", 9, 0).on_days([0, 1, 2, 3, 4]);
+        // Friday 10:00 -> Monday 09:00 is 2 days + 23 hours.
+        assert_eq!(weekdays.minutes_until(4, 10, 0), Some(2 * 24 * 60 + 23 * 60));
+        // Saturday -> Monday morning.
+        assert_eq!(weekdays.minutes_until(5, 10, 0), Some(24 * 60 + 23 * 60));
+        // Invalid times are refused at validation, not by panicking.
+        assert!(Alarm::new("alarm-3", "Bad", 24, 0).validate().is_err());
+        assert!(Alarm::new("alarm-4", "Bad", 7, 60).validate().is_err());
+        assert!(Alarm::new("", "Bad", 7, 0).validate().is_err());
+    }
+
+    fn temp_alarm_store(tag: &str) -> AlarmStore {
+        let base = std::env::temp_dir().join(format!(
+            "aether-alarms-{tag}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        AlarmStore::new(base.join("calendar").join("alarms.json"))
+    }
+
+    #[test]
+    fn alarm_store_persists_toggles_and_reports_due_alarms() {
+        let mut store = temp_alarm_store("crud");
+        assert_eq!(store.load(), Ok(()));
+        assert!(store.is_empty());
+
+        store
+            .add(Alarm::new("alarm-1", "Wake up", 7, 30))
+            .unwrap();
+        store
+            .add(Alarm::new("alarm-2", "Lunch", 12, 0).on_days([0, 1, 2, 3, 4]))
+            .unwrap();
+        assert!(store.add(Alarm::new("alarm-1", "Dup", 8, 0)).is_err());
+        store.save().unwrap();
+
+        let mut reloaded = AlarmStore::new(store.path().to_path_buf());
+        reloaded.load().unwrap();
+        assert_eq!(reloaded.len(), 2);
+        assert_eq!(
+            reloaded.due(0, 7, 30).iter().map(|alarm| alarm.id.as_str()).collect::<Vec<_>>(),
+            vec!["alarm-1"]
+        );
+        assert_eq!(reloaded.due(5, 12, 0).len(), 0, "no weekend lunch");
+        assert_eq!(reloaded.due(0, 7, 29).len(), 0);
+
+        assert_eq!(reloaded.toggle("alarm-1"), Some(false));
+        assert_eq!(reloaded.due(0, 7, 30).len(), 0, "disabled alarms do not fire");
+        assert_eq!(reloaded.toggle("alarm-1"), Some(true));
+        assert_eq!(reloaded.toggle("missing"), None);
+        assert_eq!(reloaded.next_id(), "alarm-3");
+        assert!(reloaded.remove("alarm-2").is_some());
+        assert_eq!(reloaded.len(), 1);
+
+        let _ = fs::remove_dir_all(store.path().parent().unwrap().parent().unwrap());
+    }
+
+    #[test]
+    fn corrupt_alarm_file_is_reported_and_keeps_loaded_alarms() {
+        let store = temp_alarm_store("corrupt");
+        fs::create_dir_all(store.path().parent().unwrap()).unwrap();
+        fs::write(
+            store.path(),
+            "[{\"id\":\"alarm-1\",\"label\":\"Kept\",\"hour\":7,\"minute\":0}]",
+        )
+        .unwrap();
+        let mut store = AlarmStore::new(store.path().to_path_buf());
+        store.load().unwrap();
+        assert_eq!(store.len(), 1);
+        assert!(store.alarms()[0].enabled, "enabled defaults to true");
+
+        fs::write(store.path(), "not json").unwrap();
+        let error = store.load().unwrap_err();
+        assert!(error.contains("not valid alarm JSON"));
+        assert_eq!(store.len(), 1, "the loaded alarm survives");
+        let _ = fs::remove_dir_all(store.path().parent().unwrap().parent().unwrap());
     }
 }

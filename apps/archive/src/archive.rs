@@ -958,6 +958,29 @@ mod tests {
         assert_eq!(format_time(None), "—");
     }
 
+    #[test]
+    fn creating_without_sources_is_refused_and_tree_size_measures_files() {
+        let root = fixture();
+        let archive = root.join("empty.tar.gz");
+        match create_tar_gz(&archive, &[], &mut |_, _| {}) {
+            Err(ArchiveError::InvalidName(name)) => assert_eq!(name, "nothing to archive"),
+            other => panic!("expected an InvalidName error, got {other:?}"),
+        }
+        assert!(!archive.exists(), "no archive is created for an empty request");
+
+        assert_eq!(tree_size(&root.join("src/readme.md")).unwrap(), 10);
+        let data = fs::metadata(root.join("src/nested/data.txt")).unwrap().len();
+        let script = fs::metadata(root.join("src/nested/run.sh")).unwrap().len();
+        let nested = tree_size(&root.join("src/nested")).unwrap();
+        assert_eq!(nested, data + script);
+        assert!(tree_size(&root.join("src")).unwrap() >= nested);
+        assert!(tree_size(&root.join("missing")).is_err());
+        assert_eq!(format_bytes(1023), "1023 B");
+        assert_eq!(format_bytes(1024), "1.0 KB");
+        assert_eq!(format_bytes(1_048_576), "1.0 MB");
+        let _ = fs::remove_dir_all(root);
+    }
+
     // --- fixture builders -------------------------------------------------
 
     fn write_test_zip(path: &Path, files: &[(&str, &[u8])]) {

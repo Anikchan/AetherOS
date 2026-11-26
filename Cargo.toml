@@ -18,6 +18,7 @@ members = [
     "apps/files",
     "apps/images",
     "apps/documents",
+    "apps/media",
     "apps/player",
     "apps/terminal",
     "apps/calendar",

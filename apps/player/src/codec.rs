@@ -1,9 +1,11 @@
 //! Codec policy and media discovery for the Player (P4-T14, DA-AC-06).
 //!
-//! AetherOS ships GStreamer (`gst-plugins-base`/`good`) but **not** H.264/AAC
-//! in the public base image (decision P0-T03): those stay in the optional codec
-//! bundle. The player therefore inspects a file with `gst-discoverer-1.0`
-//! before playing it:
+//! The codec **policy** itself lives in `aether-media` so the Player and the
+//! Browser share one decision table (P4-T18a): the public image ships
+//! GStreamer (`gst-plugins-base`/`good`) but **not** H.264/AAC (P0-T03); those
+//! stay in the optional codec bundle. This module adds the Player side:
+//! `gst-discoverer-1.0` probing and the "needs the optional codec bundle"
+//! message.
 //!
 //! * duration from the discoverer replaces the playlist's estimate,
 //! * a restricted codec is reported as "needs the optional codec bundle"
@@ -19,9 +21,7 @@ use std::process::Command;
 use std::time::Duration;
 
 use crate::engine::{find_program, EngineCommand, EngineError};
-
-/// Codecs deliberately left out of the public image (P0-T03).
-pub const RESTRICTED_CODECS: [&str; 4] = ["H.264", "H.265/HEVC", "AAC", "MPEG-4 AAC"];
+pub use aether_media::{codec_policy, restricted_codec, CodecPolicy, RESTRICTED_CODECS};
 
 /// What discovery found.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -35,64 +35,20 @@ pub struct MediaInfo {
     pub analysis_failed: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum CodecPolicy {
-    /// Everything the file needs is in the base image.
-    Allowed,
-    /// A restricted codec was found; playback is refused with this reason.
-    NeedsCodecBundle { codecs: Vec<String> },
-}
-
 impl MediaInfo {
     /// Which restricted codecs the file carries.
     pub fn restricted_codecs(&self) -> Vec<String> {
-        let mut found: Vec<String> = Vec::new();
-        for caps in self.audio.iter().chain(self.video.iter()) {
-            if let Some(codec) = restricted_codec(caps) {
-                if !found.contains(&codec) {
-                    found.push(codec);
-                }
-            }
-        }
-        found
+        aether_media::restricted_codecs(self.audio.iter().chain(self.video.iter()))
     }
 
     pub fn codec_policy(&self) -> CodecPolicy {
-        let codecs = self.restricted_codecs();
-        if codecs.is_empty() {
-            CodecPolicy::Allowed
-        } else {
-            CodecPolicy::NeedsCodecBundle { codecs }
-        }
+        aether_media::codec_policy(&self.restricted_codecs())
     }
 
     /// Message the player shows for a blocked file.
     pub fn blocked_message(&self) -> Option<String> {
-        match self.codec_policy() {
-            CodecPolicy::Allowed => None,
-            CodecPolicy::NeedsCodecBundle { codecs } => Some(format!(
-                "{} playback needs the optional codec bundle (P0-T03)",
-                codecs.join(", ")
-            )),
-        }
+        aether_media::blocked_message(&self.restricted_codecs())
     }
-}
-
-/// Identify a restricted codec from one GStreamer caps string.
-pub fn restricted_codec(caps: &str) -> Option<String> {
-    let caps = caps.to_ascii_lowercase();
-    if caps.contains("x-h264") || caps.contains("x-h.264") || caps.contains("h264") {
-        return Some("H.264".to_string());
-    }
-    if caps.contains("x-h265") || caps.contains("x-h.265") || caps.contains("hevc") {
-        return Some("H.265/HEVC".to_string());
-    }
-    // AAC: `audio/mpeg, mpegversion=(int)4` or an explicit AAC caps name.
-    let is_mpeg_audio = caps.contains("audio/mpeg") || caps.contains("audio/aac");
-    if is_mpeg_audio && (caps.contains("mpegversion=(int)4") || caps.contains("audio/aac")) {
-        return Some("AAC".to_string());
-    }
-    None
 }
 
 /// Parse `gst-discoverer-1.0` output (plain or `-v`).

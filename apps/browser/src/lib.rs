@@ -1,16 +1,18 @@
-//! AetherOS Browser (P4-T18 core, T18b data features).
+//! AetherOS Browser (P4-T18 core, T18b data features, T18a media).
 //!
 //! The chrome and every data feature are real: tabs with per-tab back/forward,
 //! address-bar parsing (URL or search), bookmarks, history with de-duplication,
 //! downloads, private tabs that never touch the profile, and session restore.
 //! The rendering engine is the seam in [`engine`] — WebKitGTK embedding arrives
 //! with the graphics bring-up while [`engine::ExternalEngine`] can hand URLs to
-//! a renderer today.
+//! a renderer today. Media playback policy (codecs, hardware decode, reduced
+//! quality, DRM) lives in [`media`] on top of the shared `aether-media` crate.
 
 slint::include_modules!();
 
 pub mod core;
 pub mod engine;
+pub mod media;
 pub mod store;
 pub mod tabs;
 pub mod url;
@@ -18,7 +20,8 @@ pub mod url;
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use slint::{ComponentHandle, ModelRc, VecModel};
+use aether_media::MediaCapabilities;
+use slint::{ModelRc, VecModel};
 
 use crate::core::{format_bytes, relative_time, BrowserCore, SidebarSection};
 use crate::engine::{Engine, NullEngine};
@@ -37,6 +40,7 @@ pub fn unix_now() -> u64 {
 pub struct BrowserController {
     core: RefCell<BrowserCore>,
     engine: RefCell<Box<dyn Engine>>,
+    media: RefCell<MediaCapabilities>,
     ui: BrowserApp,
 }
 
@@ -51,11 +55,22 @@ impl BrowserController {
         let controller = Rc::new(BrowserController {
             core: RefCell::new(core),
             engine: RefCell::new(engine),
+            media: RefCell::new(MediaCapabilities::detect()),
             ui,
         });
         controller.wire();
         controller.sync();
         controller
+    }
+
+    /// Media capabilities this window uses (detected in [`Self::new`]).
+    pub fn media_capabilities(&self) -> MediaCapabilities {
+        *self.media.borrow()
+    }
+
+    /// Replace the detected capabilities (tests, acceptance harness).
+    pub fn set_media_capabilities(&self, capabilities: MediaCapabilities) {
+        *self.media.borrow_mut() = capabilities;
     }
 
     /// Demo profile for screenshots (no user data touched).
@@ -279,8 +294,17 @@ impl BrowserController {
 
     fn load(&self, url: &str) {
         let result = self.engine.borrow_mut().load(url);
-        if let Err(error) = result {
-            self.core.borrow_mut().status = error.to_string();
+        match result {
+            Err(error) => self.core.borrow_mut().status = error.to_string(),
+            Ok(()) => {
+                // Media URLs report the codec/decode policy in the status bar
+                // (P4-T18a): "playing VP9 720p — software decode" or the
+                // codec-bundle hint, instead of a silent blank page.
+                let capabilities = *self.media.borrow();
+                if let Some(note) = media::status_line(url, &capabilities) {
+                    self.core.borrow_mut().status = note;
+                }
+            }
         }
     }
 

@@ -88,6 +88,31 @@ fn browser_chrome_is_interactive() {
         click(ui, "Zoom 100%").await;
         assert_eq!(ui.get_zoom(), 100);
 
+        // --- P4-T18a: media policy reaches the status bar -------------------
+        use aether_media::{Acceleration, MediaCapabilities};
+        controller.set_media_capabilities(MediaCapabilities::base());
+        controller.navigate("https://aether.example/clip.mp4");
+        assert!(
+            ui.get_status().to_string().contains("codec bundle"),
+            "H.264 mp4 needs the bundle: {}",
+            ui.get_status()
+        );
+
+        controller.set_media_capabilities(MediaCapabilities {
+            acceleration: Acceleration::hardware(),
+            codec_bundle: false,
+            drm: false,
+        });
+        controller.navigate("https://aether.example/clip.webm");
+        let status = ui.get_status().to_string();
+        assert!(status.contains("media: progressive-video"), "{status}");
+        assert!(status.contains("VP9 1080p"), "{status}");
+        assert!(status.contains("hardware decode"), "{status}");
+
+        // A plain page keeps the normal status line.
+        controller.navigate("https://aether.example/docs");
+        assert!(!ui.get_status().to_string().contains("media:"));
+
         let _ = std::fs::remove_dir_all(root);
         slint::quit_event_loop().unwrap();
     })

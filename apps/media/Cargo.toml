@@ -1,0 +1,8 @@
+[package]
+name = "aether-media"
+description = "Shared codec and playback policy for the AetherOS Player and Browser (P4-T14/T18a)."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]

@@ -1,7 +1,8 @@
 //! AetherOS Calendar & Clock default app (P4-T16, DA-07).
 //!
-//! * [`calendar`] — month grids, navigation and the JSON event store.
-//! * [`clock`] — digital/analogue clock maths, stopwatch and countdown timer.
+//! * [`calendar`] — month and week grids, navigation and the JSON event store.
+//! * [`clock`] — digital/analogue clock maths, time zones, alarms, stopwatch
+//!   and countdown timer.
 //! * [`app`] — `CalendarController`, the only place that mutates Slint
 //!   properties.
 
@@ -13,6 +14,7 @@ pub mod clock;
 
 pub use app::CalendarController;
 pub use calendar::{
-    month_grid, Date, Event, EventColor, EventStore, MonthGrid, MonthYear,
+    month_grid, week_grid, week_label, Date, Event, EventColor, EventStore, MonthGrid, MonthYear,
+    WeekGrid,
 };
-pub use clock::{Stopwatch, Timer};
+pub use clock::{Alarm, AlarmStore, Stopwatch, Timer, Zone, ZONES};

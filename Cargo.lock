@@ -25,6 +25,7 @@ dependencies = [
 name = "aether-browser"
 version = "0.1.0"
 dependencies = [
+ "aether-media",
  "aether-ui",
  "i-slint-backend-testing",
  "percent-encoding",
@@ -131,6 +132,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "aether-media"
+version = "0.1.0"
+
+[[package]]
 name = "aether-pkg"
 version = "0.1.0"
 dependencies = [
@@ -147,6 +152,7 @@ dependencies = [
 name = "aether-player"
 version = "0.1.0"
 dependencies = [
+ "aether-media",
  "aether-ui",
  "i-slint-backend-testing",
  "slint",
