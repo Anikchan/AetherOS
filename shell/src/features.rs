@@ -277,4 +277,101 @@ mod tests {
         assert!(usage.contains("40 MB of 256 MB"));
         assert!(usage.contains("30 MB disk"));
     }
+
+    #[test]
+    fn rows_mirror_the_aether_config_catalog_and_manager() {
+        let page = FeaturesPage::load(temp_path("catalog"));
+        let catalog = aether_config::feature_catalog();
+        let rows = page.rows();
+        assert_eq!(rows.len(), catalog.len());
+        for (row, pack) in rows.iter().zip(catalog.iter()) {
+            assert_eq!(row.id, pack.id);
+            assert_eq!(row.name, pack.name);
+            assert_eq!(row.description, pack.description);
+            assert!(row.disk.starts_with(&format!("{} MB", pack.disk_mb)));
+            assert!(row.cpu.starts_with(&format!("{:.1}%", pack.idle_cpu_percent)));
+        }
+        // The page never invents rows: it is a projection of the manager.
+        let manager_rows = page.manager().rows();
+        assert_eq!(manager_rows.len(), rows.len());
+        for (row, managed) in rows.iter().zip(manager_rows.iter()) {
+            assert_eq!(row.id, managed.id);
+            assert_eq!(row.status, managed.status);
+            assert_eq!(row.installed, managed.status != "Not installed");
+        }
+    }
+
+    #[test]
+    fn a_fresh_page_sees_the_persisted_install_state() {
+        let path = temp_path("reload");
+        let mut page = FeaturesPage::load(&path);
+        page.install("D");
+        page.install("E");
+        page.set_enabled("E", false);
+
+        // The next session/page reads the same file the manager wrote.
+        let reloaded = FeaturesPage::load(&path);
+        let rows = reloaded.rows();
+        let d = rows.iter().find(|row| row.id == "D").unwrap();
+        let e = rows.iter().find(|row| row.id == "E").unwrap();
+        assert!(d.installed && d.enabled);
+        assert_eq!(d.status, "Installed");
+        assert!(e.installed && !e.enabled, "a disabled pack stays installed");
+        assert_eq!(e.status, "Disabled");
+        assert!(reloaded.usage_label().contains("2 packs installed"));
+        assert!(reloaded.usage_label().contains("30 MB disk"));
+        assert!(reloaded.message().is_empty(), "a reload has no stale message");
+
+        // Removing one pack is persisted too.
+        let mut reloaded = reloaded;
+        reloaded.remove("D");
+        let again = FeaturesPage::load(&path);
+        assert!(!again.rows().iter().find(|row| row.id == "D").unwrap().installed);
+        assert!(again.rows().iter().find(|row| row.id == "E").unwrap().installed);
+    }
+
+    #[test]
+    fn repeated_actions_report_the_manager_errors() {
+        let path = temp_path("errors");
+        let mut page = FeaturesPage::load(&path);
+        page.install("D");
+        page.install("D");
+        assert!(page.failed());
+        assert!(page.message().contains("already installed"));
+
+        page.set_enabled("A", false);
+        assert!(page.failed());
+        assert!(page.message().contains("not installed"));
+
+        // The file still names exactly one pack: the refused calls wrote
+        // nothing.
+        let saved = std::fs::read_to_string(&path).unwrap();
+        let state: aether_config::FeatureState = toml::from_str(&saved).unwrap();
+        assert_eq!(state.installed.len(), 1, "state: {saved}");
+        assert!(state.installed.contains("D"), "state: {saved}");
+        assert!(state.enabled.contains("D"), "state: {saved}");
+        assert!(!state.installed.contains("A"), "state: {saved}");
+
+        page.set_enabled("D", true);
+        assert!(!page.failed());
+        assert!(page.message().contains("enabled"));
+    }
+
+    #[test]
+    fn removing_the_last_pack_empties_the_persisted_state() {
+        let path = temp_path("remove");
+        let mut page = FeaturesPage::load(&path);
+        page.install("G");
+        assert!(std::fs::read_to_string(&path).unwrap().contains("G"));
+        page.remove("G");
+        let saved = std::fs::read_to_string(&path).unwrap();
+        assert!(!saved.contains("G"), "removal clears the pack state: {saved}");
+        let reloaded = FeaturesPage::load(&path);
+        assert!(reloaded
+            .manager()
+            .state
+            .installed
+            .is_empty());
+        assert!(reloaded.usage_label().contains("0 packs installed"));
+    }
 }

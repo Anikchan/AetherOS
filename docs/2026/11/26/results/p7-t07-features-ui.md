@@ -9,7 +9,8 @@
 
 | Check | Command | Result |
 | --- | --- | --- |
-| Shell tests | `cargo test -p aether-shell` | 79 lib + 3 integration tests pass (includes 5 `features` unit tests and `tests/features.rs`) |
+| Shell tests | `cargo test -p aether-shell` | 91 lib + 8 integration tests pass (includes 9 `features` unit tests and `tests/features.rs`) |
+| Manager tests | `cargo test -p aether-config` | 34 tests pass (install/remove/budget/persistence) |
 | Surface render | `aether-shell --render` | `shell-features.png` (1440×900) shows packs A–G with cost, status, Install, budget bar and the budget-refusal note |
 
 ## Evidence
@@ -31,6 +32,12 @@
   (`idle budget would be exceeded …`), failed flag set, pack not installed
   (OPT-AC-04).
 - Unknown pack and remove-before-install errors are surfaced in the page.
+- Verified against the manager (new tests): every page row mirrors
+  `aether_config::feature_catalog()` and `FeatureManager::rows()` (id, name,
+  description, disk, idle CPU, status); a fresh `FeaturesPage::load` of the file
+  sees the installed/disabled state with no stale message; repeated actions
+  report `already installed` / `not installed` and write nothing; removing the
+  last pack leaves the persisted state empty.
 
 ## Not verified (honest status)
 
