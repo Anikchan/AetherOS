@@ -228,9 +228,13 @@ version = "0.1.0"
 dependencies = [
  "aether-lifecycled",
  "aether-powerd",
+ "aether-ui",
+ "i-slint-backend-testing",
  "libc",
  "serde",
  "serde_json",
+ "slint",
+ "slint-build",
  "thiserror 2.0.21",
 ]
 

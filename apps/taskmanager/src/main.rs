@@ -13,12 +13,13 @@
 //!   aether-taskmanager --startup-list | --startup-disable FILE | --startup-enable FILE
 //!   aether-taskmanager --services | --users
 //!   aether-taskmanager --energy-contract
+//!   aether-taskmanager --render DIR
 //!
 //! `--yes` is required for real signals and nice changes; without it actions
 //! run in dry-run mode and print what they would do.
 
 use std::io::Write;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use aether_lifecycled::daemon::MetricsSnapshot;
@@ -28,6 +29,7 @@ use aether_taskmanager::collect::ProcFs;
 use aether_taskmanager::manager::{ActivityManager, EndTaskOutcome};
 use aether_taskmanager::model::ExportFormat;
 use aether_taskmanager::s7;
+use aether_taskmanager::window::{ActivityManagerWindow, RENDER_HEIGHT, RENDER_WIDTH};
 
 #[derive(Default)]
 struct Args {
@@ -54,6 +56,7 @@ struct Args {
     lifecycle_status: Option<PathBuf>,
     battery_status: Option<PathBuf>,
     power_history: Option<PathBuf>,
+    render: Option<PathBuf>,
 }
 
 fn parse_args() -> Args {
@@ -104,8 +107,9 @@ fn parse_args() -> Args {
             "--power-history" => {
                 args.power_history = Some(PathBuf::from(value("--power-history")))
             }
+            "--render" => args.render = Some(PathBuf::from(value("--render"))),
             "-h" | "--help" => {
-                println!("usage: aether-taskmanager [--once|--tui|--spike-s7|--end-task PID|--efficiency PID on|off] [--json] [--limit N] [--dry-run]");
+                println!("usage: aether-taskmanager [--once|--tui|--spike-s7|--end-task PID|--efficiency PID on|off|--render DIR] [--json] [--limit N] [--dry-run]");
                 std::process::exit(0);
             }
             other => {
@@ -133,6 +137,11 @@ fn main() {
     }
     let roots = ProcFs::system();
     let mut manager = ActivityManager::new(roots.clone(), !args.yes);
+
+    if let Some(dir) = &args.render {
+        render_window(dir, &args, &mut manager);
+        return;
+    }
 
     if args.spike_s7 {
         let report = s7::run(args.sys_root.clone().unwrap_or(roots.sys_root.clone()));
@@ -359,4 +368,53 @@ fn truncate(value: &str, max: usize) -> String {
         return value.to_string();
     }
     value.chars().take(max.saturating_sub(1)).collect::<String>() + "…"
+}
+
+/// Draw the Activity Manager window to `<dir>/activity-manager.png` through the
+/// shared headless renderer (P5-T15 evidence).
+///
+/// The rows come from the live sampler where `/proc` exists and from
+/// [`aether_taskmanager::demo_rows`] on the dev host; the Energy column is
+/// always resolved through the contract, so the screenshot proves the binding.
+fn render_window(dir: &Path, args: &Args, manager: &mut ActivityManager) {
+    if let Err(error) = aether_ui::render::init() {
+        eprintln!("cannot initialise the renderer: {error}");
+        std::process::exit(1);
+    }
+    let window = match ActivityManagerWindow::new() {
+        Ok(window) => window,
+        Err(error) => {
+            eprintln!("cannot build the window: {error}");
+            std::process::exit(1);
+        }
+    };
+    let snapshot = manager.refresh(epoch_ms()).ok();
+    let (mut rows, system) = match snapshot {
+        Some(snapshot) => (snapshot.rows, Some(snapshot.system)),
+        None => (aether_taskmanager::demo_rows(), None),
+    };
+    if let Some(path) = &args.power_history {
+        if let Ok(analytics) = BatteryAnalytics::load(path) {
+            manager.apply_energy_impact(&mut rows, &analytics);
+        }
+    }
+    window.bind(&rows, system.as_ref(), "");
+
+    if let Err(error) = std::fs::create_dir_all(dir) {
+        eprintln!("cannot create {}: {error}", dir.display());
+        std::process::exit(1);
+    }
+    let path = dir.join("activity-manager.png");
+    match aether_ui::render::render_png(window.ui(), RENDER_WIDTH, RENDER_HEIGHT, &path) {
+        Ok(frame) => println!(
+            "AETHER_ACTIVITY_MANAGER_RENDERED {} ({}x{})",
+            path.display(),
+            frame.width,
+            frame.height
+        ),
+        Err(error) => {
+            eprintln!("render failed: {error}");
+            std::process::exit(1);
+        }
+    }
 }

@@ -17,6 +17,9 @@
 # `os-build/test/disk-image-test.sh <image> uefi` and can be written to a USB
 # stick with `dd if=<image> of=/dev/sdX bs=4M status=progress`.
 #
+# `--check` verifies host tools and input artifacts without writing anything
+# (usable in CI); `--dry-run` prints the size plan. Both work on macOS.
+#
 # BIOS boot is not part of P8-T01 (the UEFI chain is the shipped live path);
 # `aetheros-bios.img` from `os-build/board` remains the P1 legacy test image.
 
@@ -31,7 +34,7 @@ DRY_RUN=0
 CHECK_ONLY=0
 
 usage() {
-  sed -n '2,24p' "$0" | sed 's/^# \{0,1\}//'
+  sed -n '2,25p' "$0" | sed 's/^# \{0,1\}//'
   exit "${1:-0}"
 }
 
@@ -55,6 +58,25 @@ done
 [ -n "$OUT" ] || OUT="$BINARIES_DIR/aetheros-live.img"
 [ -n "$ROOTFS" ] || ROOTFS="$BINARIES_DIR/rootfs.squashfs"
 
+# Host tools. --check reports them first so a CI job learns about a missing
+# toolchain even before the build artifacts exist; --dry-run only prints the
+# plan, so it works on macOS without Linux tools.
+require_tools() {
+  local tool missing=()
+  for tool in sgdisk mkfs.vfat mcopy mke2fs truncate dd awk; do
+    command -v "$tool" >/dev/null 2>&1 || missing+=("$tool")
+  done
+  if ((${#missing[@]})); then
+    echo "Missing tools: ${missing[*]}" >&2
+    echo "  Debian/Ubuntu: sudo apt-get install gdisk dosfstools mtools e2fsprogs" >&2
+    echo "  Fedora: sudo dnf install gdisk dosfstools mtools e2fsprogs" >&2
+    echo "  (or use --dry-run to print the plan without building)" >&2
+    exit 1
+  fi
+}
+
+[ "$CHECK_ONLY" = "1" ] && require_tools
+
 for artifact in "$BINARIES_DIR/bzImage" "$ROOTFS"; do
   [ -f "$artifact" ] || {
     echo "ERROR: missing $artifact (run the Buildroot build first)" >&2
@@ -66,6 +88,11 @@ ESP_SOURCE="$BINARIES_DIR/efi-part/EFI/BOOT/BOOTX64.EFI"
   echo "ERROR: $ESP_SOURCE is missing; post-image.sh must run before the live image" >&2
   exit 1
 }
+
+if [ "$CHECK_ONLY" = "1" ]; then
+  echo "LIVE_USB_CHECK_OK binaries=$BINARIES_DIR rootfs=$ROOTFS esp=$ESP_SOURCE"
+  exit 0
+fi
 
 # Deterministic partition UUIDs so grub.cfg and the docs never drift.
 ESP_UUID="a0e50001-0000-4000-8000-000000000001"
@@ -100,20 +127,7 @@ if [ "$DRY_RUN" = "1" ]; then
   exit 0
 fi
 
-missing=()
-for tool in sgdisk mkfs.vfat mcopy mke2fs truncate dd awk; do
-  command -v "$tool" >/dev/null 2>&1 || missing+=("$tool")
-done
-if ((${#missing[@]})); then
-  echo "Missing tools: ${missing[*]}" >&2
-  echo "  Debian/Ubuntu: sudo apt-get install gdisk dosfstools mtools e2fsprogs" >&2
-  echo "  Fedora: sudo dnf install gdisk dosfstools mtools e2fsprogs" >&2
-  exit 1
-fi
-if [ "$CHECK_ONLY" = "1" ]; then
-  echo "LIVE_USB_TOOLS_OK binaries=$BINARIES_DIR"
-  exit 0
-fi
+require_tools
 
 WORK=$(mktemp -d "${TMPDIR:-/tmp}/aether-live.XXXXXX")
 trap 'rm -rf "$WORK"' EXIT
@@ -171,6 +185,9 @@ sgdisk --clear \
 dd if="$ESP_IMG" of="$OUT" bs=512 seek="$P1_START" conv=notrunc status=none
 dd if="$ROOTFS" of="$OUT" bs=512 seek="$P2_START" conv=notrunc status=none
 dd if="$PERSIST_IMG" of="$OUT" bs=512 seek="$P3_START" conv=notrunc status=none
+
+# The GPT must still verify after the raw writes (backup header, CRCs).
+sgdisk --verify "$OUT" >/dev/null
 
 echo "LIVE_USB_BUILT output=$OUT bytes=$IMG_BYTES"
 echo "Write it to a USB stick: dd if=$OUT of=/dev/sdX bs=4M status=progress"

@@ -308,4 +308,9 @@ the daemon loop; event-driven `poll()` on the pressure file is still open.
 - `bench-50.sh` emits the G-PM1 report; reference runs pass `REFERENCE_HARDWARE=1
   B2_RESTORE_MS=… B6_SHARE=…`. Without those values the gate stays
   `INCOMPLETE`, matching 04 §10.
+- Reporting is durable per cycle: `soak-72h.sh` keeps every
+  `aether-bench --json` under `p5-t08-soak-cycles/cycle-NNN.json`, merges them
+  into `p5-t08-soak.json`, and records the cycle exit code as the fourth
+  `p5-t08-soak-samples.tsv` column. `gate-report.py` fails G-PM5 on any failed
+  cycle (`No failed soak cycles`), so a soak cannot pass with silent gaps.
 

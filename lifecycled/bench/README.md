@@ -40,6 +40,20 @@ python3 gate-report.py --bench-json p5-t08-bench-50.json --gate all \
 cycle (`p5-t08-soak-samples.tsv`) so G-PM5's "memory returns to baseline" rule
 is measured, not assumed.
 
+## Soak reporting files
+
+| File | Content |
+|---|---|
+| `p5-t08-soak-cycles/cycle-NNN.json` | Raw `aether-bench --json` per cycle (kept as evidence) |
+| `p5-t08-soak.json` | All cycles merged, read by `gate-report.py` |
+| `p5-t08-soak-samples.tsv` | `cycle<TAB>MemAvailable_before_kb<TAB>MemAvailable_after_kb<TAB>exit` |
+| `p5-t08-gate-report.md` / `.json` | D6 verdict for G-PM1/G-PM5 |
+
+A non-zero per-cycle exit is recorded in the TSV and fails the G-PM5 check
+`No failed soak cycles`, so a soak with a crashed or skipped cycle can never be
+reported as a pass. `REFERENCE_HARDWARE=1` adds `--reference-hardware`, which is
+the only way to reach a gate `PASS`.
+
 ## Honesty rules (04 section 10, D6)
 
 - On the macOS dev host the cgroup memory accounting is **modelled** at 20 MB

@@ -62,7 +62,11 @@ def load_bench(path: str) -> dict[str, Any]:
 
 
 def load_soak_samples(path: str) -> list[dict[str, float]]:
-    """TSV: cycle<TAB>mem_available_kb_before<TAB>mem_available_kb_after."""
+    """TSV: cycle<TAB>mem_available_kb_before<TAB>mem_available_kb_after[<TAB>exit].
+
+    `exit` is the per-cycle `aether-bench` status; older files without the fourth
+    column are treated as successful cycles.
+    """
     samples: list[dict[str, float]] = []
     with open(path, "r", encoding="utf-8") as handle:
         for line in handle:
@@ -78,11 +82,18 @@ def load_soak_samples(path: str) -> list[dict[str, float]]:
                         "cycle": float(parts[0]),
                         "before_kb": float(parts[1]),
                         "after_kb": float(parts[2]),
+                        "exit": float(parts[3]) if len(parts) > 3 else 0.0,
                     }
                 )
             except ValueError:
                 continue
     return samples
+
+
+def failed_cycles(samples: list[dict[str, float]]) -> int:
+    """Cycles whose `aether-bench` run exited non-zero."""
+    return sum(1 for sample in samples if sample.get("exit", 0.0) != 0.0)
+
 
 
 def baseline_drift_percent(samples: list[dict[str, float]]) -> float | None:
@@ -178,6 +189,7 @@ def evaluate(
     if gates in ("all", "G-PM5"):
         gate = Gate("G-PM5", "72-hour soak with 50 apps and random focus switching")
         drift = baseline_drift_percent(soak_samples)
+        failures = failed_cycles(soak_samples)
         hours_ok = soak_hours is not None and soak_hours >= GPM5_MIN_HOURS
         gate.checks.append(
             ("No foreground app killed", PASS if summary["all_b3"] else FAIL,
@@ -192,10 +204,14 @@ def evaluate(
              "no soak samples" if drift is None else f"{drift:.1f}% worst MemAvailable drift")
         )
         gate.checks.append(
+            ("No failed soak cycles", PASS if soak_samples and failures == 0 else (FAIL if failures else PENDING),
+             "no soak samples" if not soak_samples else f"{failures} of {len(soak_samples)} cycles exited non-zero")
+        )
+        gate.checks.append(
             ("Soak duration ≥ 72 h", PASS if hours_ok else (INCOMPLETE if soak_hours is not None else PENDING),
              "not measured" if soak_hours is None else f"{soak_hours:.2f} h of {summary['cycles']} cycles")
         )
-        if not summary["all_b3"] or not summary["all_b1"]:
+        if not summary["all_b3"] or not summary["all_b1"] or failures:
             gate.status = FAIL
         elif reference:
             missing = [name for name, status, _ in gate.checks if status == PENDING]
@@ -270,6 +286,8 @@ def self_test() -> int:
     samples = [{"cycle": 1, "before_kb": 1_000_000, "after_kb": 990_000}]
     ref_pass = evaluate(bench, True, 72.0, samples, 400.0, 2.0, "all")
     assert [gate.status for gate in ref_pass] == [PASS, PASS], ref_pass
+    failed_cycle = [{"cycle": 1, "before_kb": 1_000_000, "after_kb": 990_000, "exit": 1.0}]
+    assert evaluate(bench, True, 72.0, failed_cycle, 400.0, 2.0, "G-PM5")[0].status == FAIL
     failed = {
         "apps": 50,
         "cycles": 1,
@@ -279,7 +297,7 @@ def self_test() -> int:
     }
     assert all(gate.status == FAIL for gate in evaluate(failed, False, None, [], None, None, "all"))
     assert evaluate(bench, True, 10.0, samples, 400.0, 2.0, "G-PM5")[0].status == INCOMPLETE
-    print("gate-report self-test: PASS (7 assertions)")
+    print("gate-report self-test: PASS (8 assertions)")
     return 0
 
 

@@ -21,6 +21,20 @@ Inspect the plan anywhere (macOS included) without writing a file:
 os-build/scripts/make-live-usb.sh --binaries <dir> --dry-run
 ```
 
+Verify the host toolchain and the input artifacts without writing anything
+(the CI/checkout-friendly mode):
+
+```bash
+os-build/scripts/make-live-usb.sh --binaries <dir> --check
+# LIVE_USB_CHECK_OK binaries=… rootfs=… esp=…
+```
+
+`--check` reports missing tools (`sgdisk`, `mkfs.vfat`, `mcopy`, `mke2fs`) with
+the distro package names and fails when `bzImage`, `rootfs.squashfs` or
+`efi-part/EFI/BOOT/BOOTX64.EFI` is absent. A full build runs
+`sgdisk --verify` on the finished image, so a corrupt GPT fails the build
+instead of the stick.
+
 ## Layout
 
 | Partition | Label | Filesystem | Size |

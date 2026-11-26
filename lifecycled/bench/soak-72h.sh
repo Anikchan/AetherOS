@@ -9,6 +9,12 @@
 # confirms that no foreground app is killed and that inactive memory returns to
 # the cycle baseline. MemAvailable is sampled before and after every cycle so
 # the gate report can prove the baseline return instead of assuming it.
+#
+# Reporting (P5-T08): every cycle keeps its own `aether-bench --json` file under
+# `$OUT_DIR/p5-t08-soak-cycles/`, the merged file is
+# `$OUT_DIR/p5-t08-soak.json`, and the samples TSV records the cycle exit code
+# so `gate-report.py` can fail G-PM5 when any cycle errored instead of only
+# returning a non-zero exit.
 set -euo pipefail
 
 APPS=${APPS:-50}
@@ -18,9 +24,11 @@ OUT_DIR=${OUT_DIR:-docs/$(date +%Y/%m/%d)/results}
 REPORT="$OUT_DIR/p5-t08-soak.md"
 GATE_REPORT="$OUT_DIR/p5-t08-gate-report.md"
 SAMPLES="$OUT_DIR/p5-t08-soak-samples.tsv"
+CYCLE_JSON_DIR="$OUT_DIR/p5-t08-soak-cycles"
+MERGED_JSON="$OUT_DIR/p5-t08-soak.json"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
-mkdir -p "$OUT_DIR"
+mkdir -p "$OUT_DIR" "$CYCLE_JSON_DIR"
 if [ "${CYCLES:-}" != "" ]; then
   CYCLES=${CYCLES}
 else
@@ -32,8 +40,6 @@ PY
 )
 fi
 
-TMP=$(mktemp -d "${TMPDIR:-/tmp}/aether-soak.XXXXXX")
-trap 'rm -rf "$TMP"' EXIT
 
 mem_available_kb() {
   if [ -r /proc/meminfo ]; then
@@ -45,23 +51,29 @@ mem_available_kb() {
 
 echo "aether soak: apps=$APPS hours=$SOAK_HOURS cycles=$CYCLES cycle_seconds=$CYCLE_SECONDS"
 : > "$SAMPLES"
+rm -f "$CYCLE_JSON_DIR"/cycle-*.json
 START=$(date +%s)
+FAILED_CYCLES=0
 for ((cycle = 1; cycle <= CYCLES; cycle++)); do
   before=$(mem_available_kb)
+  cycle_json=$(printf '%s/cycle-%03d.json' "$CYCLE_JSON_DIR" "$cycle")
   # A failing cycle must not abort the soak: the gate report records the
   # failure and returns a non-zero exit at the end.
   set +e
   aether-bench \
     --apps "$APPS" \
     --cycles 1 \
-    --json "$TMP/cycle-$cycle.json" \
+    --json "$cycle_json" \
     --report "$REPORT"
   cycle_status=$?
   set -e
-  echo "cycle $cycle exit=$cycle_status"
+  if ((cycle_status != 0)); then
+    FAILED_CYCLES=$((FAILED_CYCLES + 1))
+  fi
+  echo "cycle $cycle exit=$cycle_status json=$cycle_json"
   sleep 2
   after=$(mem_available_kb)
-  printf '%s\t%s\t%s\n' "$cycle" "$before" "$after" >> "$SAMPLES"
+  printf '%s\t%s\t%s\t%s\n' "$cycle" "$before" "$after" "$cycle_status" >> "$SAMPLES"
   echo "soak cycle $cycle/$CYCLES complete (MemAvailable ${before} kB -> ${after} kB)"
   if ((cycle < CYCLES)); then
     sleep "$CYCLE_SECONDS"
@@ -75,12 +87,11 @@ PY
 )
 
 # Merge the per-cycle bench JSON files so the gate report sees every cycle.
-python3 - "$TMP" "$OUT_DIR/p5-t08-soak.json" "$APPS" <<'PY'
+python3 - "$CYCLE_JSON_DIR" "$MERGED_JSON" "$APPS" <<'PY'
 import glob, json, os, sys
-tmp, out, apps = sys.argv[1], sys.argv[2], int(sys.argv[3])
+cycle_dir, out, apps = sys.argv[1], sys.argv[2], int(sys.argv[3])
 cycles = []
-for path in sorted(glob.glob(os.path.join(tmp, "cycle-*.json")),
-                   key=lambda p: int(p.rsplit("-", 1)[1].split(".")[0])):
+for path in sorted(glob.glob(os.path.join(cycle_dir, "cycle-*.json"))):
     with open(path, "r", encoding="utf-8") as handle:
         cycles.extend(json.load(handle).get("cycles_detail", []))
 with open(out, "w", encoding="utf-8") as handle:
@@ -88,7 +99,7 @@ with open(out, "w", encoding="utf-8") as handle:
 print(f"merged {len(cycles)} cycles -> {out}")
 PY
 
-GATE_ARGS=(--bench-json "$OUT_DIR/p5-t08-soak.json" --gate all
+GATE_ARGS=(--bench-json "$MERGED_JSON" --gate all
            --host-label "$(uname -s)/$(uname -m)"
            --soak-hours "$ELAPSED_HOURS"
            --soak-samples "$SAMPLES"
@@ -103,7 +114,7 @@ python3 "$SCRIPT_DIR/gate-report.py" "${GATE_ARGS[@]}"
 GATE_STATUS=$?
 set -e
 
-echo "P5T08_SOAK_DONE apps=$APPS cycles=$CYCLES hours=$ELAPSED_HOURS report=$REPORT gate=$GATE_REPORT"
+echo "P5T08_SOAK_DONE apps=$APPS cycles=$CYCLES hours=$ELAPSED_HOURS failed_cycles=$FAILED_CYCLES report=$REPORT gate=$GATE_REPORT"
 # PENDING (0) is a valid model-host result; FAIL (1) and INCOMPLETE (2) surface
 # as a non-zero exit so CI and the release checklist cannot ignore them.
 exit "$GATE_STATUS"

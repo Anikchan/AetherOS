@@ -62,3 +62,10 @@ bundle with `rauc info`.
 
 The RAUC commands are printed with `--dry-run` and executed otherwise, so the
 whole flow is testable without hardware.
+
+`update/tests/rauc_flow.rs` walks the integration: parse `rauc status` →
+`stage_pending` after `rauc install` → boot the pending slot and stay pending →
+`rauc status mark-good` confirms it (the old slot becomes the rollback target)
+or `mark-bad` rolls back and marks the slot bad. It also pins that `system.conf`
+still names both slots and that the rendered bundle manifest has no unfilled
+placeholders.

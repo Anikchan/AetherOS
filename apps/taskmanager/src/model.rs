@@ -102,15 +102,7 @@ impl EnergyImpact {
     /// analytics store. Thresholds are the ones published in the column
     /// contract (`EnergyColumnContract::default`).
     pub fn from_share(share: f64, watt_hours: f64) -> Self {
-        if share >= 0.66 {
-            Self::High
-        } else if share >= 0.33 {
-            Self::Medium
-        } else if watt_hours > 0.0 {
-            Self::Low
-        } else {
-            Self::None
-        }
+        EnergyColumnContract::default().level_for(share, watt_hours)
     }
 
     /// Stable machine-readable binding for the Activity Manager Energy column
@@ -207,6 +199,51 @@ impl Default for EnergyColumnContract {
             ],
             tooltip: "Relative energy use: a share of the top app's measured energy, or a score from CPU, wakeups and GPU use before history exists.".into(),
         }
+    }
+}
+
+impl EnergyColumnContract {
+    /// Level for an app's measured energy. The window, the analytics merge and
+    /// [`EnergyImpact::from_share`] all go through this one function, so the
+    /// published thresholds are literally the ones in use.
+    pub fn level_for(&self, share: f64, watt_hours: f64) -> EnergyImpact {
+        if watt_hours <= 0.0 {
+            return EnergyImpact::None;
+        }
+        self.levels
+            .iter()
+            .find(|level| level.level != EnergyImpact::None && share >= level.min_share)
+            .map(|level| level.level)
+            .unwrap_or(EnergyImpact::Low)
+    }
+
+    /// Spec for a level, if the contract lists it.
+    pub fn level_spec(&self, level: EnergyImpact) -> Option<&EnergyLevelSpec> {
+        self.levels.iter().find(|spec| spec.level == level)
+    }
+
+    /// Label the Energy column shows for a row: the level label, or the
+    /// contract's null label when the app has no measured energy.
+    pub fn label_for(&self, level: EnergyImpact) -> String {
+        if level == EnergyImpact::None {
+            return self.null_label.clone();
+        }
+        match self.level_spec(level) {
+            Some(spec) => spec.label.clone(),
+            None => self.null_label.clone(),
+        }
+    }
+
+    /// Design token name the window uses for a level.
+    pub fn tone_for(&self, level: EnergyImpact) -> String {
+        self.level_spec(level)
+            .map(|spec| spec.tone.clone())
+            .unwrap_or_else(|| "text_muted".into())
+    }
+
+    /// True when rows sort highest energy first (`default_sort = "desc"`).
+    pub fn descending(&self) -> bool {
+        self.default_sort != "asc"
     }
 }
 
@@ -477,6 +514,25 @@ mod tests {
         assert_eq!(contract.sources[0].priority, 1);
         let json = serde_json::to_string(&contract).unwrap();
         assert!(json.contains("\"null_label\":\"Not reported\""));
+    }
+
+    #[test]
+    fn contract_thresholds_drive_the_energy_levels() {
+        let contract = EnergyImpact::contract();
+        assert_eq!(contract.level_for(0.9, 20.0), EnergyImpact::High);
+        assert_eq!(contract.level_for(0.4, 8.0), EnergyImpact::Medium);
+        assert_eq!(contract.level_for(0.1, 0.5), EnergyImpact::Low);
+        assert_eq!(contract.level_for(0.0, 0.0), EnergyImpact::None);
+        assert_eq!(contract.label_for(EnergyImpact::None), "Not reported");
+        assert_eq!(contract.tone_for(EnergyImpact::High), "danger");
+        assert!(contract.descending());
+
+        // Raising the High threshold reclassifies without touching callers.
+        let mut custom = contract.clone();
+        custom.levels[0].min_share = 0.95;
+        custom.levels[0].label = "Very high".into();
+        assert_eq!(custom.level_for(0.9, 20.0), EnergyImpact::Medium);
+        assert_eq!(custom.label_for(EnergyImpact::High), "Very high");
     }
 
     #[test]

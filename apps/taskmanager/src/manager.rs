@@ -274,6 +274,22 @@ impl ActivityManager {
     /// Ranks the top consumers from the F14 analytics store. Apps not in the
     /// store are `None`; the UI shows "Not reported" for them.
     pub fn apply_energy_impact(&self, rows: &mut [ProcessRow], analytics: &BatteryAnalytics) {
+        self.apply_energy_impact_with(
+            rows,
+            analytics,
+            &crate::model::EnergyImpact::contract(),
+        );
+    }
+
+    /// Same as [`Self::apply_energy_impact`] with an explicit energy contract,
+    /// so the Activity Manager window and the classifier share one set of
+    /// thresholds (P5-T15).
+    pub fn apply_energy_impact_with(
+        &self,
+        rows: &mut [ProcessRow],
+        analytics: &BatteryAnalytics,
+        contract: &crate::model::EnergyColumnContract,
+    ) {
         let now = analytics.latest_activity_at().unwrap_or_else(|| {
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -296,7 +312,7 @@ impl ActivityManager {
                 .unwrap_or_else(|| row.name.clone());
             if let Some(wh) = by_app.get(&key) {
                 let share = if max > 0.0 { wh / max } else { 0.0 };
-                row.energy = crate::model::EnergyImpact::from_share(share, *wh);
+                row.energy = contract.level_for(share, *wh);
             }
         }
     }

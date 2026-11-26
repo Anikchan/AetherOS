@@ -168,8 +168,12 @@ impl PlayerController {
         let position = self.transport.borrow().position();
         self.transport.borrow_mut().play();
         let position = self.transport.borrow().position().max(position);
+        // Record the resume position instead of seeking: `Engine::seek` would
+        // relaunch the previous track for one frame before `play` replaces it.
+        let duration = self.transport.borrow().duration();
         let mut engine = self.engine.borrow_mut();
-        let _ = engine.seek(position);
+        engine.set_duration(duration);
+        engine.set_position(position);
         match engine.play(&uri) {
             Ok(()) => *self.status.borrow_mut() = String::new(),
             // The transport still runs so the interface is usable without an
@@ -183,8 +187,10 @@ impl PlayerController {
             let position = self.transport.borrow().position();
             self.transport.borrow_mut().pause();
             let mut engine = self.engine.borrow_mut();
-            let _ = engine.seek(position);
+            // Pause first, then record: a seek before the pause would relaunch
+            // `gst-play-1.0` just to kill it again a line later.
             let _ = engine.pause();
+            engine.set_position(position);
         } else {
             self.play_current();
         }
@@ -199,6 +205,7 @@ impl PlayerController {
             .map(|track| track.duration)
             .unwrap_or(Duration::ZERO);
         self.transport.borrow_mut().load(duration);
+        self.engine.borrow_mut().set_duration(duration);
         if autoplay {
             self.play_current();
         } else {

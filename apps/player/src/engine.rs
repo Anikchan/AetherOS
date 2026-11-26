@@ -26,6 +26,18 @@
 //! running pipeline: those calls are recorded and the transport state in
 //! [`crate::transport`] stays the source of truth. A `playbin` binding replaces
 //! the shell-out when the audio service lands.
+//!
+//! # Edge cases the adapter guarantees
+//!
+//! * [`Engine::set_position`] records the resume position **without** starting
+//!   or restarting a pipeline; [`Engine::seek`] only relaunches while a track is
+//!   actually playing. Pausing therefore never leaves a stray `gst-play-1.0`
+//!   process behind, and changing the queue does not restart the old URI first.
+//! * Positions are clamped to [`Engine::set_duration`] when the duration is
+//!   known, so `--start-position` can never exceed the file.
+//! * `pause` on a stopped engine, `stop` twice and an empty URI are all
+//!   handled: idempotent calls succeed and an empty URI is a [`EngineError`],
+//!   never a panic or an empty pipeline.
 
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
@@ -78,7 +90,16 @@ pub trait Engine {
 
     fn stop(&mut self) -> Result<(), EngineError>;
 
+    /// Real seek: relaunches a running pipeline at `position`; only records it
+    /// while stopped or paused.
     fn seek(&mut self, position: Duration) -> Result<(), EngineError>;
+
+    /// Record where the next [`Engine::play`] must start, without touching a
+    /// running pipeline (`--start-position` for `gst-play-1.0`).
+    fn set_position(&mut self, position: Duration);
+
+    /// Length reported by media discovery; positions are clamped to it.
+    fn set_duration(&mut self, duration: Duration);
 
     /// Last position the engine was told about.
     fn position(&self) -> Duration;
@@ -90,6 +111,7 @@ pub struct GStreamerEngine {
     program: PathBuf,
     child: Option<Child>,
     position: Duration,
+    duration: Option<Duration>,
     /// URI currently loaded into the running (or last) pipeline, so a seek or
     /// pause can relaunch `gst-play-1.0` at a new position.
     current_uri: Option<String>,
@@ -110,12 +132,30 @@ impl GStreamerEngine {
             program,
             child: None,
             position: Duration::ZERO,
+            duration: None,
             current_uri: None,
         })
     }
 
     pub fn program(&self) -> &Path {
         &self.program
+    }
+
+    /// Whether a `gst-play-1.0` pipeline is running for this engine.
+    pub fn is_running(&self) -> bool {
+        self.child.is_some()
+    }
+
+    /// The URI loaded into the running pipeline (diagnostics and tests).
+    pub fn current_uri(&self) -> Option<&str> {
+        self.current_uri.as_deref()
+    }
+
+    fn clamp(&self, position: Duration) -> Duration {
+        match self.duration {
+            Some(duration) => position.min(duration),
+            None => position,
+        }
     }
 
     /// The command used to play a URI: `gst-play-1.0 <uri>`, with
@@ -138,18 +178,10 @@ impl GStreamerEngine {
             let _ = child.wait();
         }
     }
-}
 
-impl Engine for GStreamerEngine {
-    fn name(&self) -> &'static str {
-        "GStreamer"
-    }
-
-    fn play(&mut self, uri: &str) -> Result<(), EngineError> {
+    /// (Re)start `gst-play-1.0` for `uri` at the recorded position.
+    fn spawn_pipeline(&mut self, uri: &str) -> Result<(), EngineError> {
         self.stop_child();
-        // The caller (PlayerController) records the desired start position
-        // through `seek` before calling play, so `play_command` can pass it to
-        // `gst-play-1.0 --start-position`.
         let command = self.play_command(uri);
         let child = Command::new(&command.program)
             .args(&command.args)
@@ -168,12 +200,25 @@ impl Engine for GStreamerEngine {
         self.current_uri = Some(uri.to_string());
         Ok(())
     }
+}
+
+impl Engine for GStreamerEngine {
+    fn name(&self) -> &'static str {
+        "GStreamer"
+    }
+
+    fn play(&mut self, uri: &str) -> Result<(), EngineError> {
+        if uri.trim().is_empty() {
+            return Err(EngineError::Failed("empty media URI".to_string()));
+        }
+        self.spawn_pipeline(uri)
+    }
 
     fn pause(&mut self) -> Result<(), EngineError> {
         // gst-play-1.0 has no control socket; the honest pause stops the
-        // process. The position recorded by the last `seek` (the transport's
-        // position, recorded by PlayerController) is kept so playback resumes
-        // there.
+        // process. The recorded position (`set_position`, or the last `seek`)
+        // is kept so playback resumes there. Pausing an already paused or
+        // stopped engine is a no-op.
         self.stop_child();
         Ok(())
     }
@@ -186,35 +231,24 @@ impl Engine for GStreamerEngine {
     }
 
     fn seek(&mut self, position: Duration) -> Result<(), EngineError> {
-        self.position = position;
+        self.position = self.clamp(position);
         // While playing, relaunch at the new position so the seek is real
         // instead of being recorded and ignored.
         if let Some(uri) = self.current_uri.clone() {
             if self.child.is_some() {
-                self.stop_child();
-                let command = self.play_command(&uri);
-                match Command::new(&command.program)
-                    .args(&command.args)
-                    .stdin(Stdio::null())
-                    .stdout(Stdio::null())
-                    .stderr(Stdio::null())
-                    .spawn()
-                {
-                    Ok(child) => {
-                        self.child = Some(child);
-                        self.current_uri = Some(uri);
-                    }
-                    Err(error) => {
-                        return Err(if error.kind() == std::io::ErrorKind::NotFound {
-                            EngineError::NotAvailable(command.program.display().to_string())
-                        } else {
-                            EngineError::Failed(format!("{}: {error}", command.command_line()))
-                        });
-                    }
-                }
+                return self.spawn_pipeline(&uri);
             }
         }
         Ok(())
+    }
+
+    fn set_position(&mut self, position: Duration) {
+        self.position = self.clamp(position);
+    }
+
+    fn set_duration(&mut self, duration: Duration) {
+        self.duration = Some(duration);
+        self.position = self.clamp(self.position);
     }
 
     fn position(&self) -> Duration {
@@ -233,6 +267,7 @@ impl Drop for GStreamerEngine {
 pub struct MockEngine {
     calls: Vec<String>,
     position: Duration,
+    duration: Option<Duration>,
     available: bool,
 }
 
@@ -241,6 +276,7 @@ impl Default for MockEngine {
         MockEngine {
             calls: Vec::new(),
             position: Duration::ZERO,
+            duration: None,
             available: true,
         }
     }
@@ -278,6 +314,9 @@ impl Engine for MockEngine {
     }
 
     fn play(&mut self, uri: &str) -> Result<(), EngineError> {
+        if uri.trim().is_empty() {
+            return Err(EngineError::Failed("empty media URI".to_string()));
+        }
         self.record(format!("play {uri}"))
     }
 
@@ -286,12 +325,30 @@ impl Engine for MockEngine {
     }
 
     fn stop(&mut self) -> Result<(), EngineError> {
+        self.position = Duration::ZERO;
         self.record("stop".to_string())
     }
 
     fn seek(&mut self, position: Duration) -> Result<(), EngineError> {
-        self.position = position;
-        self.record(format!("seek {}", position.as_secs()))
+        self.position = match self.duration {
+            Some(duration) => position.min(duration),
+            None => position,
+        };
+        let effective = self.position.as_secs();
+        self.record(format!("seek {effective}"))
+    }
+
+    fn set_position(&mut self, position: Duration) {
+        self.position = match self.duration {
+            Some(duration) => position.min(duration),
+            None => position,
+        };
+        let effective = self.position.as_secs();
+        let _ = self.record(format!("position {effective}"));
+    }
+
+    fn set_duration(&mut self, duration: Duration) {
+        self.duration = Some(duration);
     }
 
     fn position(&self) -> Duration {
@@ -403,6 +460,9 @@ mod tests {
         engine.play("file:///a.flac").unwrap();
         engine.pause().unwrap();
         engine.seek(Duration::from_secs(42)).unwrap();
+        assert_eq!(engine.position(), Duration::from_secs(42));
+        engine.set_position(Duration::from_secs(7));
+        assert_eq!(engine.position(), Duration::from_secs(7), "set_position records");
         engine.stop().unwrap();
         assert_eq!(
             engine.calls(),
@@ -410,16 +470,178 @@ mod tests {
                 "play file:///a.flac",
                 "pause",
                 "seek 42",
+                "position 7",
                 "stop"
             ]
         );
-        assert_eq!(engine.position(), Duration::from_secs(42));
+        assert_eq!(
+            engine.position(),
+            Duration::ZERO,
+            "stop rewinds like the GStreamer adapter"
+        );
         assert_eq!(engine.name(), "Mock");
+
+        // Positions are clamped to the reported duration.
+        engine.set_duration(Duration::from_secs(100));
+        engine.seek(Duration::from_secs(500)).unwrap();
+        assert_eq!(engine.position(), Duration::from_secs(100));
+        engine.set_position(Duration::from_secs(500));
+        assert_eq!(engine.position(), Duration::from_secs(100));
 
         // A missing backend reports NotAvailable instead of panicking.
         let mut missing = MockEngine::unavailable();
         let error = missing.play("file:///a.flac").unwrap_err();
         assert!(error.is_not_available());
         assert!(missing.calls().is_empty());
+    }
+
+    #[test]
+    fn empty_uris_are_rejected_without_spawning() {
+        let bin = fake_bin("empty-uri", &["gst-play-1.0"]);
+        let mut engine = GStreamerEngine::detect_in(&bin.display().to_string()).unwrap();
+        for uri in ["", "   "] {
+            let error = engine.play(uri).unwrap_err();
+            assert!(matches!(error, EngineError::Failed(_)));
+            assert!(error.message().contains("empty media URI"));
+        }
+        assert!(!engine.is_running());
+        assert!(engine.current_uri().is_none());
+
+        let mut mock = MockEngine::new();
+        assert!(mock.play("").is_err());
+        assert!(mock.calls().is_empty());
+
+        let _ = std::fs::remove_dir_all(bin);
+    }
+
+    #[test]
+    fn pause_seek_and_resume_never_leave_a_stray_pipeline() {
+        let log = std::env::temp_dir().join(format!(
+            "aether-gst-calls-{}-{}.log",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let bin = logging_bin("edge-cases", &log);
+        let mut engine = GStreamerEngine::detect_in(&bin.display().to_string()).unwrap();
+        let uri = "file:///home/aether/Music/glass.flac";
+        engine.set_duration(Duration::from_secs(200));
+
+        // 1. First play: no `--start-position` at zero.
+        engine.play(uri).unwrap();
+        assert!(engine.is_running());
+        assert_eq!(wait_for_calls(&log, 1), vec![uri.to_string()]);
+
+        // 2. Seeking while playing relaunches exactly once at the new position.
+        engine.seek(Duration::from_secs(42)).unwrap();
+        assert!(engine.is_running(), "a real seek keeps the pipeline alive");
+        assert_eq!(
+            wait_for_calls(&log, 2),
+            vec![uri.to_string(), format!("--start-position=42 {uri}")]
+        );
+
+        // 3. Pausing kills the pipeline, keeps the position and is idempotent.
+        engine.pause().unwrap();
+        assert!(!engine.is_running());
+        assert_eq!(engine.position(), Duration::from_secs(42));
+        engine.pause().unwrap();
+        assert!(!engine.is_running());
+        settle();
+        assert_eq!(invocations(&log).len(), 2, "pause never spawns");
+
+        // 4. Seeking while paused only records; no pipeline is started.
+        engine.seek(Duration::from_secs(90)).unwrap();
+        assert!(!engine.is_running());
+        assert_eq!(engine.position(), Duration::from_secs(90));
+        settle();
+        assert_eq!(invocations(&log).len(), 2, "a paused seek never spawns");
+
+        // 5. Resuming starts once, at the paused position.
+        engine.set_position(engine.position());
+        engine.play(uri).unwrap();
+        assert_eq!(
+            wait_for_calls(&log, 3),
+            vec![
+                uri.to_string(),
+                format!("--start-position=42 {uri}"),
+                format!("--start-position=90 {uri}"),
+            ]
+        );
+
+        // 6. Positions past the end are clamped to the duration.
+        engine.seek(Duration::from_secs(999)).unwrap();
+        assert_eq!(engine.position(), Duration::from_secs(200));
+        assert_eq!(
+            wait_for_calls(&log, 4).last().unwrap(),
+            &format!("--start-position=200 {uri}")
+        );
+
+        // 7. A seek to zero drops the flag again.
+        engine.seek(Duration::ZERO).unwrap();
+        assert_eq!(wait_for_calls(&log, 5).last().unwrap(), uri);
+
+        // 8. Stopping twice is safe and rewinds.
+        engine.stop().unwrap();
+        engine.stop().unwrap();
+        assert!(!engine.is_running());
+        assert_eq!(engine.position(), Duration::ZERO);
+        assert!(engine.current_uri().is_none());
+        settle();
+        assert_eq!(invocations(&log).len(), 5, "stop never spawns");
+
+        let _ = std::fs::remove_dir_all(bin);
+        let _ = std::fs::remove_file(log);
+    }
+
+    /// A `gst-play-1.0` stand-in that appends its argument list to `log`.
+    fn logging_bin(tag: &str, log: &Path) -> PathBuf {
+        let base = fake_bin(tag, &[]);
+        let path = base.join("gst-play-1.0");
+        let script = format!(
+            "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\nsleep 0.2\n",
+            log.display()
+        );
+        std::fs::write(&path, script).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut permissions = std::fs::metadata(&path).unwrap().permissions();
+            permissions.set_mode(0o755);
+            std::fs::set_permissions(&path, permissions).unwrap();
+        }
+        base
+    }
+
+    /// One entry per `gst-play-1.0` invocation, in order.
+    fn invocations(log: &Path) -> Vec<String> {
+        std::fs::read_to_string(log)
+            .unwrap_or_default()
+            .lines()
+            .map(str::to_string)
+            .filter(|line| !line.trim().is_empty())
+            .collect()
+    }
+
+    /// `spawn` returns before the script runs, so wait for the expected count.
+    fn wait_for_calls(log: &Path, expected: usize) -> Vec<String> {
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        loop {
+            let calls = invocations(log);
+            if calls.len() >= expected {
+                return calls;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "expected {expected} gst-play invocation(s), got {calls:?}"
+            );
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+
+    /// Give a wrongly spawned pipeline time to show up in the log.
+    fn settle() {
+        std::thread::sleep(Duration::from_millis(150));
     }
 }

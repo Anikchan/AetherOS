@@ -280,3 +280,9 @@ Manager window binds to (`aether-taskmanager --energy-contract`):
 the UI and the CLI can never disagree. Without a history file every row uses
 the computed score; with it, measured energy wins.
 
+The Activity Manager window is bound to this contract (2026-11-26): labels,
+tones, header, null label and sort order are read from it at runtime, and the
+measurement merge accepts an explicit contract
+(`apply_energy_impact_with`). Headless evidence:
+`aether-taskmanager --render <dir>`; test: `apps/taskmanager/tests/ui.rs`.
+

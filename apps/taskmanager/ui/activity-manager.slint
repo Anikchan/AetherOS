@@ -1,0 +1,331 @@
+// AetherOS Activity Manager (P5-T07, F13) — Processes tab.
+//
+// Presentation only. Every row, label and threshold comes from Rust
+// (`src/window.rs` over the F13 core): the Energy column header, null label,
+// tooltip and level labels are the P5-T15 contract (`EnergyColumnContract`),
+// never hard-coded here, so the window and the analytics agree by construction.
+import {
+    Tokens,
+    Icon,
+    IconKind,
+    Divider,
+    AetherButton,
+    SearchField,
+    SectionLabel,
+    Pill,
+} from "../../../ui/design.slint";
+
+// One process row as the window shows it.
+export struct ProcessRowView {
+    pid: int,
+    name: string,
+    state: string,
+    cpu: string,
+    memory: string,
+    band: string,
+    energy_label: string,
+    // Design token name from the energy contract ("danger", "accent", ...).
+    energy_tone: string,
+    energy_share: float,
+}
+
+export component ActivityManagerApp inherits Window {
+    title: "Activity Manager";
+    width: 1080px;
+    height: 640px;
+    background: Tokens.background;
+
+    // --- energy column contract (P5-T15) -----------------------------------
+    in property <string> energy_header: "Energy";
+    in property <string> energy_null_label: "Not reported";
+    in property <string> energy_tooltip: "";
+    in property <string> energy_sort: "desc";
+
+    // --- model, set by Rust ------------------------------------------------
+    in property <[ProcessRowView]> rows: [];
+    in property <int> process_count: 0;
+    in property <string> cpu_summary: "";
+    in property <string> memory_summary: "";
+    in property <string> status: "Ready";
+    in-out property <string> query: "";
+
+    // --- intents -----------------------------------------------------------
+    callback search_edited(string);
+    callback end_task(int);
+    callback refresh();
+
+    pure function tone-color(tone: string) -> color {
+        if (tone == "danger") { return Tokens.danger; }
+        if (tone == "warning") { return Tokens.warning; }
+        if (tone == "accent") { return Tokens.accent-strong; }
+        if (tone == "success") { return Tokens.success; }
+        return Tokens.text-faint;
+    }
+
+    VerticalLayout {
+        spacing: 0;
+
+        // --- header --------------------------------------------------------
+        Rectangle {
+            height: 56px;
+            background: Tokens.background-alt;
+            HorizontalLayout {
+                padding-left: Tokens.space(4);
+                padding-right: Tokens.space(4);
+                padding-top: Tokens.space(2);
+                padding-bottom: Tokens.space(2);
+                spacing: Tokens.space(2);
+                Icon { kind: IconKind.activity; size: 18px; tint: Tokens.accent-strong; }
+                Text {
+                    text: "Activity Manager";
+                    color: Tokens.text;
+                    font-size: Tokens.font-title;
+                    font-weight: 600;
+                    vertical-alignment: center;
+                }
+                Rectangle { horizontal-stretch: 1; height: 1px; background: transparent; }
+                SearchField {
+                    placeholder: "Search processes";
+                    width: 220px;
+                    vertical-stretch: 0;
+                    edited(text) => { root.search_edited(text); }
+                }
+                AetherButton {
+                    text: "End task";
+                    clicked => {
+                        if (root.rows.length > 0) { root.end_task(root.rows[0].pid); }
+                    }
+                }
+                AetherButton {
+                    text: "Refresh";
+                    clicked => { root.refresh(); }
+                }
+            }
+        }
+        Divider {}
+
+        // --- body ----------------------------------------------------------
+        Rectangle {
+            vertical-stretch: 1;
+            background: Tokens.background;
+            VerticalLayout {
+                spacing: 0;
+
+                Rectangle {
+                    height: 40px;
+                    background: Tokens.background;
+                    HorizontalLayout {
+                        padding-left: Tokens.space(3);
+                        padding-right: Tokens.space(3);
+                        spacing: Tokens.space(3);
+                        SectionLabel { label: "PROCESSES"; vertical-alignment: center; }
+                        Text {
+                            text: root.cpu_summary;
+                            color: Tokens.text-muted;
+                            font-size: Tokens.font-small;
+                            vertical-alignment: center;
+                        }
+                        Text {
+                            text: root.memory_summary;
+                            color: Tokens.text-muted;
+                            font-size: Tokens.font-small;
+                            vertical-alignment: center;
+                        }
+                        Rectangle { horizontal-stretch: 1; height: 1px; background: transparent; }
+                        Text {
+                            text: root.status;
+                            color: Tokens.text-faint;
+                            font-size: Tokens.font-small;
+                            vertical-alignment: center;
+                        }
+                    }
+                }
+                Divider {}
+
+                // Column header: the Energy title and sort direction come from
+                // the contract, not from this file.
+                Rectangle {
+                    height: 28px;
+                    background: Tokens.surface-low;
+                    HorizontalLayout {
+                        padding-left: Tokens.space(3);
+                        padding-right: Tokens.space(3);
+                        spacing: Tokens.space(2);
+                        Text {
+                            text: "Name";
+                            horizontal-stretch: 1;
+                            color: Tokens.text-faint;
+                            font-size: Tokens.font-small;
+                            font-weight: 600;
+                            vertical-alignment: center;
+                        }
+                        Text {
+                            text: "PID";
+                            width: 64px;
+                            color: Tokens.text-faint;
+                            font-size: Tokens.font-small;
+                            font-weight: 600;
+                            vertical-alignment: center;
+                        }
+                        Text {
+                            text: "CPU";
+                            width: 64px;
+                            color: Tokens.text-faint;
+                            font-size: Tokens.font-small;
+                            font-weight: 600;
+                            horizontal-alignment: right;
+                            vertical-alignment: center;
+                        }
+                        Text {
+                            text: "Memory";
+                            width: 84px;
+                            color: Tokens.text-faint;
+                            font-size: Tokens.font-small;
+                            font-weight: 600;
+                            horizontal-alignment: right;
+                            vertical-alignment: center;
+                        }
+                        Text {
+                            text: root.energy_header
+                                + (root.energy_sort == "desc" ? " ↓" : " ↑");
+                            width: 96px;
+                            color: Tokens.text-faint;
+                            font-size: Tokens.font-small;
+                            font-weight: 600;
+                            horizontal-alignment: right;
+                            vertical-alignment: center;
+                            accessible-role: text;
+                            accessible-label: root.energy_header;
+                        }
+                    }
+                }
+                Divider {}
+
+                // Empty state.
+                if root.rows.length == 0 : Rectangle {
+                    vertical-stretch: 1;
+                    background: Tokens.background;
+                    VerticalLayout {
+                        alignment: center;
+                        spacing: Tokens.space(2);
+                        HorizontalLayout {
+                            alignment: center;
+                            Icon { kind: IconKind.activity; size: 28px; tint: Tokens.text-faint; }
+                        }
+                        Text {
+                            text: "No processes reported";
+                            color: Tokens.text-muted;
+                            font-size: Tokens.font-title;
+                            horizontal-alignment: center;
+                        }
+                        Text {
+                            text: "The sampler has not produced a snapshot yet.";
+                            color: Tokens.text-faint;
+                            font-size: Tokens.font-small;
+                            horizontal-alignment: center;
+                        }
+                    }
+                }
+
+                // Rows.
+                if root.rows.length > 0 : Flickable {
+                    vertical-stretch: 1;
+                    content-width: self.width;
+                    content-height: list-content.preferred-height;
+                    list-content := VerticalLayout {
+                        padding-top: Tokens.space(2);
+                        padding-bottom: Tokens.space(2);
+                        padding-left: Tokens.space(2);
+                        padding-right: Tokens.space(2);
+                        spacing: 1px;
+                        alignment: start;
+                        for row in root.rows : Rectangle {
+                            height: 34px;
+                            border-radius: Tokens.radius-button;
+                            background: ta.has-hover ? Tokens.hover : transparent;
+                            accessible-role: list-item;
+                            accessible-label: row.name;
+                            HorizontalLayout {
+                                padding-left: Tokens.space(2);
+                                padding-right: Tokens.space(2);
+                                spacing: Tokens.space(2);
+                                Text {
+                                    text: row.name;
+                                    horizontal-stretch: 1;
+                                    color: Tokens.text;
+                                    font-size: Tokens.font-body;
+                                    vertical-alignment: center;
+                                    overflow: elide;
+                                }
+                                Text {
+                                    text: row.state;
+                                    width: 20px;
+                                    color: Tokens.text-faint;
+                                    font-size: Tokens.font-small;
+                                    font-family: Tokens.font-family-mono;
+                                    vertical-alignment: center;
+                                }
+                                Text {
+                                    text: row.pid;
+                                    width: 64px;
+                                    color: Tokens.text-muted;
+                                    font-size: Tokens.font-small;
+                                    font-family: Tokens.font-family-mono;
+                                    vertical-alignment: center;
+                                }
+                                Text {
+                                    text: row.cpu;
+                                    width: 64px;
+                                    color: Tokens.text-muted;
+                                    font-size: Tokens.font-small;
+                                    horizontal-alignment: right;
+                                    vertical-alignment: center;
+                                }
+                                Text {
+                                    text: row.memory;
+                                    width: 84px;
+                                    color: Tokens.text-muted;
+                                    font-size: Tokens.font-small;
+                                    horizontal-alignment: right;
+                                    vertical-alignment: center;
+                                }
+                                Pill {
+                                    text: row.energy_label;
+                                    tone: root.tone-color(row.energy_tone);
+                                    width: 96px;
+                                    vertical-stretch: 0;
+                                }
+                            }
+                            ta := TouchArea {}
+                        }
+                    }
+                }
+
+                Divider {}
+                Rectangle {
+                    height: 30px;
+                    background: Tokens.surface-low;
+                    HorizontalLayout {
+                        padding-left: Tokens.space(3);
+                        padding-right: Tokens.space(3);
+                        spacing: Tokens.space(3);
+                        Text {
+                            text: root.process_count + " processes";
+                            color: Tokens.text-muted;
+                            font-size: Tokens.font-small;
+                            vertical-alignment: center;
+                            horizontal-stretch: 1;
+                        }
+                        Text {
+                            text: root.energy_tooltip;
+                            color: Tokens.text-faint;
+                            font-size: Tokens.font-small;
+                            vertical-alignment: center;
+                            overflow: elide;
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

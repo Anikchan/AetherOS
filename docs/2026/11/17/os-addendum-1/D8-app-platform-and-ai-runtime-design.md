@@ -177,6 +177,13 @@ Installer flow (`apps/runner/src/windows.rs`):
 4. `uninstall` removes **only** the prefix and its launcher (AP-AC-04); the
    shared engine, other prefixes and the payload are untouched.
 
+Integration coverage (2026-11-26): `apps/runner/tests/windows_flow.rs` packages
+a stub engine, verifies it, installs two Windows apps through the flow, resolves
+the launch plan through `Runner` (packaged `wine-10.0`, recorded program,
+`WINEPREFIX` and sandbox write scope), then uninstalls one app and checks that
+the engine, the payload and the other prefix survive. Tampering with a packaged
+engine file is reported by `verify_all()` before any launch.
+
 
 ## 6. AI Runtime State Machine
 

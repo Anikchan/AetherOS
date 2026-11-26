@@ -1,14 +1,15 @@
 # aether-taskmanager — Activity Manager core (P5-T07, F13)
 
 The Slint window is a thin binding over this crate: every metric, action and
-export used by the UI lives here and is tested headlessly. The window itself
-uses the S3 design system (`ui/`) and is not wired yet — see Status.
+export used by the UI lives here and is tested headlessly. The window
+(`ui/activity-manager.slint`, `src/window.rs`) uses the S3 design system (`ui/`)
+and reads the Energy column from the contract — see Status.
 
 ## Status
 
 | Feature | State |
 |---|---|
-| TM-01 Processes tab (columns, per-column sort) | Core done: name, PID, PPID, state, CPU %, PSS/RSS, disk, GPU (when reported), energy, wakeups, threads, open files, command, lifecycle state/band |
+| TM-01 Processes tab (columns, per-column sort) | Core + window done: name, PID, PPID, state, CPU %, PSS/RSS, disk, GPU (when reported), energy, wakeups, threads, open files, command, lifecycle state/band |
 | TM-02 End task / end process tree | Core done: SIGTERM, `--force` SIGKILL, refuses PID 1 and itself; unsaved-work warning is delivered by the lifecycle SDK's `WillSuspend` before a suspend, and the CLI prints the warning |
 | TM-03 Efficiency mode | Core done: lowers nice and `cpu.weight` of the app scope, restores on disable |
 | TM-04/05/06/07/08 Performance tab | Core done: CPU total/per-core, meminfo, zram, PSI level, disk and network rates, 60 s graphs |
@@ -39,7 +40,18 @@ one place instead of the UI:
 
 Source priority: measured F14 `energy_by_app` first; when no history exists the
 row falls back to `EnergyImpact::classify(cpu, wakeups, gpu)` (F7 PWR-12).
-`apply_energy_impact` and `EnergyImpact::from_share` use the same thresholds.
+`apply_energy_impact`, `EnergyImpact::from_share` and the window all use the
+same thresholds through `EnergyColumnContract::level_for`; labels, tones, sort
+direction and the null label come from `label_for`, `tone_for` and
+`default_sort`.
+
+### Window binding
+
+`ActivityManagerWindow` (`src/window.rs`) owns the Slint component. It sets the
+contract properties, sorts rows by energy (then CPU), applies the search filter
+and maps each row to `ProcessRowView`. A different contract can be supplied with
+`with_contract`/`set_contract`, which is how the binding test proves the UI has
+no hard-coded labels.
 
 
 ## Commands
@@ -56,6 +68,7 @@ aether-taskmanager --startup-list
 aether-taskmanager --startup-disable ~/.config/autostart/mail.desktop
 aether-taskmanager --services
 aether-taskmanager --energy-contract      # JSON binding for the Energy column
+aether-taskmanager --render DIR           # draw the window to DIR/activity-manager.png
 ```
 
 Integration flags: `--lifecycle-status` (lifecycled `--once` JSON) adds app
@@ -81,6 +94,8 @@ opt-in (`ProcessSampler::detailed`), matching the F13 §6 overhead rules.
   sensors.
 - G-TM1 (overhead) and G-TM2 (accuracy vs reference tools) need the reference
   machines; TM-AC-04/05/06 need real hardware.
-- The Slint window, Ctrl+Shift+Esc shortcut, unsaved-work confirmation dialog
-  and the "Not responding" force-quit flow still need the UI binding
-  (S3 design system). The core exposes every command they call.
+- The window covers the Processes tab; the remaining tabs, the Ctrl+Shift+Esc
+  shortcut, the unsaved-work confirmation dialog and the "Not responding"
+  force-quit flow still need their UI. The core exposes every command they call.
+- `tests/ui.rs` (one test, testing backend) pins the contract binding; the
+  screenshot path is `--render`.

@@ -45,6 +45,14 @@ impl Engine for SharedEngine {
         Ok(())
     }
 
+    fn set_position(&mut self, position: Duration) {
+        self.calls
+            .borrow_mut()
+            .push(format!("position {}", position.as_secs()));
+    }
+
+    fn set_duration(&mut self, _duration: Duration) {}
+
     fn position(&self) -> Duration {
         Duration::ZERO
     }
@@ -102,7 +110,7 @@ fn codec_policy_gates_playback_and_uses_discovered_duration() {
         assert_eq!(
             calls.borrow().as_slice(),
             &[
-                "seek 0".to_string(),
+                "position 0".to_string(),
                 "play file:///home/aether/Music/glass-horizon.flac".to_string()
             ]
         );

@@ -121,6 +121,21 @@ labels or thresholds:
 The same thresholds are used by `apply_energy_impact` and
 `EnergyImpact::from_share`, so the CLI, export and window cannot disagree.
 
+The window binding lives in `apps/taskmanager/src/window.rs`
+(`ActivityManagerWindow`, `ui/activity-manager.slint`, 2026-11-26):
+
+- The Slint component takes the header, null label, tooltip and sort direction
+  as properties set from the contract; level labels and tones come from
+  `level_spec`/`label_for`/`tone_for`. Nothing about the column is hard-coded in
+  Slint.
+- `apply_energy_impact_with` takes an explicit contract, so raising a threshold
+  in the contract reclassifies rows in the daemon, the CLI, the export and the
+  window together.
+- `aether-taskmanager --render DIR` draws the window headlessly
+  (`activity-manager.png`) through the shared `aether-ui` renderer. The binding
+  is covered by `apps/taskmanager/tests/ui.rs`, which asserts that a changed
+  contract changes the rendered header, labels and order.
+
 
 ## 6. Storage
 
