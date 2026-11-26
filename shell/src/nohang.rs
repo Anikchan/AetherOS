@@ -316,7 +316,7 @@ impl NoHangDialog {
 // ------------------------------------------------------------- watchdog ---
 
 /// The compositor's shell-commit watchdog, read back from its journal.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct WatchdogReport {
     pub timeouts: u32,
     /// Last reported state (`timeout` or `ok`).
@@ -324,18 +324,6 @@ pub struct WatchdogReport {
     pub recovered: bool,
     pub last_idle_ms: Option<u64>,
     pub timeout_ms: Option<u64>,
-}
-
-impl Default for WatchdogReport {
-    fn default() -> Self {
-        WatchdogReport {
-            timeouts: 0,
-            last_state: None,
-            recovered: false,
-            last_idle_ms: None,
-            timeout_ms: None,
-        }
-    }
 }
 
 impl WatchdogReport {
