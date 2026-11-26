@@ -234,6 +234,7 @@ aether-shell --nohang-check /tmp/compositor.log  # exit 0 only for a hang ≤ 6 
 aether-shell --start-begin [journal]             # count a start (arms safe mode)
 aether-shell --start-confirm                     # the session bound its surfaces
 aether-shell --safe-mode-reset                   # leave safe mode (banner Reset)
+aether-shell --interactive [--journal <log>]     # run the shell host (see §12)
 cargo test -p aether-shell --lib nohang           # 12 unit tests
 cargo test -p aether-shell --test nohang          # 7 command tests
 cargo test -p aether-shell --test nohang_ui       # dialog + banner
@@ -243,5 +244,50 @@ Status: dialog state machine, safe-mode ledger and marker contract verified
 headlessly; on-device steps are in §1c of
 `docs/2026/11/26/results/on-device-acceptance-harness.md`. Evidence:
 `docs/2026/11/27/results/g-nh2-shell-nohang.md`.
+
+## 12. Interactive shell host (`shell/src/runtime.rs`, 2026-11-27)
+
+The state machines above only matter if something runs them. `aether-shell
+--interactive` is that host:
+
+- **Journal in.** `Journal` is a trait: `FileJournal` follows the compositor log
+  by byte offset (complete lines only; a rotated file restarts from zero) and
+  `MemoryJournal` is the test/fixture source. Nothing in the shell speaks a new
+  protocol to the compositor.
+- **Timer out.** Each 250 ms step reads the new journal lines, applies every
+  `AETHER_COMPOSITOR_APP_STATE` decision with `observe_health`, folds
+  `AETHER_COMPOSITOR_SHELL_WATCHDOG` into the ledger, and (once per second) ticks
+  the wait grace with `tick_dialog`, so a **Wait** re-offers on its own.
+- **Surfaces presented.** Every step shows the Slint `ShellRoot`, pumps timers
+  and animations and requests a redraw. `--frames-out <dir>` captures PNG frames
+  as evidence on the software renderer; on an image with a display backend the
+  capture is skipped, not fatal.
+- **Markers published.** Everything the controller logs — dialog raised,
+  Wait/Force Quit, recovery, `AETHER_SHELL_NOHANG_TERMINATE`, safe mode, reset —
+  is printed to the shell's own journal, so the supervisor/compositor consumes
+  the terminate intent from there. `ShellHost::take_terminations` also hands the
+  client ids to an in-process supervisor.
+- **Session ledger handshake.** `start()` counts the launch before any surface
+  exists (`--start-begin`), folding the previous run's watchdog markers first;
+  the first presented frame confirms it (`--start-confirm`). A crash between the
+  two is a failed start, which is exactly what safe mode counts.
+
+```sh
+aether-shell --interactive --journal /var/log/aether-compositor.log   # on the image
+aether-shell --interactive --journal fixture.log --frames 4 \
+    --act force-quit --frames-out /tmp/shots                          # harness form
+cargo test -p aether-shell --test host          # journal → dialog → action → terminate
+cargo test -p aether-shell --test host_ledger   # start/confirm/safe mode through the host
+```
+
+`--act wait|force-quit` presses the dialog button once when a dialog is on
+screen; it calls the same `dialog_action` the Slint callbacks do, so a scripted
+press and a click are indistinguishable in the journal. `--frames 0` (the
+default) runs until the service manager stops the process.
+
+Hardware-gated: the layer-shell `Platform` that maps these surfaces on a real
+output, and the compositor's side of the terminate intent, still need the image;
+the loop itself, the ledger and every marker are covered headlessly. Evidence:
+`docs/2026/11/27/results/g-nh2-shell-host.md`.
 
 

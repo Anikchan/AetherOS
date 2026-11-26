@@ -37,6 +37,7 @@ Preflight (all three must pass before any row is scored):
 say preflight
 pgrep -a aether-compositor
 pgrep -a aether-shell
+pgrep -af 'aether-shell --interactive'    # the running shell is the journal host
 echo "WAYLAND_DISPLAY=$WAYLAND_DISPLAY XDG_RUNTIME_DIR=$XDG_RUNTIME_DIR"
 aether-shell --status | tail -n 18
 journalctl -b -u aether-compositor --no-pager | grep -E 'LAYER_SURFACE|OUTPUT_COUNT'
@@ -329,12 +330,59 @@ cargo test -p aether-shell --test nohang_ui  # dialog + banner through the widge
 
 EXPECT `test result: ok. 12 passed`, `7 passed`, `1 passed`.
 
-> Seams not claimed here: the running shell's journal consumption
-> (`ShellController::observe_health` / `tick_dialog`) is driven by the
-> interactive host that lands with the image; on the development host the same
-> state machine is exercised by the unit and UI tests. Force Quit emits
-> `AETHER_SHELL_NOHANG_TERMINATE` for the host/compositor to enforce (xdg
-> unresponsive error), and the restart itself is the service manager's job.
+#### 1c-0 — The interactive host is running (preflight for 1c-1..1c-3)
+
+The rows above assume `aether-shell` is the interactive host, not the CLI. The
+host reads the compositor journal, so the whole chain can be replayed without a
+pointer by pointing it at a journal and pressing the button with `--act`:
+
+```sh
+say g-nh2-host
+pgrep -a aether-shell
+journalctl -b -u aether-shell --no-pager | grep -E 'HOST_(JOURNAL|READY|DONE)|START:' | tail -n 5
+
+# Replay form (fixture journal, no display interaction, deterministic):
+cp /tmp/compositor.log /tmp/host-fixture.log
+aether-shell --interactive --journal /tmp/host-fixture.log \
+    --frames 3 --step-ms 200 --act force-quit --frames-out /tmp/g-nh2-shots
+echo "host exit=$?"
+```
+
+EXPECT (the journal lines came from the compositor, the markers from the host):
+
+```
+<pid> aether-shell
+AETHER_SHELL_HOST_JOURNAL: path=/var/log/aether-compositor.log step_ms=250 frames=until-stopped
+AETHER_SHELL_START: attempt=1 safe_mode=false previous=clean
+AETHER_SHELL_HOST_READY: frames=1 polls=1
+...
+AETHER_SHELL_NOHANG_DIALOG: client=<n> app=<app> after_ms=<ms>
+AETHER_SHELL_NOHANG_ACTION: client=<n> app=<app> action=force_quit
+AETHER_SHELL_NOHANG_TERMINATE: client=<n>
+AETHER_SHELL_START_CONFIRMED: attempts=0
+AETHER_SHELL_HOST_DONE: frames=3 polls=3 dialogs=<n> actions=1 terminations=1 ready=true
+AETHER_SHELL_HOST_TERMINATIONS_PUBLISHED: count=1
+host exit=0
+```
+
+Pass conditions: the host starts before any surface exists (`AETHER_SHELL_START`),
+confirms on the first presented frame (`AETHER_SHELL_START_CONFIRMED: attempts=0`)
+and publishes the terminate intent for the client it force-quit. The ledger at
+`~/.config/aether/shell/session.json` must read `"attempts":0,"confirmed":true`
+after the run. `--act wait` is the same proof for the Wait re-offer; omit `--act`
+for the click-driven rows 1c-1..1c-3.
+
+If `HOST_DONE … ready=true` is missing, the host never presented a frame — check
+for `AETHER_SHELL_HOST_CAPTURE_SKIPPED` (harmless) versus a `cannot show the
+shell surfaces` error (fatal).
+
+> Seams not claimed here: the layer-shell `Platform` that maps these surfaces on
+> the real output, and the compositor/service-manager consumption of
+> `AETHER_SHELL_NOHANG_TERMINATE`, still need the image. The loop, the dialog
+> decisions, the ledger handshake and every marker are verified headlessly:
+> `cargo test -p aether-shell --test host` (journal line → dialog → action →
+> terminate marker) and `--test host_ledger` (start / confirm / safe mode through
+> the host). Evidence: `docs/2026/11/27/results/g-nh2-shell-host.md`.
 
 ## 2. F1 (Desktop Shell) checklist
 

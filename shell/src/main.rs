@@ -11,6 +11,7 @@
 //! ```text
 //! aether-shell --render docs/2026/11/23/results/screenshots
 //! aether-shell --status
+//! aether-shell --interactive --journal /var/log/aether-compositor.log
 //! aether-shell --host-check /var/log/aether-compositor.log
 //! aether-shell --effects-tier
 //! eval "$(aether-shell --effects-env)"
@@ -25,6 +26,7 @@ use aether_shell::config::SettingsStore;
 use aether_shell::effects::{self, EffectSettings};
 use aether_shell::nohang::{self, StartLedger};
 use aether_shell::render;
+use aether_shell::runtime::{FileJournal, HostConfig, ShellHost, DEFAULT_JOURNAL};
 use aether_shell::services::CommandServices;
 use aether_shell::{Overlay, ShellController, ShellRoot};
 
@@ -35,6 +37,9 @@ fn usage() {
          Usage:\n\
          \x20 aether-shell --render <dir>          render every surface to PNG\n\
          \x20 aether-shell --status                print shell state as JSON-ish text\n\
+         \x20 aether-shell --interactive [--journal <log>] [--frames <n>] [--frames-out <dir>]\n\
+         \x20                            [--act wait|force-quit]\n\
+         \x20                                    run the shell host (journal in, surfaces out)\n\
          \x20 aether-shell --host-check <log|->    verify the layer-shell host contract\n\
          \x20 aether-shell --host-plan             print the layer-surface request plan\n\
          \x20 aether-shell --effects-tier          print the effective glass tier\n\
@@ -46,6 +51,18 @@ fn usage() {
          \x20 aether-shell --safe-mode-reset       leave safe mode\n\
          \x20 aether-shell --help                  this message"
     );
+}
+
+/// Value of `--flag <value>` in the argument list (the last occurrence wins).
+fn flag(args: &[String], name: &str) -> Option<String> {
+    let mut value = None;
+    let mut iter = args.iter();
+    while let Some(arg) = iter.next() {
+        if arg == name {
+            value = iter.next().cloned();
+        }
+    }
+    value
 }
 
 /// Read a log path, or stdin for `-`.
@@ -79,6 +96,79 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 println!("AETHER_SHELL_RENDERED {name} -> {path}");
             }
             println!("AETHER_SHELL_RENDER_DONE");
+        }
+        Some("--interactive") => {
+            // G-NH2 / P4: the real shell host. The compositor journal is the
+            // only input, so the same loop runs on the image and in the harness
+            // (point it at a fixture journal with `--frames`).
+            let journal_path = flag(&args, "--journal")
+                .or_else(|| std::env::var("AETHER_COMPOSITOR_LOG").ok())
+                .unwrap_or_else(|| DEFAULT_JOURNAL.to_string());
+            let frames: u64 = flag(&args, "--frames")
+                .map(|value| value.parse())
+                .transpose()
+                .map_err(|error| format!("--frames needs a count: {error}"))?
+                .unwrap_or(0);
+            let step_ms: u64 = flag(&args, "--step-ms")
+                .map(|value| value.parse())
+                .transpose()
+                .map_err(|error| format!("--step-ms needs milliseconds: {error}"))?
+                .unwrap_or(HostConfig::default().step.as_millis() as u64);
+            let frames_out = flag(&args, "--frames-out").map(PathBuf::from);
+            let act = match flag(&args, "--act").as_deref() {
+                None => None,
+                Some("wait") => Some(aether_shell::DialogAction::Wait),
+                Some("force-quit") | Some("force_quit") => {
+                    Some(aether_shell::DialogAction::ForceQuit)
+                }
+                Some(other) => {
+                    eprintln!("--act needs wait or force-quit, not {other}");
+                    std::process::exit(2);
+                }
+            };
+
+            aether_ui::render::init()?;
+            let ui = ShellRoot::new()?;
+            let controller = ShellController::new(
+                ui,
+                Box::new(CommandServices::new()),
+                SettingsStore::at_default_location(),
+            );
+            // The interactive host launches apps for real; the renderer and
+            // `--status` do not.
+            controller.set_spawn_apps(true);
+            let mut host = ShellHost::new(
+                controller,
+                Box::new(FileJournal::new(&journal_path)),
+                HostConfig {
+                    step: std::time::Duration::from_millis(step_ms.max(1)),
+                    ..HostConfig::default()
+                },
+            );
+            host.set_auto_action(act);
+            println!(
+                "AETHER_SHELL_HOST_JOURNAL: path={journal_path} step_ms={step_ms} frames={}",
+                if frames == 0 {
+                    "until-stopped".to_string()
+                } else {
+                    frames.to_string()
+                }
+            );
+            let run = host.run_for(frames, frames_out.as_deref(), |lines| {
+                for line in lines {
+                    println!("{line}");
+                }
+            })?;
+            println!("{}", run.summary_line());
+            let terminations = host.take_terminations();
+            if !terminations.is_empty() {
+                // The intents were published above; the service manager /
+                // compositor consumes them from the journal.
+                println!(
+                    "AETHER_SHELL_HOST_TERMINATIONS_PUBLISHED: count={}",
+                    terminations.len()
+                );
+            }
         }
         Some("--host-check") => {
             // P3-T02: the compositor log proves every shell surface bound and

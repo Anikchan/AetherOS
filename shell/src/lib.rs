@@ -25,6 +25,9 @@
 //! * [`nohang`] — G-NH2: the "Not responding" dialog (Wait / Force Quit) over
 //!   the compositor's health markers, plus the shell restart ledger and safe
 //!   mode after three failed starts (P3-T08).
+//! * [`runtime`] — the interactive shell host: follows the compositor journal,
+//!   drives the dialog/watchdog state machines on a timer, presents the Slint
+//!   surfaces and owns the start/confirm ledger handshake.
 
 slint::include_modules!();
 
@@ -42,6 +45,7 @@ pub mod greeter_app;
 pub mod model;
 pub mod nohang;
 pub mod render;
+pub mod runtime;
 pub mod search;
 pub mod services;
 
@@ -53,3 +57,4 @@ pub use greetd::GreetdConnection;
 pub use host::{plan as layer_plan, BindingReport};
 pub use model::{Overlay, PowerMode, ShellState};
 pub use nohang::{DialogAction, StartLedger};
+pub use runtime::{FileJournal, HostConfig, HostRun, Journal, MemoryJournal, ShellHost};

@@ -330,34 +330,41 @@ impl WatchdogReport {
     pub fn scan(log: &str) -> WatchdogReport {
         let mut report = WatchdogReport::default();
         for line in log.lines() {
-            let Some(rest) = line.strip_prefix("AETHER_COMPOSITOR_SHELL_WATCHDOG:") else {
-                continue;
-            };
-            let seen = field(rest, "timeouts").and_then(|value| value.parse().ok());
-            match field(rest, "state") {
-                Some("timeout") => {
-                    report.last_state = Some("timeout".to_string());
-                    report.recovered = false;
-                    report.timeouts = seen.unwrap_or(report.timeouts + 1);
-                    if let Some(idle) = field(rest, "idle_ms").and_then(|value| value.parse().ok())
-                    {
-                        report.last_idle_ms = Some(idle);
-                    }
-                }
-                Some("ok") => {
-                    report.last_state = Some("ok".to_string());
-                    report.recovered = true;
-                    if let Some(timeouts) = seen {
-                        report.timeouts = timeouts;
-                    }
-                }
-                _ => continue,
-            }
-            if let Some(timeout) = field(rest, "timeout_ms").and_then(|value| value.parse().ok()) {
-                report.timeout_ms = Some(timeout);
-            }
+            report.observe_line(line);
         }
         report
+    }
+
+    /// Fold one journal line into the report, so the interactive host can follow
+    /// a journal as it grows instead of re-reading it. Returns `true` when the
+    /// line was a shell-watchdog marker.
+    pub fn observe_line(&mut self, line: &str) -> bool {
+        let Some(rest) = line.strip_prefix("AETHER_COMPOSITOR_SHELL_WATCHDOG:") else {
+            return false;
+        };
+        let seen = field(rest, "timeouts").and_then(|value| value.parse().ok());
+        match field(rest, "state") {
+            Some("timeout") => {
+                self.last_state = Some("timeout".to_string());
+                self.recovered = false;
+                self.timeouts = seen.unwrap_or(self.timeouts + 1);
+                if let Some(idle) = field(rest, "idle_ms").and_then(|value| value.parse().ok()) {
+                    self.last_idle_ms = Some(idle);
+                }
+            }
+            Some("ok") => {
+                self.last_state = Some("ok".to_string());
+                self.recovered = true;
+                if let Some(timeouts) = seen {
+                    self.timeouts = timeouts;
+                }
+            }
+            _ => return false,
+        }
+        if let Some(timeout) = field(rest, "timeout_ms").and_then(|value| value.parse().ok()) {
+            self.timeout_ms = Some(timeout);
+        }
+        true
     }
 
     /// The shell stopped committing and has not reported a recovery since: the
@@ -672,28 +679,25 @@ impl NoHangReport {
 /// Parse the compositor's health markers (`PING`/`PONG` and `ping_pending` are
 /// ignored: only a decision matters to the dialog).
 pub fn health_events(log: &str) -> Vec<HangEvent> {
-    let mut events = Vec::new();
-    for line in log.lines() {
-        let Some(rest) = line.strip_prefix("AETHER_COMPOSITOR_APP_STATE:") else {
-            continue;
-        };
-        let Some(client) = field(rest, "client").and_then(|value| value.parse().ok()) else {
-            continue;
-        };
-        match field(rest, "state") {
-            Some("not_responding") => events.push(HangEvent::NotResponding {
-                client,
-                after_ms: field(rest, "after_ms")
-                    .and_then(|value| value.parse().ok())
-                    .unwrap_or(0),
-            }),
-            Some("responsive") if field(rest, "recovered") == Some("true") => {
-                events.push(HangEvent::Recovered { client })
-            }
-            _ => {}
+    log.lines().filter_map(parse_health_line).collect()
+}
+
+/// Parse one `AETHER_COMPOSITOR_APP_STATE` line into a dialog decision.
+pub fn parse_health_line(line: &str) -> Option<HangEvent> {
+    let rest = line.strip_prefix("AETHER_COMPOSITOR_APP_STATE:")?;
+    let client = field(rest, "client").and_then(|value| value.parse().ok())?;
+    match field(rest, "state") {
+        Some("not_responding") => Some(HangEvent::NotResponding {
+            client,
+            after_ms: field(rest, "after_ms")
+                .and_then(|value| value.parse().ok())
+                .unwrap_or(0),
+        }),
+        Some("responsive") if field(rest, "recovered") == Some("true") => {
+            Some(HangEvent::Recovered { client })
         }
+        _ => None,
     }
-    events
 }
 
 #[cfg(test)]

@@ -99,9 +99,11 @@ Covered by the tests:
 
 ## 5. Follow-ups
 
-- The interactive shell host must read `APP_STATE` / `SHELL_WATCHDOG` from the
+- ~~The interactive shell host must read `APP_STATE` / `SHELL_WATCHDOG` from the
   compositor journal (or a future socket) and call `observe_health` / `tick_dialog`
-  on a short timer; today the tests and the CLI drive the same functions.
+  on a short timer; today the tests and the CLI drive the same functions.~~
+  **Done 2026-11-27:** `shell/src/runtime.rs` + `aether-shell --interactive`
+  (`docs/2026/11/27/results/g-nh2-shell-host.md`).
 - Force Quit ends the client either through the compositor's xdg unresponsive
   error or the service manager consuming `AETHER_SHELL_NOHANG_TERMINATE`; the
   shell deliberately does not `kill()` a client itself.

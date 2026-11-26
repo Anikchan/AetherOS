@@ -1102,6 +1102,20 @@ impl ShellController {
         self.startup.borrow()
     }
 
+    /// Fold the compositor's shell-watchdog markers into the ledger (the
+    /// interactive host feeds them as they arrive). Three stalls arm safe mode;
+    /// returns `true` when this call armed it.
+    pub fn observe_watchdog(&self, report: &nohang::WatchdogReport) -> bool {
+        let armed = self.startup.borrow_mut().observe_watchdog(report);
+        if armed {
+            let line = self.startup.borrow().safe_mode_line();
+            self.log.borrow_mut().push(line.trim_end().to_string());
+        }
+        self.persist_startup();
+        self.sync();
+        armed
+    }
+
     /// Count a start attempt; called by the session launcher before the layer
     /// surfaces bind (`aether-shell --start-begin`). Three in a row enter safe
     /// mode.
