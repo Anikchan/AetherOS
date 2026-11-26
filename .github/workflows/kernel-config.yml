@@ -33,8 +33,10 @@ jobs:
         run: |
           cd linux-6.18
           fail=0
-          for opt in PSI CGROUPS CGROUP_FREEZER MEMCG ZRAM SQUASHFS EXT4_FS BTRFS_FS EFI EFI_STUB DRM DRM_I915 DRM_AMDGPU NO_HZ_IDLE SUSPEND VIRTIO ANDROID_BINDER_IPC; do
+          for opt in PSI CGROUPS CGROUP_FREEZER MEMCG ZRAM SQUASHFS EXT4_FS BTRFS_FS EFI EFI_STUB DRM DRM_AMDGPU NO_HZ_IDLE SUSPEND VIRTIO ANDROID_BINDER_IPC; do
             grep -q "^CONFIG_${opt}=y" .config || { echo "MISSING: CONFIG_${opt}"; fail=1; }
           done
+          # DRM_I915 may be built-in (=y) or a module (=m); both are valid.
+          grep -qE "^CONFIG_DRM_I915=(y|m)" .config || { echo "MISSING: CONFIG_DRM_I915"; fail=1; }
           grep -q '^CONFIG_ANDROID_BINDER_DEVICES="binder,hwbinder,vndbinder"' .config || { echo "MISSING: binder devices"; fail=1; }
           exit $fail
