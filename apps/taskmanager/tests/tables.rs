@@ -45,7 +45,7 @@ fn table_tabs_render_their_rows_and_actions() {
     let mut analytics = aether_powerd::analytics::BatteryAnalytics::new(16);
     let now = 5 * 86_400;
     analytics.record_app_energy(now - 60, "org.aether.Browser", 12.0);
-    let view = app_history_view(Some(&analytics), now);
+    let view = app_history_view(Some(&analytics), None, None, now);
     window.bind_tabs(&tabs, Tab::AppHistory);
     window.bind_table(&view);
     assert_eq!(ui.get_active_tab().to_string(), "table");
@@ -53,9 +53,10 @@ fn table_tabs_render_their_rows_and_actions() {
     assert_eq!(ui.get_table_headers().row_count(), view.headers.len());
     assert_eq!(ui.get_table_rows().row_count(), 1);
     let row = ui.get_table_rows().row_data(0).unwrap();
-    assert_eq!(row.cells.row_count(), 5);
+    assert_eq!(row.cells.row_count(), 7);
     assert_eq!(row.cells.row_data(0).unwrap().to_string(), "org.aether.Browser");
-    assert_eq!(row.cells.row_data(3).unwrap().to_string(), "High");
+    assert_eq!(row.cells.row_data(3).unwrap().to_string(), "Not reported");
+    assert_eq!(row.cells.row_data(5).unwrap().to_string(), "High");
     assert_eq!(row.tone.to_string(), "danger");
     assert!(ui.get_table_note().to_string().contains("Pack D"));
 
@@ -76,8 +77,10 @@ fn table_tabs_render_their_rows_and_actions() {
     assert_eq!(ui.get_table_title().to_string(), "STARTUP APPS");
     let row = ui.get_table_rows().row_data(0).unwrap();
     assert_eq!(row.cells.row_data(0).unwrap().to_string(), "Mail");
-    assert_eq!(row.action_label.to_string(), "Disable");
-    assert_eq!(row.action.to_string(), desktop.to_string_lossy());
+    assert_eq!(row.actions.row_count(), 1);
+    let action = row.actions.row_data(0).unwrap();
+    assert_eq!(action.label.to_string(), "Disable");
+    assert_eq!(action.id.to_string(), desktop.to_string_lossy());
 
     // The button wiring maps the action id back to the caller.
     let received: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
@@ -85,7 +88,7 @@ fn table_tabs_render_their_rows_and_actions() {
         let received = received.clone();
         window.on_row_action(move |action| received.lock().unwrap().push(action));
     }
-    ui.invoke_row_action(row.action.clone());
+    ui.invoke_row_action(action.id.clone());
     assert_eq!(*received.lock().unwrap(), vec![desktop.to_string_lossy().to_string()]);
 
     // Render proof: the first row is laid out after show().
@@ -143,13 +146,20 @@ fn table_tabs_render_their_rows_and_actions() {
     assert_eq!(row.cells.row_data(0).unwrap().to_string(), "aether-powerd.service");
     assert_eq!(row.tone.to_string(), "success");
     assert_eq!(ui.get_table_summary().to_string(), "1 active of 1");
+    // TM-17: the row carries the prompted Stop/Restart plans, not a command.
+    assert_eq!(row.actions.row_count(), 2);
+    assert_eq!(
+        row.actions.row_data(0).unwrap().id.to_string(),
+        "service:stop:aether-powerd.service"
+    );
+    assert_eq!(row.actions.row_data(1).unwrap().label.to_string(), "Restart");
 
     // --- empty table keeps its explanatory note ----------------------------
     let empty = services_view(&[]);
     window.bind_table(&empty);
     assert_eq!(ui.get_table_rows().row_count(), 0);
     assert!(ui.get_table_empty_text().to_string().contains("systemctl"));
-    assert!(ui.get_table_note().to_string().contains("Read-only"));
+    assert!(ui.get_table_note().to_string().contains("permission prompt"));
 
     let _ = fs::remove_dir_all(root);
 }

@@ -27,7 +27,7 @@ Contracts first (section 5), then sources, sampling, storage, and overhead rules
 | Disk (process) | `/proc/<pid>/io` | Low | Bytes read and written |
 | Disk health and SMART temperature | Kernel NVMe and SATA interfaces (hwmon) | Low | Read every 60 s |
 | Network (interfaces) | `/proc/net/dev` | Very low | Core |
-| Network (per app) | Kernel socket accounting through an eBPF program attached to app cgroups | Low to medium | Pack D only |
+| Network (per app) | Kernel socket accounting through an eBPF program attached to app cgroups | Low to medium | Pack D only; the loader dumps its map to `/run/aether/pack-d/net-accounting` (see 5.2) |
 | GPU engine use (system) | Driver statistics: `gpu_busy_percent` (AMD); performance counters (Intel) | Low | Where available |
 | GPU per process | DRM usage fields in `/proc/<pid>/fdinfo/<fd>` (engine time and memory keys) | Low to medium | Pack D for detail; basic per-app value in core when cheap |
 | Temperatures | hwmon `temp*_input`; thermal zones in `/sys/class/thermal/` | Very low | Labels from hwmon `temp*_label` |
@@ -136,6 +136,75 @@ The window binding lives in `apps/taskmanager/src/window.rs`
   is covered by `apps/taskmanager/tests/ui.rs`, which asserts that a changed
   contract changes the rendered header, labels and order.
 
+### 5.2 Pack D column contracts (P7-PK-T01, TM-09/TM-12/TM-15; 2026-11-27)
+
+`apps/taskmanager/src/pack_d.rs` owns the Pack D data model and
+`aether-taskmanager --pack-d-contract` publishes it:
+
+| Field | Value |
+| --- | --- |
+| key / pack | `pack-d` / `D. Advanced monitoring` |
+| refresh | 2 s while the Activity Manager is visible, 30 s otherwise |
+| overhead target | ≤ 0.5% of one core (section 3) |
+| history | 8 days of hourly buckets (7-day App history window plus one hour) |
+| network source | kernel socket accounting attached to app cgroups |
+| network snapshot | `/run/aether/pack-d/net-accounting`, header `aether-net-accounting v1`, lines `<app> <rx_bytes> <tx_bytes>` |
+| network null label | `Not reported` |
+| GPU source | `drm-engine-*`, `drm-memory-*`, `drm-pdev` in `/proc/<pid>/fdinfo/<fd>` |
+| GPU engines | `render`, `compute`, `video`, `video-enhance`, `copy`, `gfx` |
+| GPU memory regions | `vram`, `gtt`, `system`, `stolen` |
+
+Rules the implementation enforces:
+
+- **Snapshot parsing is strict.** A missing header, a non-numeric counter, a
+  short line or a duplicate app is an error, not a zero. An absent snapshot
+  means `NotInstalled`; an unreadable or malformed one means `NotLoaded`, and
+  the tab prints the reason.
+- **Rates are deltas.** The first sample only primes the counters, because no
+  interval has been measured. A counter that goes backwards (app restarted)
+  reports no delta for that interval instead of a negative or a spike.
+- **Windowed totals are hourly buckets.** `AppNetworkHistory::totals_for` and
+  `AppCpuTime::total_seconds_for` sum buckets since a timestamp, pruned after
+  eight days. CPU seconds are `cpu_percent / 100 × elapsed` for rows that carry
+  an `aether-app-*` scope; system processes are not Pack D data.
+- **GPU values are deltas too.** Engine busy share is
+  `Δns / Δwall × 100` clamped to 0..100, and a process's row value is its
+  highest engine share. Memory regions are merged across a process's DRM fds by
+  maximum so the same client is not counted twice.
+- **D10 section 7 holds.** No Pack D sampler runs when the pack is not
+  installed; the window shows `Not reported` and the contract's
+  `hardware_gated` list names what still needs hardware.
+
+App history (TM-12) merges three sources per app: measured energy from F14,
+`AppCpuTime` (CPU time column) and `AppNetworkHistory` (network column). Apps
+that only Pack D saw are still listed, with the energy columns showing the
+contract's null label.
+
+### 5.3 Service-action permission contract (TM-17; 2026-11-27)
+
+The Services tab never runs `systemctl` directly. `ServiceActionContract`
+(`apps/taskmanager/src/service_actions.rs`, printed by
+`aether-taskmanager --service-actions`) defines:
+
+| Field | Value |
+| --- | --- |
+| key / header | `service-action` / `Services` |
+| permission | `admin.authorize` |
+| actions | `start`, `stop`, `restart` with label, confirm label, tone and message |
+| cancel label | `Cancel` |
+| protected units | `aether-lifecycled.service` (stopping it suspends or kills every managed app) |
+| command | `systemctl <verb> <unit>` |
+| remembered answers | none — every action prompts again |
+
+Flow: a row action id `service:<action>:<unit>` →
+`ServiceActionPrompt::request` validates the unit (`.service` only, systemd
+characters, protected units refused with the reason), builds a
+`ServiceActionPlan` (command + prompt title/message/detail) and stores it as
+`Pending`. `confirm(executor)` moves the plan to a `ServiceExecutor` exactly
+once; `cancel()`, a second confirm or a stray button press returns
+`NothingPending` and runs nothing. The systemd D-Bus/polkit executor and the
+real start/stop/restart runs are enabled on AetherOS hardware.
+
 
 ## 6. Storage
 
@@ -180,3 +249,8 @@ Rollup: a background job runs once per hour, at low priority, and converts old m
 | Store crash | Integration | At most one minute lost after a forced stop |
 | Overhead | System | G-TM1 passes |
 | Export | Integration | CSV and text reports match the store |
+| Pack D snapshot parser | Unit | Strict header/counter/duplicate checks; missing snapshot is `NotInstalled`, never zero |
+| Pack D aggregation | Unit | First sample primes, deltas become rates, counter resets report nothing, hourly totals expire after 8 days |
+| GPU fdinfo | Unit | Intel (`render`/`video`/`copy`) and AMD (`gfx`/`compute`) keys parse; busy share is `Δns / Δwall`; rows without DRM fds stay unreported |
+| Service prompt | Unit | No plan runs without a confirm; cancel drops it; a confirmed plan reaches the executor once; protected units and non-`.service` names are refused |
+| Contract pinning | Unit | Energy, service-action and Pack D contracts keep their published keys, permissions, paths, refresh rates and null labels |

@@ -297,8 +297,15 @@ impl ActivityManagerWindow {
                 )),
                 tone: row.tone.clone().into(),
                 hint: row.hint.clone().into(),
-                action: row.action.clone().into(),
-                action_label: row.action_label.clone().into(),
+                actions: ModelRc::new(VecModel::from(
+                    row.actions
+                        .iter()
+                        .map(|action| RowActionView {
+                            id: action.id.clone().into(),
+                            label: action.label.clone().into(),
+                        })
+                        .collect::<Vec<_>>(),
+                )),
             })
             .collect();
         self.ui.set_table_rows(ModelRc::new(VecModel::from(rows)));
@@ -527,6 +534,80 @@ pub fn demo_users() -> Vec<crate::model::UserSession> {
             seat: None,
         },
     ]
+}
+
+/// Sample Pack D history for the App history evidence render (documented demo
+/// data). It runs the real integrators — [`AppCpuTime::observe`] and
+/// [`AppNetworkHistory::update`] — hourly for seven days, so the screenshot
+/// exercises the same roll-up code AetherOS will run.
+pub fn demo_pack_d() -> (crate::pack_d::AppCpuTime, crate::pack_d::AppNetworkHistory) {
+    use crate::pack_d::{AppCpuTime, AppNetworkCounters, AppNetworkHistory};
+    use std::collections::BTreeMap;
+
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_millis() as u64)
+        .unwrap_or(0);
+    let start_ms = now_ms.saturating_sub(7 * 24 * 3_600_000);
+    let apps = [
+        ("org.aether.Browser", 62.0f32, 9_400_000u64),
+        ("org.aether.Player", 18.0, 1_200_000),
+        ("org.aether.Files", 3.0, 120_000),
+    ];
+    let mut cpu = AppCpuTime::default();
+    let mut network = AppNetworkHistory::default();
+    let mut counters: BTreeMap<&str, (u64, u64)> = apps
+        .iter()
+        .map(|(app, _, _)| (*app, (0, 0)))
+        .collect();
+    for hour in 0..(7 * 24u64) {
+        let at = start_ms + hour * 3_600_000;
+        let rows: Vec<ProcessRow> = apps
+            .iter()
+            .enumerate()
+            .map(|(index, (app, cpu_percent, _))| ProcessRow {
+                pid: 4_200 + index as u32,
+                ppid: 1,
+                name: app.rsplit('.').next().unwrap_or(app).to_lowercase(),
+                command: format!("/usr/bin/{app}"),
+                user: Some(1000),
+                threads: 4,
+                open_files: 16,
+                state: 'S',
+                cpu_percent: *cpu_percent,
+                memory_bytes: 64 * 1024 * 1024,
+                disk_read_bytes: 0,
+                disk_write_bytes: 0,
+                network_tx_bytes: 0,
+                network_rx_bytes: 0,
+                gpu_percent: None,
+                energy: EnergyImpact::Low,
+                wakeups: 0,
+                efficiency: false,
+                app_state: None,
+                band: None,
+                cgroup: Some(format!(
+                    "/aether.slice/aether-apps.slice/aether-app-{app}-1a2b3c4d.scope"
+                )),
+            })
+            .collect();
+        cpu.observe(&rows, at);
+        for (app, _, rx_per_hour) in apps {
+            let total = counters.get_mut(app).expect("counter exists");
+            total.0 += rx_per_hour;
+            total.1 += rx_per_hour / 4;
+        }
+        let snapshot: Vec<AppNetworkCounters> = counters
+            .iter()
+            .map(|(app, (rx, tx))| AppNetworkCounters {
+                app: (*app).to_string(),
+                rx_bytes: *rx,
+                tx_bytes: *tx,
+            })
+            .collect();
+        network.update(&snapshot, at);
+    }
+    (cpu, network)
 }
 
 /// Sample sensors for `--render` on hosts without hwmon/thermal sysfs.

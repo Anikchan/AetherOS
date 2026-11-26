@@ -14,6 +14,10 @@ use crate::model::{
     BatteryView, EnergyColumnContract, EnergyImpact, GraphPoint, PerformanceHistory,
     SensorKind, SensorReading, SystemSample,
 };
+use crate::pack_d::{AppCpuTime, AppNetworkHistory, PackDContract};
+use crate::service_actions::{
+    action_id, ServiceAction, ServiceActionContract,
+};
 
 /// Label used wherever a reading is unavailable (D10, F14 honesty rules).
 pub const NOT_REPORTED: &str = "Not reported";
@@ -575,6 +579,14 @@ pub fn sensors_report(view: &SensorsTabView) -> String {
     out
 }
 
+/// One per-row button in a generic table.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RowAction {
+    /// Action id the caller resolves (a `.desktop` path or `service:<action>:<unit>`).
+    pub id: String,
+    pub label: String,
+}
+
 /// One row in a generic Activity Manager table (TM-12/13/14/16/17).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TableRow {
@@ -583,9 +595,8 @@ pub struct TableRow {
     pub tone: String,
     /// Secondary line under the first cell (command, description, exec).
     pub hint: String,
-    /// Row action id (for example the `.desktop` path); empty when read-only.
-    pub action: String,
-    pub action_label: String,
+    /// Row actions in display order; read-only rows have none.
+    pub actions: Vec<RowAction>,
 }
 
 impl TableRow {
@@ -594,8 +605,7 @@ impl TableRow {
             cells,
             tone: String::new(),
             hint: String::new(),
-            action: String::new(),
-            action_label: String::new(),
+            actions: Vec::new(),
         }
     }
 
@@ -610,8 +620,15 @@ impl TableRow {
     }
 
     pub fn with_action(mut self, id: impl Into<String>, label: impl Into<String>) -> Self {
-        self.action = id.into();
-        self.action_label = label.into();
+        self.actions.push(RowAction {
+            id: id.into(),
+            label: label.into(),
+        });
+        self
+    }
+
+    pub fn with_actions(mut self, actions: Vec<RowAction>) -> Self {
+        self.actions = actions;
         self
     }
 }
@@ -646,63 +663,166 @@ impl Default for TableView {
 pub const TABLE_ROWS: usize = 25;
 
 /// App history (TM-12): per-app energy for the last 24 hours and 7 days from
-/// the F14 analytics store. CPU time and per-app network are not collected yet
-/// and the table says so instead of inventing numbers.
-pub fn app_history_view(analytics: Option<&BatteryAnalytics>, now_epoch_secs: u64) -> TableView {
+/// the F14 analytics store, plus CPU time and network totals from the Pack D
+/// contract when it is installed. Missing sources keep the contract's null
+/// label instead of showing zero.
+pub fn app_history_view(
+    analytics: Option<&BatteryAnalytics>,
+    cpu: Option<&AppCpuTime>,
+    network: Option<&AppNetworkHistory>,
+    now_epoch_secs: u64,
+) -> TableView {
     let contract = EnergyColumnContract::default();
+    let pack_d = PackDContract::published();
+    let has_pack_d = cpu.is_some() || network.is_some();
     let mut view = TableView {
         title: "APP HISTORY".into(),
         headers: vec![
             "App".into(),
             "24 hours".into(),
             "7 days".into(),
+            "CPU time".into(),
+            "Network".into(),
             "Impact".into(),
             "Share".into(),
         ],
-        note: "Energy is measured by powerd (F14). Per-app CPU time and network totals are not collected yet (Pack D)."
-            .into(),
-        empty_text: "No battery history: pass --power-history (powerd battery-history.json).".into(),
+        note: if has_pack_d {
+            "Energy is measured by powerd (F14). CPU time integrates the 1 s process samples and network sums the Pack D socket-accounting deltas, both rolled up per hour (D10 §5.2)."
+                .into()
+        } else {
+            "Energy is measured by powerd (F14). Per-app CPU time and network need Pack D (advanced monitoring) and read \"Not reported\" until it is installed."
+                .into()
+        },
+        empty_text: if has_pack_d {
+            "No per-app history recorded in the last 7 days (no battery history and no Pack D samples).".into()
+        } else {
+            "No battery history: pass --power-history (powerd battery-history.json).".into()
+        },
         ..Default::default()
     };
 
-    let Some(analytics) = analytics else {
-        return view;
-    };
-    let day = analytics.energy_by_app(now_epoch_secs, 1);
-    let week = analytics.energy_by_app(now_epoch_secs, 7);
-    if week.is_empty() {
-        view.empty_text = "No per-app energy recorded in the last 7 days.".into();
+    let week_start_secs = now_epoch_secs.saturating_sub(7 * 86_400);
+    let mut entries: std::collections::BTreeMap<String, HistoryEntry> =
+        std::collections::BTreeMap::new();
+
+    if let Some(analytics) = analytics {
+        let day = analytics.energy_by_app(now_epoch_secs, 1);
+        let week = analytics.energy_by_app(now_epoch_secs, 7);
+        let day_by_app: std::collections::BTreeMap<&str, f64> = day
+            .iter()
+            .map(|(app, wh)| (app.as_str(), *wh))
+            .collect();
+        for (app, wh) in &week {
+            let entry = entries.entry(app.clone()).or_default();
+            entry.week_wh = Some(*wh);
+            entry.day_wh = Some(day_by_app.get(app.as_str()).copied().unwrap_or(0.0));
+        }
+    }
+
+    if let Some(cpu) = cpu {
+        for app in cpu.apps() {
+            entries.entry(app.clone()).or_default().cpu_secs = Some(cpu.total_seconds_for(
+                &app,
+                week_start_secs * 1_000,
+            ));
+        }
+    }
+    if let Some(network) = network {
+        for app in network.apps() {
+            entries
+                .entry(app.clone())
+                .or_default()
+                .network = Some(network.totals_for(&app, week_start_secs * 1_000));
+        }
+    }
+
+    if entries.is_empty() {
+        if has_pack_d {
+            view.empty_text = "No Pack D samples or battery history in the last 7 days.".into();
+        }
         return view;
     }
-    let day_by_app: std::collections::BTreeMap<&str, f64> = day
-        .iter()
-        .map(|(app, wh)| (app.as_str(), *wh))
-        .collect();
-    let max_week = week.first().map(|(_, wh)| *wh).unwrap_or(0.0);
-    let total: f64 = week.iter().map(|(_, wh)| *wh).sum();
 
-    view.rows = week
-        .iter()
+    let max_week = entries
+        .values()
+        .filter_map(|entry| entry.week_wh)
+        .fold(0.0_f64, f64::max);
+    let total: f64 = entries.values().filter_map(|entry| entry.week_wh).sum();
+
+    let mut ordered: Vec<(String, HistoryEntry)> = entries.into_iter().collect();
+    ordered.sort_by(|(app_a, a), (app_b, b)| {
+        b.week_wh
+            .unwrap_or(0.0)
+            .partial_cmp(&a.week_wh.unwrap_or(0.0))
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| {
+                b.cpu_secs
+                    .unwrap_or(0.0)
+                    .partial_cmp(&a.cpu_secs.unwrap_or(0.0))
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            })
+            .then_with(|| app_a.cmp(app_b))
+    });
+
+    view.rows = ordered
+        .into_iter()
         .take(TABLE_ROWS)
-        .map(|(app, wh)| {
-            let share = if max_week > 0.0 { wh / max_week } else { 0.0 };
-            let level = contract.level_for(share, *wh);
-            let day_wh = day_by_app.get(app.as_str()).copied().unwrap_or(0.0);
+        .map(|(app, entry)| {
+            let week_wh = entry.week_wh.unwrap_or(0.0);
+            let share = if max_week > 0.0 { week_wh / max_week } else { 0.0 };
+            let level = contract.level_for(share, week_wh);
+            let energy_cell = |wh: Option<f64>| match wh {
+                Some(wh) => format!("{wh:.2} Wh"),
+                None => contract.null_label.clone(),
+            };
+            let cpu_cell = match entry.cpu_secs {
+                Some(secs) if secs > 0.0 && secs < 1.0 => "<1 s".into(),
+                Some(secs) => duration(secs.max(0.0) as u64),
+                None => pack_d.null_label.clone(),
+            };
+            let network_cell = match entry.network {
+                Some((rx, tx)) => format!(
+                    "{} in · {} out",
+                    human_bytes(rx),
+                    human_bytes(tx)
+                ),
+                None => pack_d.null_label.clone(),
+            };
             TableRow::new(vec![
-                app.clone(),
-                format!("{day_wh:.2} Wh"),
-                format!("{wh:.2} Wh"),
+                app,
+                energy_cell(entry.day_wh),
+                energy_cell(entry.week_wh),
+                cpu_cell,
+                network_cell,
                 contract.label_for(level),
-                format!("{:.0}%", share * 100.0),
+                if week_wh > 0.0 && max_week > 0.0 {
+                    format!("{:.0}%", share * 100.0)
+                } else {
+                    "—".into()
+                },
             ])
             .with_tone(&contract.tone_for(level))
         })
         .collect();
     view.summary = format!(
-        "{} apps · {total:.1} Wh in 7 days · top consumer shown at 100% share",
-        view.rows.len()
+        "{} apps · {total:.1} Wh in 7 days · top consumer shown at 100% share{}",
+        view.rows.len(),
+        if has_pack_d {
+            " · CPU/network from Pack D"
+        } else {
+            ""
+        }
     );
     view
+}
+
+/// One app's 7-day history entry, merged from every available source.
+#[derive(Debug, Clone, Default)]
+struct HistoryEntry {
+    day_wh: Option<f64>,
+    week_wh: Option<f64>,
+    cpu_secs: Option<f64>,
+    network: Option<(u64, u64)>,
 }
 
 /// Startup apps (TM-13): autostart entries with an honest impact column and a
@@ -844,9 +964,19 @@ pub fn details_view(rows: &[crate::model::ProcessRow]) -> TableView {
     view
 }
 
-/// Services tab (TM-17): systemd units. Starting/stopping needs the permission
-/// prompt and is intentionally not wired here.
+/// Services tab (TM-17): systemd units with their status and the Start, Stop
+/// and Restart actions. Every action is planned through the permission-prompt
+/// contract ([`ServiceActionContract`]); nothing runs from this view.
 pub fn services_view(services: &[crate::model::ServiceRow]) -> TableView {
+    services_view_with(services, &ServiceActionContract::default())
+}
+
+/// Same as [`services_view`] with an explicit contract, so a theme or policy
+/// override changes the buttons and the note together.
+pub fn services_view_with(
+    services: &[crate::model::ServiceRow],
+    contract: &ServiceActionContract,
+) -> TableView {
     let mut view = TableView {
         title: "SERVICES".into(),
         headers: vec![
@@ -855,8 +985,10 @@ pub fn services_view(services: &[crate::model::ServiceRow]) -> TableView {
             "Active".into(),
             "Sub".into(),
         ],
-        note: "Read-only in this round: start/stop/restart need the permission prompt (TM-17) and are not wired to the window."
-            .into(),
+        note: format!(
+            "Start, Stop and Restart open the administrator permission prompt and show the exact systemctl command before anything runs ({}). Execution is enabled on AetherOS; this build plans the action only.",
+            contract.permission
+        ),
         empty_text: "systemctl reported no services (this host may not use systemd).".into(),
         ..Default::default()
     };
@@ -875,6 +1007,20 @@ pub fn services_view(services: &[crate::model::ServiceRow]) -> TableView {
             } else {
                 "text_muted"
             };
+            let actions = if service.active == "active" {
+                vec![ServiceAction::Stop, ServiceAction::Restart]
+            } else {
+                vec![ServiceAction::Start, ServiceAction::Restart]
+            };
+            let actions: Vec<RowAction> = actions
+                .into_iter()
+                .filter_map(|action| {
+                    contract.spec(action).map(|spec| RowAction {
+                        id: action_id(&service.unit, action),
+                        label: spec.label.clone(),
+                    })
+                })
+                .collect();
             TableRow::new(vec![
                 service.unit.clone(),
                 service.load.clone(),
@@ -883,6 +1029,7 @@ pub fn services_view(services: &[crate::model::ServiceRow]) -> TableView {
             ])
             .with_tone(tone)
             .with_hint(&service.description)
+            .with_actions(actions)
         })
         .collect();
     view.summary = format!("{active} active of {}", services.len());
@@ -918,8 +1065,8 @@ pub fn table_report(view: &TableView) -> String {
         if !row.hint.is_empty() {
             out.push_str(&format!("      {}\n", row.hint));
         }
-        if !row.action_label.is_empty() {
-            out.push_str(&format!("      [{}] {}\n", row.action_label, row.action));
+        for action in &row.actions {
+            out.push_str(&format!("      [{}] {}\n", action.label, action.id));
         }
     }
     if !view.note.is_empty() {
@@ -1194,26 +1341,153 @@ mod tests {
         analytics.record_app_energy(now - 60, "org.aether.Player", 2.0);
         analytics.record_app_energy(now - 0, "org.aether.Player", 0.0);
 
-        let view = app_history_view(Some(&analytics), now);
+        let view = app_history_view(Some(&analytics), None, None, now);
         assert_eq!(view.title, "APP HISTORY");
         assert_eq!(view.headers[0], "App");
+        assert_eq!(view.headers[3], "CPU time");
+        assert_eq!(view.headers[4], "Network");
         assert_eq!(view.rows.len(), 2);
         assert_eq!(view.rows[0].cells[0], "org.aether.Browser");
         assert_eq!(view.rows[0].cells[1], "18.00 Wh");
         assert_eq!(view.rows[0].cells[2], "24.00 Wh");
-        assert_eq!(view.rows[0].cells[3], "High");
+        // No Pack D on this host: the columns say so instead of showing zero.
+        assert_eq!(view.rows[0].cells[3], "Not reported");
+        assert_eq!(view.rows[0].cells[4], "Not reported");
+        assert_eq!(view.rows[0].cells[5], "High");
         assert_eq!(view.rows[0].tone, "danger");
-        assert_eq!(view.rows[1].cells[3], "Low");
+        assert_eq!(view.rows[1].cells[5], "Low");
         assert!(view.summary.contains("26.0 Wh in 7 days"));
         assert!(view.note.contains("Pack D"));
+        assert!(!view.summary.contains("Pack D"));
 
         // Without history the tab explains what to pass.
-        let empty = app_history_view(None, now);
+        let empty = app_history_view(None, None, None, now);
         assert!(empty.rows.is_empty());
         assert!(empty.empty_text.contains("--power-history"));
         // A store with only stale entries is reported as empty, not as zero.
-        let stale = app_history_view(Some(&BatteryAnalytics::new(8)), now);
-        assert!(stale.empty_text.contains("last 7 days"));
+        let stale = app_history_view(Some(&BatteryAnalytics::new(8)), None, None, now);
+        assert!(stale.empty_text.contains("No battery history"));
+    }
+
+    #[test]
+    fn app_history_adds_pack_d_cpu_and_network_columns() {
+        use crate::model::ProcessRow;
+        use crate::pack_d::{AppCpuTime, AppNetworkCounters, AppNetworkHistory};
+
+        let now = 10 * 86_400u64;
+        let now_ms = now * 1_000;
+        let cgroup = "/aether.slice/aether-apps.slice/aether-app-org.aether.Browser-12345678.scope";
+        let row = ProcessRow {
+            pid: 10,
+            ppid: 1,
+            name: "browser".into(),
+            command: "/usr/bin/browser".into(),
+            user: Some(1000),
+            threads: 4,
+            open_files: 8,
+            state: 'R',
+            cpu_percent: 50.0,
+            memory_bytes: 1024,
+            disk_read_bytes: 0,
+            disk_write_bytes: 0,
+            network_tx_bytes: 0,
+            network_rx_bytes: 0,
+            gpu_percent: None,
+            energy: EnergyImpact::Low,
+            wakeups: 0,
+            efficiency: false,
+            app_state: None,
+            band: None,
+            cgroup: Some(cgroup.into()),
+        };
+        let mut cpu = AppCpuTime::default();
+        // Prime, then one hour at 50% = 1800 CPU-seconds.
+        cpu.observe(std::slice::from_ref(&row), now_ms - 3_600_000);
+        cpu.observe(&[row], now_ms);
+        assert!((cpu.total_seconds_for("org.aether.Browser", 0) - 1_800.0).abs() < 1e-6);
+
+        let mut network = AppNetworkHistory::default();
+        network.update(
+            &[AppNetworkCounters {
+                app: "org.aether.Browser".into(),
+                rx_bytes: 1_000,
+                tx_bytes: 500,
+            }],
+            now_ms - 3_600_000,
+        );
+        network.update(
+            &[AppNetworkCounters {
+                app: "org.aether.Browser".into(),
+                rx_bytes: 1_000_000,
+                tx_bytes: 500_000,
+            }],
+            now_ms,
+        );
+
+        let mut analytics = BatteryAnalytics::new(8);
+        analytics.record_app_energy(now - 60, "org.aether.Browser", 18.0);
+        let view = app_history_view(Some(&analytics), Some(&cpu), Some(&network), now);
+        assert_eq!(view.rows.len(), 1);
+        let cells = &view.rows[0].cells;
+        assert_eq!(cells[0], "org.aether.Browser");
+        assert_eq!(cells[3], "30 m 00 s");
+        assert_eq!(cells[4], "975.6 KB in · 487.8 KB out");
+        assert_eq!(cells[5], "High");
+        assert!(view.summary.contains("CPU/network from Pack D"));
+        assert!(view.note.contains("D10"));
+        assert!(!view.note.contains("need Pack D"));
+
+        // Pack D apps with no energy still appear, with the null label for the
+        // energy columns instead of a fake zero.
+        let mut other_cpu = AppCpuTime::default();
+        let mut other_row = view_source_row();
+        other_row.cpu_percent = 10.0;
+        other_row.cgroup = Some(
+            "/aether.slice/aether-apps.slice/aether-app-org.aether.Other-87654321.scope".into(),
+        );
+        other_cpu.observe(&[other_row.clone()], now_ms - 1_000);
+        other_cpu.observe(&[other_row], now_ms);
+        let view = app_history_view(
+            Some(&BatteryAnalytics::new(8)),
+            Some(&other_cpu),
+            Some(&AppNetworkHistory::default()),
+            now,
+        );
+        let other = view
+            .rows
+            .iter()
+            .find(|row| row.cells[0] == "org.aether.Other")
+            .unwrap();
+        assert_eq!(other.cells[1], "Not reported");
+        assert_eq!(other.cells[3], "<1 s");
+        assert_eq!(other.cells[4], "Not reported");
+        assert_eq!(other.cells[6], "—");
+    }
+
+    fn view_source_row() -> crate::model::ProcessRow {
+        crate::model::ProcessRow {
+            pid: 11,
+            ppid: 1,
+            name: "other".into(),
+            command: "/usr/bin/other".into(),
+            user: Some(1000),
+            threads: 1,
+            open_files: 2,
+            state: 'S',
+            cpu_percent: 0.0,
+            memory_bytes: 1024,
+            disk_read_bytes: 0,
+            disk_write_bytes: 0,
+            network_tx_bytes: 0,
+            network_rx_bytes: 0,
+            gpu_percent: None,
+            energy: EnergyImpact::Low,
+            wakeups: 0,
+            efficiency: false,
+            app_state: None,
+            band: None,
+            cgroup: None,
+        }
     }
 
     #[test]
@@ -1238,11 +1512,12 @@ mod tests {
         let view = startup_view(&items);
         assert_eq!(view.rows.len(), 2);
         assert_eq!(view.rows[0].cells, vec!["Mail", "User", "Enabled", "Not measured"]);
-        assert_eq!(view.rows[0].action_label, "Disable");
-        assert_eq!(view.rows[0].action, "/home/u/.config/autostart/mail.desktop");
+        assert_eq!(view.rows[0].actions.len(), 1);
+        assert_eq!(view.rows[0].actions[0].label, "Disable");
+        assert_eq!(view.rows[0].actions[0].id, "/home/u/.config/autostart/mail.desktop");
         assert_eq!(view.rows[0].tone, "success");
         assert_eq!(view.rows[1].cells[1], "System");
-        assert_eq!(view.rows[1].action_label, "Enable");
+        assert_eq!(view.rows[1].actions[0].label, "Enable");
         assert_eq!(view.rows[1].tone, "text_muted");
         assert!(view.summary.contains("1 of 2 enabled"));
         assert!(view.note.contains("Not measured"));
@@ -1314,7 +1589,7 @@ mod tests {
     }
 
     #[test]
-    fn services_view_counts_active_units() {
+    fn services_view_counts_active_units_and_offers_prompted_actions() {
         use crate::model::ServiceRow;
         let services = vec![
             ServiceRow {
@@ -1338,7 +1613,40 @@ mod tests {
         assert_eq!(view.rows[1].tone, "danger");
         assert_eq!(view.rows[1].hint, "AetherOS lifecycle daemon");
         assert!(view.summary.contains("1 active of 2"));
-        assert!(view.note.contains("Read-only"));
+        assert!(view.note.contains("administrator permission prompt"));
+        assert!(view.note.contains("admin.authorize"));
+
+        // A running service offers Stop and Restart; a stopped one Start and
+        // Restart. Every id carries the unit so the prompt can plan it.
+        assert_eq!(
+            view.rows[0]
+                .actions
+                .iter()
+                .map(|action| (action.label.as_str(), action.id.as_str()))
+                .collect::<Vec<_>>(),
+            vec![
+                ("Stop", "service:stop:aether-powerd.service"),
+                ("Restart", "service:restart:aether-powerd.service"),
+            ]
+        );
+        assert_eq!(
+            view.rows[1]
+                .actions
+                .iter()
+                .map(|action| action.id.as_str())
+                .collect::<Vec<_>>(),
+            vec![
+                "service:start:aether-lifecycled.service",
+                "service:restart:aether-lifecycled.service",
+            ]
+        );
+
+        // A contract without the Stop action hides that button.
+        let mut contract = ServiceActionContract::default();
+        contract.actions.retain(|spec| spec.action != ServiceAction::Stop);
+        let trimmed = services_view_with(&services, &contract);
+        assert_eq!(trimmed.rows[0].actions.len(), 1);
+        assert_eq!(trimmed.rows[0].actions[0].id, "service:restart:aether-powerd.service");
     }
 
     #[test]

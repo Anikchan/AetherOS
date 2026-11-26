@@ -66,14 +66,19 @@ export struct SensorRowView {
     tone: string,
 }
 
+// One per-row button in a generic table (TM-13/14/17).
+export struct RowActionView {
+    id: string,
+    label: string,
+}
+
 // One row in a generic table (App history, Startup apps, Users, Details,
 // Services). Cells are pre-formatted by Rust; the last cell takes `tone`.
 export struct TableRowView {
     cells: [string],
     tone: string,
     hint: string,
-    action: string,
-    action_label: string,
+    actions: [RowActionView],
 }
 
 // Design token name -> colour, so Rust can pass the contract's tone string.
@@ -313,11 +318,11 @@ component DataTable inherits Rectangle {
                                 overflow: elide;
                             }
                         }
-                        if row.action_label != "" : AetherButton {
-                            text: row.action_label;
+                        for action in row.actions : AetherButton {
+                            text: action.label;
                             width: 92px;
                             vertical-stretch: 0;
-                            clicked => { row-action(row.action); }
+                            clicked => { row-action(action.id); }
                         }
                     }
                     row-ta := TouchArea {}

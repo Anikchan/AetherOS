@@ -53,6 +53,20 @@ Must NOT touch: `os-build/kernel/`, `os-build/buildroot/`, `compositor/`,
 
 ## Progress log
 
+- 2026-11-27 (round 2): Activity Manager table tabs (App history, Startup apps,
+  Users, Details, Services) and seccomp as the final sandbox layer. 91 tests
+  across taskmanager + sandbox. Evidence:
+  `docs/2026/11/27/results/p5-t07-tables-p6-t04-seccomp-s4.md` (commit
+  `aac4b5c`) and `p5-t07-tabs-p6-t04-landlock-s4.md` (`354aa14`).
+- 2026-11-27 (round 3): TM-17 service actions behind the permission-prompt
+  contract (plan + prompt state machine + executor seam + row buttons), and the
+  Pack D data contracts (per-app network snapshot parser/aggregation, per-app
+  CPU time, per-process GPU fdinfo sampler) wired into the App history CPU time
+  and network columns. 135 tests across taskmanager + lifecycled. Docs: F13 §10,
+  F15 Pack D status, D10 §5.2/§5.3/§9, taskmanager README. Evidence:
+  `docs/2026/11/27/results/tm17-pack-d-s4.md`. Hardware-gated: the
+  systemd/polkit executor, the eBPF attach + map dump, and DRM validation on the
+  reference GPUs.
 - 2026-11-23: Session start. Read v2 plan, D3, D5, D8, D10, gates, 04 §4/§11.2.
   Environment: Rust 1.100.0 (macOS host), crates cache has serde/serde_json/
   toml/thiserror. Confirmed `git status`: only S2's uncommitted `Cargo.lock`

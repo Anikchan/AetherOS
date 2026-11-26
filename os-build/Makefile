@@ -90,6 +90,14 @@ gate-report-selftest: ## Self-test the G-PM1/G-PM5 gate report generator
 energy-contract: ## Print the Activity Manager Energy column contract (JSON)
 	cd $(ROOT_DIR) && cargo run -q -p aether-taskmanager -- --energy-contract
 
+.PHONY: service-actions
+service-actions: ## Print the TM-17 service-action permission-prompt contract (JSON)
+	cd $(ROOT_DIR) && cargo run -q -p aether-taskmanager -- --service-actions
+
+.PHONY: pack-d-contract
+pack-d-contract: ## Print the Pack D monitoring contract (JSON)
+	cd $(ROOT_DIR) && cargo run -q -p aether-taskmanager -- --pack-d-contract
+
 .PHONY: ci-local
 ci-local: ## Run the local CI checks (build + test + budgets)
 	bash $(OS_BUILD_DIR)/scripts/ci-local.sh

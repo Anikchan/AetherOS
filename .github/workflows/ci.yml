@@ -72,13 +72,19 @@ jobs:
 
       - name: S4 harness and contract checks
         # Hardware-independent guards: gate-report self-test, the Activity
-        # Manager energy-column contract, the shipped RAUC A/B config, and the
-        # live-USB/bundle script syntax.
+        # Manager energy/service/Pack D contracts, the shipped RAUC A/B config,
+        # and the live-USB/bundle script syntax.
         run: |
           python3 lifecycled/bench/gate-report.py --self-test
           cargo run -q -p aether-taskmanager -- --energy-contract > /dev/null
           cargo run -q -p aether-taskmanager -- --shortcut | grep -q open-activity-manager
           cargo run -q -p aether-taskmanager -- --tab performance | grep -q "Performance (60 s window)"
+          # TM-17: a service action plans behind the permission prompt and never runs.
+          cargo run -q -p aether-taskmanager -- --service-actions | grep -q admin.authorize
+          cargo run -q -p aether-taskmanager -- --service-action aether-powerd.service restart | grep -q SERVICE_ACTION_PLAN_OK
+          ! cargo run -q -p aether-taskmanager -- --service-action aether-lifecycled.service stop > /dev/null 2>&1
+          # Pack D data contracts (per-app network, per-process GPU).
+          cargo run -q -p aether-taskmanager -- --pack-d-contract | grep -q "aether-net-accounting v1"
           cargo run -q -p aether-sandbox --bin aether-sandbox -- doctor | grep -q '"seccomp"'
           cargo run -q -p aether-sandbox --bin aether-sandbox -- seccomp | grep -q SECCOMP_PLAN_OK
           cargo run -q -p aether-sandbox --bin aether-sandbox -- doctor | grep -q landlock_status

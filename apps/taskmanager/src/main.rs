@@ -13,6 +13,9 @@
 //!   aether-taskmanager --startup-list | --startup-disable FILE | --startup-enable FILE
 //!   aether-taskmanager --services | --users
 //!   aether-taskmanager --energy-contract
+//!   aether-taskmanager --service-actions
+//!   aether-taskmanager --service-action UNIT start|stop|restart
+//!   aether-taskmanager --pack-d-contract
 //!   aether-taskmanager --shortcut [--windows-profile]
 //!   aether-taskmanager --tab processes|performance|battery|sensors
 //!   aether-taskmanager --render DIR
@@ -40,6 +43,9 @@ struct Args {
     tui: bool,
     spike_s7: bool,
     energy_contract: bool,
+    service_actions: bool,
+    service_action: Option<(String, String)>,
+    pack_d_contract: bool,
     shortcut: bool,
     windows_profile: bool,
     tab: Option<String>,
@@ -83,6 +89,13 @@ fn parse_args() -> Args {
             "--tui" => args.tui = true,
             "--spike-s7" => args.spike_s7 = true,
             "--energy-contract" => args.energy_contract = true,
+            "--service-actions" => args.service_actions = true,
+            "--service-action" => {
+                let unit = value("--service-action");
+                let action = value("--service-action");
+                args.service_action = Some((unit, action));
+            }
+            "--pack-d-contract" => args.pack_d_contract = true,
             "--shortcut" => args.shortcut = true,
             "--windows-profile" => args.windows_profile = true,
             "--tab" => args.tab = Some(value("--tab")),
@@ -118,6 +131,7 @@ fn parse_args() -> Args {
             "--render" => args.render = Some(PathBuf::from(value("--render"))),
             "-h" | "--help" => {
                 println!("usage: aether-taskmanager [--once|--tui|--spike-s7|--end-task PID|--efficiency PID on|off|--render DIR] [--json] [--limit N] [--dry-run]");
+                println!("       aether-taskmanager --energy-contract | --service-actions | --service-action UNIT start|stop|restart | --pack-d-contract");
                 std::process::exit(0);
             }
             other => {
@@ -140,6 +154,39 @@ fn main() {
     let args = parse_args();
     if args.energy_contract {
         let contract = aether_taskmanager::EnergyImpact::contract();
+        println!("{}", serde_json::to_string_pretty(&contract).unwrap_or_default());
+        return;
+    }
+    if args.service_actions {
+        let contract = aether_taskmanager::ServiceActionContract::default();
+        println!("{}", serde_json::to_string_pretty(&contract).unwrap_or_default());
+        return;
+    }
+    if let Some((unit, action_key)) = &args.service_action {
+        let Some(action) = aether_taskmanager::ServiceAction::from_key(action_key) else {
+            eprintln!("unknown service action: {action_key} (start, stop, restart)");
+            std::process::exit(2);
+        };
+        let mut prompt = aether_taskmanager::ServiceActionPrompt::new();
+        match prompt.request(unit, action) {
+            aether_taskmanager::ServiceActionRequest::Confirm { plan } => {
+                println!("{}", plan.prompt.title);
+                println!("{}", plan.prompt.message);
+                println!("{}", plan.prompt.detail);
+                println!("command: {}", plan.command_line());
+                println!("No command is run: the plan waits for the permission prompt.");
+                println!("SERVICE_ACTION_PLAN_OK");
+            }
+            aether_taskmanager::ServiceActionRequest::Refused { reason, .. } => {
+                eprintln!("refused: {reason}");
+                println!("SERVICE_ACTION_REFUSED");
+                std::process::exit(1);
+            }
+        }
+        return;
+    }
+    if args.pack_d_contract {
+        let contract = aether_taskmanager::PackDContract::published();
         println!("{}", serde_json::to_string_pretty(&contract).unwrap_or_default());
         return;
     }
@@ -473,7 +520,7 @@ fn table_for(
     use aether_taskmanager::model::Tab;
     match tab {
         Tab::AppHistory => {
-            aether_taskmanager::app_history_view(analytics, epoch_ms() / 1000)
+            aether_taskmanager::app_history_view(analytics, None, None, epoch_ms() / 1000)
         }
         Tab::StartupApps => aether_taskmanager::startup_view(&manager.startup_items()),
         Tab::Users => aether_taskmanager::users_view(&manager.users(), current_uid()),
@@ -569,6 +616,9 @@ fn render_window(dir: &Path, args: &Args, manager: &mut ActivityManager) {
             live
         }
     };
+    // Pack D history for the App history render: demo data built by the real
+    // integrators, so the screenshot shows the contract's CPU/network columns.
+    let (pack_d_cpu, pack_d_network) = aether_taskmanager::demo_pack_d();
     let services = {
         let live = manager.services();
         if live.is_empty() {
@@ -635,7 +685,12 @@ fn render_window(dir: &Path, args: &Args, manager: &mut ActivityManager) {
             other => {
                 let view = match other {
                     aether_taskmanager::model::Tab::AppHistory => {
-                        aether_taskmanager::app_history_view(analytics.as_ref(), epoch_ms() / 1000)
+                        aether_taskmanager::app_history_view(
+                            analytics.as_ref(),
+                            Some(&pack_d_cpu),
+                            Some(&pack_d_network),
+                            epoch_ms() / 1000,
+                        )
                     }
                     aether_taskmanager::model::Tab::StartupApps => {
                         aether_taskmanager::startup_view(&startup)

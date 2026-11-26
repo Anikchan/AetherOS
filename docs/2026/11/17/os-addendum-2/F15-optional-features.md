@@ -42,6 +42,22 @@ The core is measured as a whole. Its idle cost must stay inside the budgets in F
 
 Packs D to G are in the plan as P7-PK (03 section 3). Their hours are listed there.
 
+### Pack D contract status (2026-11-27)
+
+The Activity Manager side of Pack D is implemented as a data contract
+(`apps/taskmanager/src/pack_d.rs`, published by
+`aether-taskmanager --pack-d-contract`, documented in D10 §5.2):
+
+- Per-app network: strict parser for the socket-accounting snapshot at
+  `/run/aether/pack-d/net-accounting`, delta rates, hourly totals for the 7-day
+  App history window, and a "Not installed"/"Not loaded" state instead of zero.
+- Per-process GPU: DRM `fdinfo` engine/memory parsing and engine-busy deltas.
+- Refresh 2 s visible / 30 s hidden, ≤ 0.5% of one core target (D10 §3).
+
+Still hardware-gated: attaching the eBPF accounting program and dumping its map,
+and validating GPU numbers on the reference Intel/AMD machines (G-OPT2). The tab
+shows the honest null label until then.
+
 ## 4. Settings Screen
 
 Settings → Features shows a list. Each row has:
