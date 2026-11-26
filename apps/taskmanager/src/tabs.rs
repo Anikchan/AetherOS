@@ -748,6 +748,9 @@ pub fn app_history_view(
         .filter_map(|entry| entry.week_wh)
         .fold(0.0_f64, f64::max);
     let total: f64 = entries.values().filter_map(|entry| entry.week_wh).sum();
+    // `f64::sum` starts at -0.0, which would print as "-0.0 Wh" when no energy
+    // was measured; report a plain zero instead.
+    let total = if total == 0.0 { 0.0 } else { total };
 
     let mut ordered: Vec<(String, HistoryEntry)> = entries.into_iter().collect();
     ordered.sort_by(|(app_a, a), (app_b, b)| {

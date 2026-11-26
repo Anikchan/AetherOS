@@ -108,6 +108,23 @@ fn fnv1a(input: &str) -> u32 {
     hash
 }
 
+/// Recover an app id from a cgroup line or path carrying an app scope.
+///
+/// Accepts the whole `/proc/<pid>/cgroup` line
+/// (`0::/aether.slice/aether-apps.slice/aether-app-<id>-<hash>.scope`) or just
+/// the path. Returns `None` for anything that is not an app scope, so a system
+/// process is never attributed to an app (TM-09/TM-12).
+pub fn app_id_from_scope(cgroup: &str) -> Option<String> {
+    let name = cgroup.rsplit('/').find(|part| part.starts_with(SCOPE_PREFIX))?;
+    let stem = name.strip_prefix(SCOPE_PREFIX)?.strip_suffix(".scope")?;
+    let (id, hash) = stem.rsplit_once('-')?;
+    if hash.len() == 8 && hash.chars().all(|c| c.is_ascii_hexdigit()) {
+        Some(id.to_string())
+    } else {
+        None
+    }
+}
+
 /// Path of an app's scope, relative to the cgroup v2 mount point.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AppScope {

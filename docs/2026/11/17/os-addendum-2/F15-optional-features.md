@@ -44,14 +44,19 @@ Packs D to G are in the plan as P7-PK (03 section 3). Their hours are listed the
 
 ### Pack D contract status (2026-11-27)
 
-The Activity Manager side of Pack D is implemented as a data contract
-(`apps/taskmanager/src/pack_d.rs`, published by
-`aether-taskmanager --pack-d-contract`, documented in D10 §5.2):
+The Pack D side of the Activity Manager is implemented as a data contract and a
+pair of daemon recorders (`aether-taskmanager --pack-d-contract`, documented in
+D10 §5.2):
 
 - Per-app network: strict parser for the socket-accounting snapshot at
   `/run/aether/pack-d/net-accounting`, delta rates, hourly totals for the 7-day
   App history window, and a "Not installed"/"Not loaded" state instead of zero.
-- Per-process GPU: DRM `fdinfo` engine/memory parsing and engine-busy deltas.
+  `aether-powerd` runs the recorder on its own tick and persists the buckets
+  (`pack-d-network.json`), so history accumulates while the Activity Manager is
+  closed; `aether-taskmanager --pack-d-history <file>` reads them into the tab.
+- Per-process GPU: DRM `fdinfo` engine/memory parsing, engine-busy deltas and
+  per-app attribution through the process cgroup. `aether-lifecycled` runs the
+  recorder every 30 s and persists its hourly buckets (`pack-d-gpu.json`).
 - Refresh 2 s visible / 30 s hidden, ≤ 0.5% of one core target (D10 §3).
 
 Still hardware-gated: attaching the eBPF accounting program and dumping its map,

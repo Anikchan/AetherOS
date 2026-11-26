@@ -20,6 +20,7 @@ use crate::policy::{
     StateReason, TimerKind,
 };
 use crate::protocol::{Ack, LifecycleNotifier, NotifyError};
+use crate::pack_d::{GpuRecorder, GpuSample};
 use crate::state::{AppProcess, AppState, Band};
 
 /// All kernel-facing and app-facing mechanisms the daemon needs.
@@ -40,6 +41,10 @@ pub struct RuntimeConfig {
     pub state_dir: PathBuf,
     pub dry_run: bool,
     pub policy: PolicyConfig,
+    /// Pack D GPU detail (TM-09): sample DRM fdinfo on the daemon loop.
+    pub pack_d: bool,
+    /// Process table the GPU recorder reads (a fixture root in tests).
+    pub pack_d_proc_root: PathBuf,
 }
 
 #[derive(Debug, Deserialize)]
@@ -58,6 +63,10 @@ struct FileConfig {
     grace_battery_seconds: u64,
     #[serde(default = "default_hibernate_minutes")]
     hibernate_after_minutes: u64,
+    #[serde(default = "default_pack_d")]
+    pack_d: bool,
+    #[serde(default = "default_proc_root")]
+    pack_d_proc_root: String,
 }
 
 fn default_cgroup_root() -> String {
@@ -89,6 +98,12 @@ fn default_grace_battery() -> u64 {
 fn default_hibernate_minutes() -> u64 {
     10
 }
+fn default_pack_d() -> bool {
+    true
+}
+fn default_proc_root() -> String {
+    crate::pack_d::PROC_ROOT.into()
+}
 
 impl RuntimeConfig {
     pub fn defaults() -> Self {
@@ -100,10 +115,11 @@ impl RuntimeConfig {
             grace_ac_seconds: default_grace_ac(),
             grace_battery_seconds: default_grace_battery(),
             hibernate_after_minutes: default_hibernate_minutes(),
+            pack_d: default_pack_d(),
+            pack_d_proc_root: default_proc_root(),
         };
         Self::from_file(file)
     }
-
     fn from_file(file: FileConfig) -> Self {
         let mut policy = PolicyConfig::default();
         policy.grace_period_ac = Duration::from_secs(file.grace_ac_seconds);
@@ -115,6 +131,8 @@ impl RuntimeConfig {
             state_dir: PathBuf::from(file.state_dir),
             dry_run: file.dry_run,
             policy,
+            pack_d: file.pack_d,
+            pack_d_proc_root: PathBuf::from(file.pack_d_proc_root),
         }
     }
 
@@ -134,6 +152,8 @@ impl RuntimeConfig {
             grace_ac_seconds: default_grace_ac(),
             grace_battery_seconds: default_grace_battery(),
             hibernate_after_minutes: default_hibernate_minutes(),
+            pack_d: default_pack_d(),
+            pack_d_proc_root: default_proc_root(),
         };
         for candidate in [Some(system), user].into_iter().flatten() {
             if let Ok(text) = fs::read_to_string(&candidate) {
@@ -203,6 +223,8 @@ pub struct Daemon {
     kills: Vec<KillRecord>,
     now: Instant,
     control_offset: u64,
+    pack_d: Option<GpuRecorder>,
+    pack_d_saved_at_ms: u64,
 }
 
 impl Daemon {
@@ -223,6 +245,8 @@ impl Daemon {
             kills: Vec::new(),
             now: Instant::now(),
             control_offset: 0,
+            pack_d: None,
+            pack_d_saved_at_ms: 0,
         }
     }
 
@@ -520,6 +544,52 @@ impl Daemon {
         self.now
     }
 
+    /// Enable the Pack D GPU recorder (TM-09). Buckets from an earlier run are
+    /// restored so the hourly history continues across a daemon restart.
+    pub fn enable_pack_d(&mut self, mut recorder: GpuRecorder) {
+        let _ = recorder.load_history(&self.pack_d_history_path());
+        self.pack_d = Some(recorder);
+    }
+
+    /// Persisted Pack D GPU hourly buckets.
+    pub fn pack_d_history_path(&self) -> PathBuf {
+        self.config.state_dir.join("pack-d-gpu.json")
+    }
+
+    pub fn pack_d(&self) -> Option<&GpuRecorder> {
+        self.pack_d.as_ref()
+    }
+
+    /// Sample DRM fdinfo and roll the busy time into the hourly buckets.
+    ///
+    /// Called by the daemon loop at the D10 §3 Pack D cadence (30 s). A change
+    /// of source state is logged; the buckets are written every 5 minutes.
+    /// Returns `None` when Pack D is disabled.
+    pub fn sample_pack_d(&mut self, epoch_ms: u64) -> Option<GpuSample> {
+        let history_path = self.pack_d_history_path();
+        let (changed, message, sample) = {
+            let recorder = self.pack_d.as_mut()?;
+            let previous = recorder.status();
+            let sample = recorder.sample(epoch_ms);
+            let changed = sample.status != previous;
+            (changed, sample.message.clone(), sample)
+        };
+        if changed {
+            let text = match message {
+                Some(message) => message,
+                None => format!("Pack D GPU detail: {}", sample.status.label()),
+            };
+            self.push_log(None, text);
+        }
+        if epoch_ms.saturating_sub(self.pack_d_saved_at_ms) >= 300_000 {
+            if let Some(recorder) = &self.pack_d {
+                let _ = recorder.save(&history_path);
+            }
+            self.pack_d_saved_at_ms = epoch_ms;
+        }
+        Some(sample)
+    }
+
     pub fn policy_mut(&mut self) -> &mut LifecyclePolicy {
         &mut self.policy
     }
@@ -661,6 +731,14 @@ fn epoch_secs() -> u64 {
         .unwrap_or(0)
 }
 
+/// Wall-clock milliseconds, used by the Pack D recorders' hourly buckets.
+pub fn epoch_millis() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
 /// One app row for the Activity Manager and benchmarks.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppRow {
@@ -710,7 +788,8 @@ pub fn system_daemon(config: RuntimeConfig) -> Daemon {
     use crate::protocol::SocketNotifier;
 
     let cgroup = CgroupFs::at(config.cgroup_root.clone());
-    Daemon::new(
+    let pack_d = config.pack_d;
+    let mut daemon = Daemon::new(
         config.clone(),
         Mechanisms {
             scopes: Box::new(CgroupScopeManager::at(config.cgroup_root.clone())),
@@ -720,7 +799,11 @@ pub fn system_daemon(config: RuntimeConfig) -> Daemon {
             memory: Box::new(cgroup),
             notifier: Box::new(SocketNotifier::at(config.socket_dir.clone())),
         },
-    )
+    );
+    if pack_d {
+        daemon.enable_pack_d(GpuRecorder::at(config.pack_d_proc_root.clone()));
+    }
+    daemon
 }
 
 /// True when `path` is inside the configured cgroup root (kill safety rule).
@@ -820,6 +903,8 @@ mod tests {
             state_dir: dir.clone(),
             dry_run: true,
             policy: PolicyConfig::default(),
+            pack_d: false,
+            pack_d_proc_root: dir.join("proc"),
         };
         let daemon = Daemon::new(
             config,
@@ -997,6 +1082,60 @@ mod tests {
             &mut LifecyclePolicy::new(PolicyConfig::default()),
             Event::AppExited(id),
             &[],
+        );
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn pack_d_sampling_fills_the_hourly_gpu_buckets() {
+        use crate::pack_d::{GpuRecorder, GPU_SAMPLE_INTERVAL_SECONDS};
+        use std::os::unix::fs::symlink;
+
+        let (mut daemon, _rec, dir) = harness("pack-d");
+        let proc_root = dir.join("proc");
+        let pid_dir = proc_root.join("700");
+        fs::create_dir_all(pid_dir.join("fd")).unwrap();
+        fs::create_dir_all(pid_dir.join("fdinfo")).unwrap();
+        symlink("/dev/dri/renderD128", pid_dir.join("fd/7")).unwrap();
+        fs::write(
+            pid_dir.join("cgroup"),
+            "0::/aether.slice/aether-apps.slice/aether-app-org.example.Mail-1a2b3c4d.scope\n",
+        )
+        .unwrap();
+        let write_render = |ns: u64| {
+            fs::write(
+                pid_dir.join("fdinfo/7"),
+                format!("drm-pdev:\t0000:00:02.0\ndrm-engine-render:\t{ns} ns\n"),
+            )
+            .unwrap();
+        };
+
+        // Disabled: sampling is a no-op.
+        assert!(daemon.sample_pack_d(0).is_none());
+
+        daemon.enable_pack_d(GpuRecorder::at(proc_root.clone()));
+        write_render(0);
+        let first = daemon.sample_pack_d(0).unwrap();
+        assert_eq!(first.processes.len(), 1);
+        write_render(15_000_000_000);
+        let interval_ms = GPU_SAMPLE_INTERVAL_SECONDS * 1_000;
+        daemon.sample_pack_d(interval_ms);
+
+        let history = daemon.pack_d().unwrap().history();
+        assert_eq!(
+            history.total_ns_for("org.example.Mail", 0),
+            15 * 1_000_000_000,
+            "50% of a 30 s interval is 15 busy seconds"
+        );
+        // The recorder persists on its five-minute cadence.
+        daemon.sample_pack_d(300_000);
+        let path = daemon.pack_d_history_path();
+        assert!(path.exists(), "the GPU buckets are written to the state dir");
+        let saved = crate::pack_d::load_gpu_history(&path).unwrap();
+        assert_eq!(
+            saved.total_ns_for("org.example.Mail", 0),
+            15 * 1_000_000_000
         );
         let _ = fs::remove_dir_all(dir);
     }

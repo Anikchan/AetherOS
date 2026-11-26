@@ -82,9 +82,15 @@ jobs:
           # TM-17: a service action plans behind the permission prompt and never runs.
           cargo run -q -p aether-taskmanager -- --service-actions | grep -q admin.authorize
           cargo run -q -p aether-taskmanager -- --service-action aether-powerd.service restart | grep -q SERVICE_ACTION_PLAN_OK
+          # ... and the printed plan names the D-Bus call the executor would make.
+          cargo run -q -p aether-taskmanager -- --service-action aether-powerd.service restart | grep -q "busctl call org.freedesktop.systemd1"
           ! cargo run -q -p aether-taskmanager -- --service-action aether-lifecycled.service stop > /dev/null 2>&1
+          # The shipped polkit policy is generated from the contract.
+          cargo run -q -p aether-taskmanager -- --polkit-policy \
+            | diff -u apps/taskmanager/polkit/org.aether.taskmanager.service-action.policy -
           # Pack D data contracts (per-app network, per-process GPU).
           cargo run -q -p aether-taskmanager -- --pack-d-contract | grep -q "aether-net-accounting v1"
+          cargo run -q -p aether-taskmanager -- --pack-d-contract | grep -q "aether-lifecycled samples DRM fdinfo"
           cargo run -q -p aether-sandbox --bin aether-sandbox -- doctor | grep -q '"seccomp"'
           cargo run -q -p aether-sandbox --bin aether-sandbox -- seccomp | grep -q SECCOMP_PLAN_OK
           cargo run -q -p aether-sandbox --bin aether-sandbox -- doctor | grep -q landlock_status

@@ -8,6 +8,7 @@
 //! - [`telemetry`]: UPower with a sysfs fallback
 //! - [`analytics`]: battery history, sessions, health, energy by app (F14)
 //! - [`screentime`]: screen-on time, time per app, pickups, notifications
+//! - [`pack_d`]: Pack D network accounting recorder and hourly buckets
 //! - [`daemon`]: wiring and the status surface for the control center
 
 pub mod analytics;
@@ -16,6 +17,7 @@ pub mod charge;
 pub mod daemon;
 pub mod estimator;
 pub mod limits;
+pub mod pack_d;
 pub mod policy;
 pub mod screentime;
 pub mod sleep;
@@ -39,6 +41,11 @@ pub use estimator::{EstimatorConfig, RateEstimator};
 pub use limits::{
     decide as decide_screen_time_limit, remaining_seconds, BlockDecision, DowntimeWindow,
     LimitRule, LimitsConfig, LimitsState,
+};
+pub use pack_d::{
+    AccountingIssue, AppNetworkCounters, AppNetworkHistory, AppNetworkRate, NetworkAccounting,
+    NetworkHistoryStore, NetworkRecorder, NetworkSample, NetworkSourceStatus,
+    NETWORK_SNAPSHOT_HEADER, NETWORK_SNAPSHOT_PATH,
 };
 pub use policy::{
     clamp_charge_limit, LowBatteryMachine, LowBatteryState, PowerPolicyConfig, PowerPolicyImpl,

@@ -14,7 +14,8 @@
 //!   aether-taskmanager --services | --users
 //!   aether-taskmanager --energy-contract
 //!   aether-taskmanager --service-actions
-//!   aether-taskmanager --service-action UNIT start|stop|restart
+//!   aether-taskmanager --service-action UNIT start|stop|restart [--yes]
+//!   aether-taskmanager --polkit-policy
 //!   aether-taskmanager --pack-d-contract
 //!   aether-taskmanager --shortcut [--windows-profile]
 //!   aether-taskmanager --tab processes|performance|battery|sensors
@@ -45,7 +46,9 @@ struct Args {
     energy_contract: bool,
     service_actions: bool,
     service_action: Option<(String, String)>,
+    polkit_policy: bool,
     pack_d_contract: bool,
+    pack_d_history: Option<PathBuf>,
     shortcut: bool,
     windows_profile: bool,
     tab: Option<String>,
@@ -96,6 +99,10 @@ fn parse_args() -> Args {
                 args.service_action = Some((unit, action));
             }
             "--pack-d-contract" => args.pack_d_contract = true,
+            "--polkit-policy" => args.polkit_policy = true,
+            "--pack-d-history" => {
+                args.pack_d_history = Some(PathBuf::from(value("--pack-d-history")))
+            }
             "--shortcut" => args.shortcut = true,
             "--windows-profile" => args.windows_profile = true,
             "--tab" => args.tab = Some(value("--tab")),
@@ -131,7 +138,8 @@ fn parse_args() -> Args {
             "--render" => args.render = Some(PathBuf::from(value("--render"))),
             "-h" | "--help" => {
                 println!("usage: aether-taskmanager [--once|--tui|--spike-s7|--end-task PID|--efficiency PID on|off|--render DIR] [--json] [--limit N] [--dry-run]");
-                println!("       aether-taskmanager --energy-contract | --service-actions | --service-action UNIT start|stop|restart | --pack-d-contract");
+                println!("       aether-taskmanager --energy-contract | --service-actions | --service-action UNIT start|stop|restart [--yes] | --polkit-policy | --pack-d-contract");
+                println!("       aether-taskmanager --pack-d-history PATH --tab app-history");
                 std::process::exit(0);
             }
             other => {
@@ -174,8 +182,35 @@ fn main() {
                 println!("{}", plan.prompt.message);
                 println!("{}", plan.prompt.detail);
                 println!("command: {}", plan.command_line());
-                println!("No command is run: the plan waits for the permission prompt.");
-                println!("SERVICE_ACTION_PLAN_OK");
+                println!(
+                    "bus: {}",
+                    aether_taskmanager::systemd_argv(&plan).join(" ")
+                );
+                if args.yes {
+                    // The explicit confirm: only now does the plan reach the
+                    // systemd D-Bus executor (hardware-gated on AetherOS).
+                    let executor = aether_taskmanager::SystemdDbusExecutor::system();
+                    match prompt.confirm(&executor) {
+                        aether_taskmanager::ServiceActionOutcome::Executed { output, .. } => {
+                            println!("{output}");
+                            println!("SERVICE_ACTION_EXECUTED");
+                        }
+                        aether_taskmanager::ServiceActionOutcome::Failed { reason, .. } => {
+                            eprintln!("failed: {reason}");
+                            println!("SERVICE_ACTION_FAILED");
+                            std::process::exit(1);
+                        }
+                        other => {
+                            eprintln!("unexpected outcome: {other:?}");
+                            println!("SERVICE_ACTION_FAILED");
+                            std::process::exit(1);
+                        }
+                    }
+                } else {
+                    println!("No command is run: the plan waits for the permission prompt.");
+                    println!("Pass --yes to confirm it.");
+                    println!("SERVICE_ACTION_PLAN_OK");
+                }
             }
             aether_taskmanager::ServiceActionRequest::Refused { reason, .. } => {
                 eprintln!("refused: {reason}");
@@ -183,6 +218,15 @@ fn main() {
                 std::process::exit(1);
             }
         }
+        return;
+    }
+    if args.polkit_policy {
+        print!(
+            "{}",
+            aether_taskmanager::polkit_policy_xml(
+                &aether_taskmanager::ServiceActionContract::default()
+            )
+        );
         return;
     }
     if args.pack_d_contract {
@@ -325,6 +369,12 @@ fn main() {
     let analytics = args.power_history.as_ref().and_then(|path| {
         BatteryAnalytics::load(path).ok()
     });
+    // The Pack D hourly buckets written by aether-powerd, so the App history
+    // network column shows history the daemon recorded while the window was shut.
+    let pack_d_network = args
+        .pack_d_history
+        .as_ref()
+        .and_then(|path| aether_powerd::pack_d::load_history(path).ok());
 
     let apply_context = |manager: &mut ActivityManager, rows: &mut Vec<_>| {
         if let Some(metrics) = &lifecycle {
@@ -389,7 +439,13 @@ fn main() {
                 print!("{}", aether_taskmanager::sensors_report(&view));
             }
             other => {
-                let view = table_for(&manager, other, &rows, analytics.as_ref());
+                let view = table_for(
+                    &manager,
+                    other,
+                    &rows,
+                    analytics.as_ref(),
+                    pack_d_network.as_ref(),
+                );
                 print!("{}", aether_taskmanager::table_report(&view));
             }
         }
@@ -516,11 +572,12 @@ fn table_for(
     tab: aether_taskmanager::model::Tab,
     rows: &[aether_taskmanager::ProcessRow],
     analytics: Option<&BatteryAnalytics>,
+    network: Option<&aether_taskmanager::AppNetworkHistory>,
 ) -> aether_taskmanager::TableView {
     use aether_taskmanager::model::Tab;
     match tab {
         Tab::AppHistory => {
-            aether_taskmanager::app_history_view(analytics, None, None, epoch_ms() / 1000)
+            aether_taskmanager::app_history_view(analytics, None, network, epoch_ms() / 1000)
         }
         Tab::StartupApps => aether_taskmanager::startup_view(&manager.startup_items()),
         Tab::Users => aether_taskmanager::users_view(&manager.users(), current_uid()),
@@ -616,9 +673,17 @@ fn render_window(dir: &Path, args: &Args, manager: &mut ActivityManager) {
             live
         }
     };
-    // Pack D history for the App history render: demo data built by the real
-    // integrators, so the screenshot shows the contract's CPU/network columns.
-    let (pack_d_cpu, pack_d_network) = aether_taskmanager::demo_pack_d();
+    // Pack D history for the App history render: the buckets aether-powerd
+    // wrote when given, otherwise demo data built by the real integrators so
+    // the screenshot shows the contract's CPU/network columns.
+    let recorded_network = args
+        .pack_d_history
+        .as_ref()
+        .and_then(|path| aether_powerd::pack_d::load_history(path).ok());
+    let (pack_d_cpu, pack_d_network) = match recorded_network {
+        Some(network) => (aether_taskmanager::demo_pack_d().0, network),
+        None => aether_taskmanager::demo_pack_d(),
+    };
     let services = {
         let live = manager.services();
         if live.is_empty() {

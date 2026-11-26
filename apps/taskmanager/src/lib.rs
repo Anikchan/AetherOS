@@ -36,15 +36,19 @@ pub use model::{
     ExportFormat, GraphPoint, PerformanceHistory, ProcessRow, SensorKind, SensorReading, ServiceRow,
     StartupItem, StartupScope, SystemSample, Tab, UserSession,
 };
-pub use pack_d::{
-    apply_gpu_detail, apply_network_totals, parse_fdinfo, parse_network_snapshot, AccountingIssue,
-    AppCpuTime, AppNetworkCounters, AppNetworkHistory, AppNetworkRate, FdinfoDrm, GpuDetailSampler,
-    GpuEngineUsage, GpuProcessDetail, NetworkAccounting, PackDContract, PackDStatus,
-    NETWORK_SNAPSHOT_HEADER, NETWORK_SNAPSHOT_PATH,
+pub use pack_d::{apply_gpu_detail, apply_network_totals, AppCpuTime, PackDContract, PackDStatus};
+pub use aether_powerd::pack_d::{
+    parse_network_snapshot, AccountingIssue, AppNetworkCounters, AppNetworkHistory,
+    AppNetworkRate, NetworkAccounting, NETWORK_SNAPSHOT_HEADER, NETWORK_SNAPSHOT_PATH,
+};
+pub use aether_lifecycled::pack_d::{
+    parse_fdinfo, FdinfoDrm, GpuDetailSampler, GpuEngineUsage, GpuProcessDetail,
 };
 pub use service_actions::{
-    action_id, parse_action_id, ProtectedUnit, ServiceAction, ServiceActionContract,
-    ServiceActionOutcome, ServiceActionPlan, ServiceActionPlanner, ServiceActionPrompt,
-    ServiceActionRequest, ServiceActionSpec, ServiceExecutor, ServicePrompt, ServicePromptState,
+    action_id, parse_action_id, polkit_policy_xml, systemd_argv, ProtectedUnit, ServiceAction,
+    ServiceActionContract, ServiceActionOutcome, ServiceActionPlan, ServiceActionPlanner,
+    ServiceActionPrompt, ServiceActionRequest, ServiceActionSpec, ServiceExecutor, ServicePrompt,
+    ServicePromptState, SystemdDbusExecutor, POLKIT_ACTION_ID, POLKIT_POLICY_FILE,
+    POLKIT_POLICY_PATH,
 };
 pub use s7::{run as run_spike_s7, to_markdown as spike_s7_markdown, SpikeS7Report, SpikeVerdict};

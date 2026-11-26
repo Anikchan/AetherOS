@@ -202,6 +202,8 @@ impl Bench {
             state_dir: dir.join("state"),
             dry_run: true,
             policy: PolicyConfig::default(),
+            pack_d: false,
+            pack_d_proc_root: std::path::PathBuf::from("/proc"),
         };
         let daemon = Daemon::new(
             config,

@@ -94,6 +94,16 @@ energy-contract: ## Print the Activity Manager Energy column contract (JSON)
 service-actions: ## Print the TM-17 service-action permission-prompt contract (JSON)
 	cd $(ROOT_DIR) && cargo run -q -p aether-taskmanager -- --service-actions
 
+.PHONY: service-action-policy
+service-action-policy: ## Print the polkit policy generated from the TM-17 contract (XML)
+	cd $(ROOT_DIR) && cargo run -q -p aether-taskmanager -- --polkit-policy
+
+.PHONY: check-service-action-policy
+check-service-action-policy: ## Fail if polkit/ and the TM-17 contract drift apart
+	cd $(ROOT_DIR) && cargo run -q -p aether-taskmanager -- --polkit-policy \
+		| diff -u apps/taskmanager/polkit/org.aether.taskmanager.service-action.policy -
+	@echo "polkit policy matches the TM-17 contract"
+
 .PHONY: pack-d-contract
 pack-d-contract: ## Print the Pack D monitoring contract (JSON)
 	cd $(ROOT_DIR) && cargo run -q -p aether-taskmanager -- --pack-d-contract

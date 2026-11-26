@@ -15,6 +15,18 @@ use serde::{Deserialize, Serialize};
 /// Prefix used by the table row action ids (`service:<action>:<unit>`).
 pub const SERVICE_ACTION_PREFIX: &str = "service";
 
+/// Polkit action the prompt authenticates with. The policy file below is
+/// generated from the same contract, so the id cannot drift from the UI.
+pub const POLKIT_ACTION_ID: &str = "org.aether.taskmanager.service-action";
+
+/// Where the generated policy file is installed (D10 §5.3).
+pub const POLKIT_POLICY_PATH: &str = "/usr/share/polkit-1/actions/org.aether.taskmanager.service-action.policy";
+
+/// The generated policy file, compiled in so a test can prove the shipped copy
+/// is byte-identical to what the contract publishes.
+pub const POLKIT_POLICY_FILE: &str =
+    include_str!("../polkit/org.aether.taskmanager.service-action.policy");
+
 /// One action the Services tab offers (TM-17).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -47,6 +59,15 @@ impl ServiceAction {
     /// command line can never drift from the UI key).
     pub fn verb(self) -> &'static str {
         self.key()
+    }
+
+    /// The systemd D-Bus manager method the executor calls.
+    pub fn systemd_method(self) -> &'static str {
+        match self {
+            Self::Start => "StartUnit",
+            Self::Stop => "StopUnit",
+            Self::Restart => "RestartUnit",
+        }
     }
 
     pub fn from_key(key: &str) -> Option<Self> {
@@ -92,6 +113,10 @@ pub struct ServiceActionContract {
     pub protected_units: Vec<ProtectedUnit>,
     pub actions: Vec<ServiceActionSpec>,
     pub tooltip: String,
+    /// Polkit action the prompt authenticates with (see [`polkit_policy_xml`]).
+    pub polkit_action_id: String,
+    /// Install path of the generated policy file.
+    pub polkit_policy_path: String,
 }
 
 impl Default for ServiceActionContract {
@@ -135,6 +160,8 @@ impl Default for ServiceActionContract {
                 },
             ],
             tooltip: "Start, Stop and Restart ask for administrator permission and show the systemctl command before anything runs.".into(),
+            polkit_action_id: POLKIT_ACTION_ID.into(),
+            polkit_policy_path: POLKIT_POLICY_PATH.into(),
         }
     }
 }
@@ -347,6 +374,155 @@ impl ServiceExecutor for PlanningExecutor {
     }
 }
 
+/// The polkit policy file for the service-action right, generated from the
+/// contract (TM-17, D10 §5.3).
+///
+/// The DTD allows one `description` and one or more `message` elements, so the
+/// action carries one right for Start/Stop/Restart (listed in the comment) and
+/// every default is `auth_admin`: the answer is never remembered, which is the
+/// same rule the prompt follows.
+pub fn polkit_policy_xml(contract: &ServiceActionContract) -> String {
+    let keys: Vec<&str> = contract
+        .actions
+        .iter()
+        .map(|spec| spec.action.key())
+        .collect();
+    let mut xml = String::new();
+    xml.push_str("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
+    xml.push_str("<!DOCTYPE policyconfig PUBLIC\n");
+    xml.push_str(" \"-//freedesktop//DTD PolicyKit Policy Configuration 1.0//EN\"\n");
+    xml.push_str(" \"http://www.freedesktop.org/standards/PolicyKit/1/policyconfig.dtd\">\n");
+    xml.push_str("<policyconfig>\n");
+    xml.push_str("  <vendor>AetherOS</vendor>\n");
+    xml.push_str("  <vendor_url>https://aetheros.invalid</vendor_url>\n");
+    xml.push_str("  <icon_name>system-run</icon_name>\n");
+    xml.push_str(&format!(
+        "  <!-- Actions: {}; permission {}; an answer is never remembered. -->\n",
+        xml_escape(&keys.join(", ")),
+        xml_escape(&contract.permission)
+    ));
+    xml.push_str(&format!(
+        "  <action id=\"{}\">\n",
+        xml_escape(&contract.polkit_action_id)
+    ));
+    xml.push_str(&format!(
+        "    <description>{}</description>\n",
+        xml_escape("Start, stop or restart a system service")
+    ));
+    xml.push_str(&format!(
+        "    <message>{}</message>\n",
+        xml_escape("Authentication is required to change the state of a system service")
+    ));
+    xml.push_str("    <defaults>\n");
+    xml.push_str("      <allow_any>auth_admin</allow_any>\n");
+    xml.push_str("      <allow_inactive>auth_admin</allow_inactive>\n");
+    xml.push_str("      <allow_active>auth_admin</allow_active>\n");
+    xml.push_str("    </defaults>\n");
+    xml.push_str("  </action>\n");
+    xml.push_str("</policyconfig>\n");
+    xml
+}
+
+fn xml_escape(text: &str) -> String {
+    text.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+}
+
+/// Argument vector for calling the systemd manager over D-Bus.
+///
+/// `busctl call org.freedesktop.systemd1 /org/freedesktop/systemd1
+/// org.freedesktop.systemd1.Manager StartUnit ss <unit> replace` — systemd
+/// authorizes the call with its own `org.freedesktop.systemd1.manage-units`
+/// polkit action; `busctl` is used instead of linking libdbus so the binary has
+/// no new dependency.
+pub fn systemd_argv(plan: &ServiceActionPlan) -> Vec<String> {
+    [
+        "busctl",
+        "call",
+        "org.freedesktop.systemd1",
+        "/org/freedesktop/systemd1",
+        "org.freedesktop.systemd1.Manager",
+        plan.action.systemd_method(),
+        "ss",
+        plan.unit.as_str(),
+        "replace",
+    ]
+    .iter()
+    .map(|part| part.to_string())
+    .collect()
+}
+
+/// How a [`SystemdDbusExecutor`] runs an argument vector.
+type Runner = Box<dyn Fn(&[String]) -> Result<String, String>>;
+
+/// Runs a confirmed plan through systemd's D-Bus manager (TM-17).
+///
+/// The runner is injected so the tests prove the exact argument vector without
+/// spawning anything; [`Self::system`] is the only variant that starts a
+/// process, and only after a [`ServiceActionPrompt`] confirmed the plan.
+pub struct SystemdDbusExecutor {
+    runner: Runner,
+    calls: RefCell<Vec<Vec<String>>>,
+}
+
+impl SystemdDbusExecutor {
+    /// Plans instead of spawning: records the argument vector, returns it.
+    pub fn dry_run() -> Self {
+        Self::with_runner(Box::new(|argv: &[String]| {
+            Ok(format!("planned: {}", argv.join(" ")))
+        }))
+    }
+
+    /// Calls the real systemd manager. Hardware-gated: needs systemd, polkit and
+    /// `busctl` on AetherOS.
+    pub fn system() -> Self {
+        Self::with_runner(Box::new(|argv: &[String]| {
+            let (program, args) = argv
+                .split_first()
+                .ok_or_else(|| "empty command vector".to_string())?;
+            let output = std::process::Command::new(program)
+                .args(args)
+                .output()
+                .map_err(|error| format!("cannot run {program}: {error}"))?;
+            if output.status.success() {
+                Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+            } else {
+                let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+                Err(if stderr.is_empty() {
+                    format!("{program} exited with {}", output.status)
+                } else {
+                    stderr
+                })
+            }
+        }))
+    }
+
+    fn with_runner(runner: Runner) -> Self {
+        Self {
+            runner,
+            calls: RefCell::new(Vec::new()),
+        }
+    }
+
+    /// Argument vectors this executor was asked to run.
+    pub fn calls(&self) -> std::cell::Ref<'_, Vec<Vec<String>>> {
+        self.calls.borrow()
+    }
+}
+
+impl ServiceExecutor for SystemdDbusExecutor {
+    fn run(&self, plan: &ServiceActionPlan) -> Result<String, String> {
+        let argv = systemd_argv(plan);
+        let output = (self.runner)(&argv)?;
+        if output.starts_with("planned:") {
+            self.calls.borrow_mut().push(argv);
+        }
+        Ok(output)
+    }
+}
+
 /// The permission-prompt state machine (TM-17).
 ///
 /// A request only *plans* the action. Confirming hands the pending plan to the
@@ -461,9 +637,71 @@ mod tests {
         }
         assert_eq!(contract.cancel_label, "Cancel");
         assert!(contract.protected_reason("aether-lifecycled.service").is_some());
+        assert_eq!(contract.polkit_action_id, POLKIT_ACTION_ID);
+        assert_eq!(contract.polkit_policy_path, POLKIT_POLICY_PATH);
         let json = serde_json::to_string(&contract).unwrap();
         assert!(json.contains("\"permission\":\"admin.authorize\""));
         assert!(json.contains("\"action\":\"restart\""));
+        assert!(json.contains("\"polkit_action_id\":\"org.aether.taskmanager.service-action\""));
+    }
+
+    #[test]
+    fn shipped_polkit_policy_is_generated_from_the_contract() {
+        // The file under polkit/ is compiled in, so this test fails the moment
+        // the contract and the installed policy drift apart.
+        let generated = polkit_policy_xml(&ServiceActionContract::default());
+        assert_eq!(POLKIT_POLICY_FILE, generated);
+        assert!(POLKIT_POLICY_FILE.contains(&format!("<action id=\"{POLKIT_ACTION_ID}\">")));
+        assert!(POLKIT_POLICY_FILE.contains("<allow_active>auth_admin</allow_active>"));
+        assert!(!POLKIT_POLICY_FILE.contains("auth_admin_keep"), "answers are never remembered");
+        // One action right covers the three verbs the tab offers.
+        for action in ServiceAction::ALL {
+            assert!(POLKIT_POLICY_FILE.contains(action.key()));
+        }
+        assert_eq!(POLKIT_POLICY_FILE.matches("<action id=").count(), 1);
+    }
+
+    #[test]
+    fn systemd_executor_calls_the_manager_methods_behind_a_confirm() {
+        let executor = SystemdDbusExecutor::dry_run();
+        let mut prompt = ServiceActionPrompt::new();
+        // Nothing reaches the executor before the confirm.
+        prompt.request("aether-powerd.service", ServiceAction::Restart);
+        assert!(executor.calls().is_empty());
+
+        let outcome = prompt.confirm(&executor);
+        assert!(matches!(outcome, ServiceActionOutcome::Executed { .. }));
+        let calls = executor.calls();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(
+            calls[0],
+            vec![
+                "busctl",
+                "call",
+                "org.freedesktop.systemd1",
+                "/org/freedesktop/systemd1",
+                "org.freedesktop.systemd1.Manager",
+                "RestartUnit",
+                "ss",
+                "aether-powerd.service",
+                "replace",
+            ]
+        );
+
+        // Mapping per verb is pinned so the UI key cannot drift from the call.
+        for (action, method) in [
+            (ServiceAction::Start, "StartUnit"),
+            (ServiceAction::Stop, "StopUnit"),
+            (ServiceAction::Restart, "RestartUnit"),
+        ] {
+            let plan = planner()
+                .request("aether-powerd.service", action)
+                .plan()
+                .unwrap()
+                .clone();
+            assert_eq!(systemd_argv(&plan)[5], method);
+            assert_eq!(systemd_argv(&plan)[7], "aether-powerd.service");
+        }
     }
 
     #[test]

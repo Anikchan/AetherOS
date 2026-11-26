@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 use crate::analytics::{BatteryAnalytics, BatterySample};
 use crate::charge::SysfsChargeLimiter;
 use crate::estimator::{EstimatorConfig, RateEstimator};
+use crate::pack_d::{NetworkRecorder, NetworkSourceStatus, NETWORK_SNAPSHOT_PATH};
 use crate::policy::{LowBatteryState, PowerPolicyConfig, PowerPolicyImpl};
 use crate::screentime::ScreenTimeStore;
 use crate::tuner::{
@@ -34,6 +35,11 @@ pub struct PowerdConfig {
     pub screen_time_path: PathBuf,
     pub background_policy_path: PathBuf,
     pub charge_limit: Option<u8>,
+    /// Pack D socket-accounting snapshot (TM-12/TM-15); absent when the pack is
+    /// not installed, which the recorder reports honestly.
+    pub pack_d_snapshot_path: PathBuf,
+    /// Persisted Pack D hourly buckets for the App history window.
+    pub pack_d_history_path: PathBuf,
 }
 
 impl Default for PowerdConfig {
@@ -66,6 +72,8 @@ impl Default for PowerdConfig {
             screen_time_path: state.join("screen-time.json"),
             background_policy_path: runtime.join("background-policy.json"),
             charge_limit: None,
+            pack_d_snapshot_path: PathBuf::from(NETWORK_SNAPSHOT_PATH),
+            pack_d_history_path: state.join("pack-d-network.json"),
         }
     }
 }
@@ -118,6 +126,8 @@ pub struct PowerDaemon {
     charge: Box<dyn ChargeLimiter>,
     analytics: BatteryAnalytics,
     screentime: ScreenTimeStore,
+    pack_network: NetworkRecorder,
+    pack_status: NetworkSourceStatus,
     last_status: Option<BatteryStatus>,
     last_profile: Option<PowerProfile>,
     log: Vec<PowerLogEntry>,
@@ -142,6 +152,10 @@ impl PowerDaemon {
         };
         let mut policy = PowerPolicyImpl::new(config.policy);
         policy.set_charge_limit(config.charge_limit);
+        let mut pack_network = NetworkRecorder::at(config.pack_d_snapshot_path.clone());
+        // Buckets from an earlier run are additive; a missing file is normal.
+        let _ = pack_network.load_history(&config.pack_d_history_path);
+        let pack_status = pack_network.status();
         Self {
             config,
             policy,
@@ -154,6 +168,8 @@ impl PowerDaemon {
             charge: mechanisms.charge,
             analytics,
             screentime,
+            pack_network,
+            pack_status,
             last_status: None,
             last_profile: None,
             log: Vec::new(),
@@ -188,10 +204,24 @@ impl PowerDaemon {
 
     /// One telemetry sample + policy evaluation.
     pub fn tick(&mut self, now: Instant, epoch: u64, screen_on: bool) -> Vec<PowerAction> {
+        // Pack D network accounting (TM-12/TM-15) runs first and independently
+        // of the battery: a machine without a battery still fills the buckets.
+        let pack = self.pack_network.sample(epoch.saturating_mul(1_000));
+        if pack.status != self.pack_status {
+            match &pack.message {
+                Some(message) => self.push_log(message.clone()),
+                None => self.push_log(format!("Pack D network accounting: {:?}", pack.status)),
+            }
+            self.pack_status = pack.status;
+        }
+
         let status = match self.telemetry.read() {
             Ok(status) => status,
             Err(error) => {
                 self.push_log(format!("battery telemetry unavailable: {error}"));
+                if epoch.saturating_sub(self.persisted_at) >= 300 {
+                    self.persist(epoch);
+                }
                 return Vec::new();
             }
         };
@@ -368,6 +398,11 @@ impl PowerDaemon {
         &self.screentime
     }
 
+    /// The Pack D network recorder behind the App history network column.
+    pub fn pack_d_network(&self) -> &NetworkRecorder {
+        &self.pack_network
+    }
+
     /// Screen/focus events from the compositor or shell.
     pub fn on_screen_state(&mut self, on: bool, epoch: u64) {
         self.screentime.set_screen_on(on, epoch);
@@ -389,6 +424,7 @@ impl PowerDaemon {
         let _ = self.analytics.save(&self.config.battery_health_path);
         self.screentime.flush(epoch);
         let _ = self.screentime.save(&self.config.screen_time_path);
+        let _ = self.pack_network.save(&self.config.pack_d_history_path);
         self.persisted_at = epoch;
     }
 
@@ -539,7 +575,7 @@ mod tests {
         let queue = Arc::new(Mutex::new(VecDeque::new()));
         let last = Arc::new(Mutex::new(BatteryStatus::default()));
         let config = PowerdConfig {
-            state_dir: dir,
+            state_dir: dir.clone(),
             dry_run: true,
             sample_interval_secs: 1,
             policy: PowerPolicyConfig::default(),
@@ -560,6 +596,8 @@ mod tests {
                 std::process::id()
             )),
             charge_limit: None,
+            pack_d_snapshot_path: dir.join("net-accounting"),
+            pack_d_history_path: dir.join("pack-d-network.json"),
         };
         let daemon = PowerDaemon::new(
             config,
@@ -687,5 +725,128 @@ mod tests {
         let (mut daemon, _recorder, _queue) = harness();
         daemon.set_low_battery_action(LowBatteryAction::Hibernate);
         assert_eq!(daemon.policy_config().low_action, LowBatteryAction::Hibernate);
+    }
+
+    #[test]
+    fn pack_d_network_keeps_recording_without_battery_telemetry() {
+        // A desktop or a failed UPower read must not stop the network buckets.
+        struct DeadBattery;
+        impl BatteryTelemetry for DeadBattery {
+            fn read(&self) -> Result<BatteryStatus, PowerError> {
+                Err(PowerError::Unsupported("no battery".into()))
+            }
+        }
+        let dir = std::env::temp_dir().join(format!(
+            "aether-powerd-nobat-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let snapshot = dir.join("net-accounting");
+        let recorder = Arc::new(Mutex::new(Recorder::default()));
+        let config = PowerdConfig {
+            state_dir: dir.clone(),
+            dry_run: true,
+            sample_interval_secs: 1,
+            policy: PowerPolicyConfig::default(),
+            exclusions_path: dir.join("exclusions.toml"),
+            battery_health_path: dir.join("battery.json"),
+            screen_time_path: dir.join("screen.json"),
+            background_policy_path: dir.join("background.json"),
+            charge_limit: None,
+            pack_d_snapshot_path: snapshot.clone(),
+            pack_d_history_path: dir.join("pack-d-network.json"),
+        };
+        let mut daemon = PowerDaemon::new(
+            config,
+            PowerMechanisms {
+                telemetry: Box::new(DeadBattery),
+                profiles: Box::new(FakeProfiles(recorder.clone())),
+                sleep: Box::new(FakeSleep(recorder.clone())),
+                background: Box::new(FakeBackground(recorder.clone())),
+                charge: Box::new(FakeCharge(recorder)),
+            },
+            Some(Vec::new()),
+        );
+        let write = |rx: u64, tx: u64| {
+            std::fs::write(
+                &snapshot,
+                format!(
+                    "{}\norg.aether.Browser {rx} {tx}\n",
+                    crate::pack_d::NETWORK_SNAPSHOT_HEADER
+                ),
+            )
+            .unwrap();
+        };
+        write(1_000, 100);
+        assert!(daemon.tick(Instant::now(), 1_000, true).is_empty());
+        write(3_000, 200);
+        assert!(daemon.tick(Instant::now(), 1_015, true).is_empty());
+        assert_eq!(
+            daemon
+                .pack_d_network()
+                .history()
+                .totals_for("org.aether.Browser", 0),
+            (2_000, 100)
+        );
+        // The early return still persists on the 300 s cadence.
+        daemon.tick(Instant::now(), 1_400, true);
+        assert!(dir.join("pack-d-network.json").exists());
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn ticks_fill_the_pack_d_network_buckets_and_persist_them() {
+        let (mut daemon, _recorder, queue) = harness();
+        let snapshot = daemon.config().pack_d_snapshot_path.clone();
+
+        // Pack D not installed: reported honestly, no buckets invented.
+        queue
+            .lock()
+            .unwrap()
+            .push_back(status(80.0, PowerSource::Ac, false));
+        daemon.tick(Instant::now(), 1_000, true);
+        assert_eq!(
+            daemon.pack_d_network().status(),
+            NetworkSourceStatus::NotInstalled
+        );
+        assert!(daemon.pack_d_network().history().apps().is_empty());
+
+        // The loader dumps the map; the next ticks roll the deltas up.
+        std::fs::create_dir_all(snapshot.parent().unwrap()).unwrap();
+        let write = |rx: u64, tx: u64| {
+            std::fs::write(
+                &snapshot,
+                format!(
+                    "{}\norg.aether.Browser {rx} {tx}\n",
+                    crate::pack_d::NETWORK_SNAPSHOT_HEADER
+                ),
+            )
+            .unwrap();
+        };
+        write(1_000, 200);
+        daemon.tick(Instant::now(), 1_015, true);
+        assert_eq!(
+            daemon.pack_d_network().status(),
+            NetworkSourceStatus::Reported
+        );
+        write(5_000, 1_200);
+        daemon.tick(Instant::now(), 1_030, true);
+        assert_eq!(
+            daemon
+                .pack_d_network()
+                .history()
+                .totals_for("org.aether.Browser", 0),
+            (4_000, 1_000)
+        );
+
+        // Persisting on the 300 s cadence writes the hourly buckets.
+        daemon.persist(1_300);
+        let history_path = daemon.config().pack_d_history_path.clone();
+        let loaded = crate::pack_d::load_history(&history_path).unwrap();
+        assert_eq!(loaded.totals_for("org.aether.Browser", 0), (4_000, 1_000));
     }
 }

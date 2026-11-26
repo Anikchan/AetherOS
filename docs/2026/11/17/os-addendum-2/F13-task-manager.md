@@ -120,17 +120,29 @@ The "Fewer details / More details" toggle switches between this compact view and
   (`apps/taskmanager/src/service_actions.rs`) validates the unit, builds the
   `systemctl <verb> <unit>` plan with the `admin.authorize` permission prompt,
   and only a confirmed plan reaches a `ServiceExecutor` — exactly once. The
-  contract is published by `--service-actions`; D10 §5.3 records the fields.
-  Running the plan (systemd D-Bus/polkit) is hardware-gated.
+  executor is now real: `SystemdDbusExecutor` calls systemd's manager over D-Bus
+  (`busctl … StartUnit|StopUnit|RestartUnit ss <unit> replace`) and the shipped
+  polkit policy (`apps/taskmanager/polkit/org.aether.taskmanager.service-action.policy`,
+  `auth_admin`, no retained answers) is generated from the same contract and
+  compiled in, so the UI, the call and the policy cannot drift. The CLI reaches
+  it only with an explicit confirm (`--service-action UNIT restart --yes`);
+  without `--yes` it prints the plan. Running it for real needs systemd, polkit
+  and `busctl` on AetherOS (hardware-gated).
 - **TM-12 App history** — energy comes from F14; the CPU time and network
-  columns are wired to the Pack D contract (`AppCpuTime`,
-  `AppNetworkHistory`), hourly buckets over the 7-day window. Without Pack D the
-  columns read "Not reported" and the tab note names the pack.
+  columns read the Pack D recorders that run in the daemons:
+  `aether-powerd` samples the socket-accounting snapshot on every tick and
+  `aether-lifecycled` samples DRM fdinfo every 30 s, both rolling deltas into
+  8-day hourly buckets that are persisted next to the daemon state. The window
+  loads the daemon's network buckets with `--pack-d-history`, so the columns
+  show history recorded while the Activity Manager was closed. Without Pack D
+  the columns read "Not reported" and the tab note names the pack.
 - **TM-09 / TM-15 Pack D** — the sampling and aggregation model exists:
   strict socket-accounting snapshot parsing, delta rates with counter-reset
-  handling, and per-engine GPU busy shares from DRM fdinfo. The eBPF program
-  attach, the map dump and validation on the reference Intel/AMD GPUs are
-  hardware-gated; the contract lists them under `hardware_gated`.
+  handling, per-engine GPU busy shares from DRM fdinfo, and per-app GPU
+  attribution through the process cgroup. The column order is pinned by
+  `apps/taskmanager/tests/tables.rs`. The eBPF program attach, the map dump and
+  validation on the reference Intel/AMD GPUs are hardware-gated; the contract
+  lists them under `hardware_gated`.
 - **Still open** — TM-AC-01 (500 ms open, shell/compositor), TM-AC-02's live
   per-app network numbers (need Pack D installed), TM-AC-04..07 and G-TM1/G-TM2
   on the reference machines.

@@ -577,18 +577,10 @@ fn apply_cpu_weight(pid: u32, fs: &ProcFs, weight: u32) -> io::Result<()> {
 }
 
 /// Extract the app ID from `.../aether-app-<id>-<hash>.scope`.
-pub fn app_id_from_scope(cgroup: &str) -> Option<String> {
-    let name = cgroup.rsplit('/').find(|part| part.starts_with("aether-app-"))?;
-    let stem = name
-        .strip_prefix("aether-app-")?
-        .strip_suffix(".scope")?;
-    let (id, hash) = stem.rsplit_once('-')?;
-    if hash.len() == 8 && hash.chars().all(|c| c.is_ascii_hexdigit()) {
-        Some(id.to_string())
-    } else {
-        None
-    }
-}
+///
+/// Owned by `aether-lifecycled` (the cgroup authority); re-exported here so the
+/// Activity Manager and the daemons parse scopes with one implementation.
+pub use aether_lifecycled::identity::app_id_from_scope;
 
 fn scan_startup_dir(dir: &Path, scope: StartupScope) -> Vec<StartupItem> {
     let Ok(entries) = fs::read_dir(dir) else {

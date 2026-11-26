@@ -53,6 +53,22 @@ Must NOT touch: `os-build/kernel/`, `os-build/buildroot/`, `compositor/`,
 
 ## Progress log
 
+- 2026-11-27 (round 4): Pack D recorders wired into the daemons — `powerd`
+  samples the socket-accounting snapshot on every tick and `lifecycled` samples
+  DRM fdinfo every 30 s, both rolling deltas into 8-day hourly buckets that are
+  persisted next to the daemon state and reloaded on start, so the App history
+  columns fill while the window is closed (`--pack-d-history` loads them). TM-17
+  gained the generated polkit policy (`apps/taskmanager/polkit/`, `auth_admin`,
+  no retained answers, `make check-service-action-policy`) and the real systemd
+  D-Bus `SystemdDbusExecutor` (`busctl … StartUnit|StopUnit|RestartUnit ss <unit>
+  replace`), reachable only from `--service-action … --yes`. Render/tab tests now
+  pin the Pack D column order and the Stop/Restart/Start buttons. 211 tests in
+  the three crates (lifecycled 69+2, powerd 72, taskmanager 65+3). Docs: D10
+  §5.2/§5.3/§9, F13 §10, F15 Pack D, taskmanager README, project README, CI
+  contract checks. Evidence:
+  `docs/2026/11/27/results/pack-d-recorders-service-executor-s4.md`.
+  Hardware-gated: eBPF attach/map dump, DRM validation on the reference GPUs,
+  and the confirmed `busctl`/polkit path on AetherOS.
 - 2026-11-27 (round 2): Activity Manager table tabs (App history, Startup apps,
   Users, Details, Services) and seccomp as the final sandbox layer. 91 tests
   across taskmanager + sandbox. Evidence:

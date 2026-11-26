@@ -13,6 +13,7 @@ use std::time::{Duration, Instant};
 use aether_lifecycled::cgroup::{CgroupFs, MemoryReader};
 use aether_lifecycled::daemon::{system_daemon, Daemon, Mechanisms, RuntimeConfig};
 use aether_lifecycled::identity::{AppId, MemoryScopeManager};
+use aether_lifecycled::pack_d::GPU_SAMPLE_INTERVAL_SECONDS;
 use aether_lifecycled::policy::{Event, PolicyConfig};
 use aether_lifecycled::pressure::PressureLevel;
 use aether_lifecycled::protocol::SocketNotifier;
@@ -95,21 +96,29 @@ fn main() {
 
 /// Build a daemon honoring the `dry_run` flag.
 fn build_daemon(config: RuntimeConfig) -> Daemon {
-    if !config.dry_run {
+    let pack_d = config.pack_d;
+    let proc_root = config.pack_d_proc_root.clone();
+    let mut daemon = if config.dry_run {
+        let cgroup = CgroupFs::dry_run(config.cgroup_root.clone());
+        Daemon::new(
+            config.clone(),
+            Mechanisms {
+                scopes: Box::new(MemoryScopeManager::default()),
+                freezer: Box::new(cgroup.clone()),
+                reclaimer: Box::new(cgroup.clone()),
+                killer: Box::new(cgroup.clone()),
+                memory: Box::new(cgroup),
+                notifier: Box::new(SocketNotifier::at(config.socket_dir.clone())),
+            },
+        )
+    } else {
         return system_daemon(config);
+    };
+    // Pack D GPU detail reads /proc only, so it runs in dry-run mode too.
+    if pack_d {
+        daemon.enable_pack_d(aether_lifecycled::pack_d::GpuRecorder::at(proc_root));
     }
-    let cgroup = CgroupFs::dry_run(config.cgroup_root.clone());
-    Daemon::new(
-        config.clone(),
-        Mechanisms {
-            scopes: Box::new(MemoryScopeManager::default()),
-            freezer: Box::new(cgroup.clone()),
-            reclaimer: Box::new(cgroup.clone()),
-            killer: Box::new(cgroup.clone()),
-            memory: Box::new(cgroup),
-            notifier: Box::new(SocketNotifier::at(config.socket_dir.clone())),
-        },
-    )
+    daemon
 }
 
 /// Event loop. The compositor/portal event source (S2/S3) feeds
@@ -123,6 +132,7 @@ fn run_loop(daemon: &mut Daemon) -> ! {
         .unwrap_or_else(|| PathBuf::from("/run/user/1000"))
         .join("aether");
     let control_path = runtime.join("lifecycled-control.jsonl");
+    let mut last_pack_d_ms = 0u64;
     loop {
         let now = Instant::now();
         daemon.poll_timers(now);
@@ -133,6 +143,13 @@ fn run_loop(daemon: &mut Daemon) -> ! {
         if level != last_pressure {
             daemon.handle(Event::PressureChanged(level), now);
             last_pressure = level;
+        }
+
+        // Pack D GPU detail (TM-09) at the D10 §3 closed-window cadence.
+        let epoch_ms = aether_lifecycled::daemon::epoch_millis();
+        if epoch_ms.saturating_sub(last_pack_d_ms) >= GPU_SAMPLE_INTERVAL_SECONDS * 1_000 {
+            daemon.sample_pack_d(epoch_ms);
+            last_pack_d_ms = epoch_ms;
         }
 
         write_status(daemon);
@@ -188,6 +205,8 @@ fn run_simulation() {
         state_dir: dir.join("state"),
         dry_run: true,
         policy: PolicyConfig::default(),
+        pack_d: false,
+        pack_d_proc_root: PathBuf::from(aether_lifecycled::pack_d::PROC_ROOT),
     };
     let mut daemon = Daemon::new(
         config,

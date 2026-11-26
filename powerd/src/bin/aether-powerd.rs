@@ -41,6 +41,15 @@ fn main() {
             if let Ok(parsed) = toml::from_str::<toml::Value>(&text) {
                 if let Some(dir) = parsed.get("state_dir").and_then(|v| v.as_str()) {
                     config.state_dir = PathBuf::from(dir);
+                    // The config file names the directory; keep the Pack D
+                    // history next to the other stores.
+                    config.pack_d_history_path = config.state_dir.join("pack-d-network.json");
+                }
+                if let Some(path) = parsed.get("pack_d_snapshot_path").and_then(|v| v.as_str()) {
+                    config.pack_d_snapshot_path = PathBuf::from(path);
+                }
+                if let Some(path) = parsed.get("pack_d_history_path").and_then(|v| v.as_str()) {
+                    config.pack_d_history_path = PathBuf::from(path);
                 }
                 if let Some(dry) = parsed.get("dry_run").and_then(|v| v.as_bool()) {
                     config.dry_run = dry;
