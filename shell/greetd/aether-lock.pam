@@ -1,0 +1,12 @@
+# PAM service for the in-session lock screen (P4-T06).
+#
+# Installed as /etc/pam.d/aether-lock. Used by the `aether-shell` lock screen
+# when the shell is built with `--features pam` and linked against libpam.
+# greetd uses its own service ("greetd") for the login screen, so this file only
+# covers unlocking an existing session.
+#
+# It only authenticates and accounts; it does not open a new session, change the
+# password or write login records.
+
+auth      required  pam_unix.so   try_first_pass nullok
+account   required  pam_unix.so

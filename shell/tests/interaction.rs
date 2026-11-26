@@ -13,6 +13,7 @@ use i_slint_backend_testing::{ElementHandle, ElementQuery};
 use slint::{ComponentHandle, Model};
 use slint::platform::PointerEventButton;
 
+use aether_shell::auth::LocalCredentials;
 use aether_shell::config::{Category, SettingsStore};
 use aether_shell::model::Overlay;
 use aether_shell::services::{Battery, Services};
@@ -103,6 +104,8 @@ fn shell_surfaces_are_interactive() {
             Box::new(services),
             SettingsStore::new(root.clone()),
         );
+        // Pin the lock-screen backend so the test never touches real PAM.
+        controller.set_authenticator(Box::new(LocalCredentials::default()));
         controller.ui().show().unwrap();
         controller.ui().window().set_size(slint::PhysicalSize::new(1440, 900));
 

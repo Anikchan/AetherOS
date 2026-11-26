@@ -1,0 +1,23 @@
+# AetherOS greeter configuration (P4-T06)
+#
+# Installed as /etc/aether/greetd/greeter.toml and read by `aether-greeter`.
+# greetd itself starts the greeter; this file only says who is pre-filled and
+# which command greetd should start after a successful PAM login.
+
+# Pre-filled user name on the login screen. Not a security boundary: PAM still
+# authenticates the real account.
+user = "aether"
+
+# Wrong passwords before the greeter cancels the greetd session.
+max_attempts = 3
+
+# Session command, started by greetd after authentication. Keep it an absolute
+# path on the installed system (`/usr/bin/aether-shell`).
+session = ["aether-shell"]
+
+# Environment added to the session PAM environment.
+env = [
+    "XDG_SESSION_TYPE=wayland",
+    "XDG_CURRENT_DESKTOP=AetherOS",
+    "XDG_SESSION_DESKTOP=aether",
+]

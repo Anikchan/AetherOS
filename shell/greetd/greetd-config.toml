@@ -1,0 +1,16 @@
+# greetd configuration for AetherOS (P4-T06)
+#
+# Installed as /etc/greetd/config.toml (greetd also accepts config.toml copy at
+# /etc/greetd/config.toml.d/*.toml). greetd runs as root, owns PAM and the
+# session lifecycle; `aether-greeter` runs as the unprivileged `greeter` user
+# and only speaks the greetd IPC protocol (GREETD_SOCK is exported by greetd).
+
+[terminal]
+vt = 1
+sway = false
+
+[default_session]
+# The greeter, not the user session. The greeter asks greetd to start the
+# session command from /etc/aether/greetd/greeter.toml after a successful login.
+command = "/usr/bin/aether-greeter"
+user = "greeter"

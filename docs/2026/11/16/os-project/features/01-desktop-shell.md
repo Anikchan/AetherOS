@@ -61,7 +61,7 @@ Priority key: MVP (needed for the first daily-driver build), v1 (needed for rele
 | SHL-AC-05 | Focus mode hides notifications during the scheduled time and shows them after | Implemented, headless-verified — the daily window comes from `notifications.toml` (`focus-start`/`focus-end`, overnight supported), manual Focus runs two hours, the minute tick expires it and refreshes cards and badge; the settings pane edits the keys |
 | SHL-AC-06 | Snap to halves and quarters works with a mouse drag and a keyboard shortcut | Not tested — compositor work (P3-T04) |
 | SHL-AC-07 | Glass tiers switch without restart; Minimal tier used when reduce transparency is on | Partially verified — tier selection and the reduce-transparency override are unit-tested; live switching needs the effect pipeline (P3-T05) |
-| SHL-AC-08 | Lock screen rejects a wrong password and accepts the right one | Implemented, headless-verified — salted digest, constant-time compare, and the screen is modal: scrim, Escape and shortcuts cannot dismiss it (asserted); PAM/greetd integration is the remaining step |
+| SHL-AC-08 | Lock screen rejects a wrong password and accepts the right one | Implemented, headless-verified (2026-11-26) — the screen is modal (scrim, Escape and shortcuts cannot dismiss it), five wrong attempts rate-limit the surface, and authentication goes through an `Authenticator` backend: greetd + PAM for login, `libpam` (`aether-lock` service) for the in-session lock, with the salted-digest prototype as the development fallback. PAM FFI is type-checked (`cargo check --features pam`); on-device PAM confirmation pending the image build |
 | SHL-AC-09 | Every settings category opens and every change is written to the config file | Implemented, headless-verified — categories switch the page (clicked in the test), rows are generated from the F4 schema, each shows file+key, and writes are atomic and read back from disk |
 | SHL-AC-10 | Two monitors with different scales work without restart | Not tested — compositor work (P3-T02) |
 | SHL-AC-11 | Screen reader announces menu bar items and launcher results | Partially verified — every interactive element sets an accessible role/label (asserted by the headless tests); AT-SPI session pending |
@@ -88,3 +88,53 @@ Status values: Not tested, Pass (date and evidence), Fail (ticket ID).
   `input/keybindings.toml` keys.
 - The on-device gate for this document's acceptance table is the layer-shell
   host from P3-T02 plus greetd/PAM for the lock screen.
+
+## 8. Login and Lock Screen (P4-T06, 2026-11-26)
+
+Two surfaces share one protocol implementation:
+
+- **Login (before a session exists).** `aether-greeter` runs as the unprivileged
+  `greeter` user under greetd. It speaks the documented greetd IPC protocol
+  (`shell/src/greetd.rs`: native-endian `u32` length prefix + JSON, requests
+  `create_session` / `post_auth_message_response` / `start_session` /
+  `cancel_session`, replies `auth_message` / `success` / `error`). greetd runs as
+  root and executes PAM itself, so **the greeter holds no credentials logic**.
+  The login state machine (`shell/src/greeter.rs`) answers `info`/`error`
+  messages with no response, returns the first `visible`/`secret` prompt to the
+  UI, counts `auth_error` failures and cancels the session after
+  `max_attempts`. `GreeterController` (`shell/src/greeter_app.rs`) drives the
+  `GreeterRoot` surface: one "Sign in" press performs create-session, the typed
+  password response and start-session.
+- **Lock (inside a running session).** There is no greetd to ask, so the lock
+  screen uses the `Authenticator` trait (`shell/src/auth.rs`). On Linux images
+  the shell is built with `--features pam` and authenticates against the
+  `/etc/pam.d/aether-lock` service through a small `libpam` binding
+  (`pam_start` / `pam_authenticate` / `pam_acct_mgmt` / `pam_end`, plus one
+  conversation callback). Only `PAM_SUCCESS` unlocks; `auth_error`, `maxtries`
+  and account states show a specific message; service errors show "unavailable"
+  and do not count as a wrong password. The FFI compiles only with the feature,
+  so the macOS development host and default CI builds use the salted-digest
+  prototype (the demo account `aether`/`aether`).
+
+Deployment files live in `shell/greetd/`:
+
+| File | Installed as | Purpose |
+| --- | --- | --- |
+| `greetd-config.toml` | `/etc/greetd/config.toml` | terminal VT and `default_session` = `aether-greeter` |
+| `greeter.toml` | `/etc/aether/greetd/greeter.toml` | pre-filled user, attempt budget, session command and environment |
+| `aether-lock.pam` | `/etc/pam.d/aether-lock` | auth/account only, no session or password change |
+
+Behaviour and evidence:
+
+- `aether-greeter --status` reports the socket, session command and whether the
+  build links PAM; `--render <dir>` writes `greeter-login.png` and
+  `greeter-denied.png`; `--stdin` logs in on a terminal (usable in the QEMU
+  image before the layer-shell host lands).
+- Tests: greetd framing and every response variant; request JSON exactly as
+  documented; a real UNIX-socket round-trip; login flow (prompt, info skipping,
+  denial with attempts left, lockout, missing greetd, refused start); greeter
+  controller (single-press login, retry, visible prompt, lockout, backend
+  unavailable); PAM status mapping and conversation; lock-screen rate limit and
+  backend selection.
+- Remaining on-device step: build the image with `--features pam`, install the
+  three files and confirm SHL-AC-08 against the real account.

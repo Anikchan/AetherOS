@@ -7,6 +7,9 @@
 
 use crate::IconKind;
 
+/// Failed unlock attempts before the lock screen rate-limits (SHL-AC-08).
+pub const MAX_UNLOCK_ATTEMPTS: u32 = 5;
+
 /// Overlay surfaces. Codes are shared with the `.slint` side (`overlay`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Overlay {
@@ -306,6 +309,10 @@ pub struct ShellState {
     pub settings_rows: Vec<crate::config::SettingRow>,
     pub lock_error: String,
     pub unlocking: bool,
+    /// Consecutive failed unlock attempts (rate limit, SHL-AC-08).
+    pub unlock_failures: u32,
+    /// When set, the lock screen refuses attempts until this minute tick.
+    pub lockout_until_minute: Option<u16>,
     pub dock_auto_hide: bool,
     pub credential: Credential,
 }
@@ -338,6 +345,8 @@ impl Default for ShellState {
             settings_rows: Vec::new(),
             lock_error: String::new(),
             unlocking: false,
+            unlock_failures: 0,
+            lockout_until_minute: None,
             dock_auto_hide: false,
             credential: Credential::new("aether-demo", "aether"),
         }
@@ -580,16 +589,49 @@ impl ShellState {
     }
 
     /// Lock screen: wrong passwords are rejected and cleared (F1 SHL-AC-08).
+    ///
+    /// Kept for the local prototype; the live shell goes through
+    /// [`ShellState::unlock_allowed`] / [`ShellState::unlock_denied`] so an
+    /// authenticator (PAM) decides.
     pub fn submit_unlock(&mut self, password: &str) -> bool {
         if self.credential.verify(password) {
-            self.unlocking = true;
-            self.lock_error.clear();
-            self.overlay = Overlay::None;
+            self.unlock_allowed();
             true
         } else {
-            self.unlocking = false;
-            self.lock_error = "Incorrect password — try again".to_string();
+            self.unlock_denied("Incorrect password — try again");
             false
+        }
+    }
+
+    /// Authenticated: leave the lock screen and clear the failure budget.
+    pub fn unlock_allowed(&mut self) {
+        self.unlocking = true;
+        self.lock_error.clear();
+        self.unlock_failures = 0;
+        self.lockout_until_minute = None;
+        self.overlay = Overlay::None;
+    }
+
+    /// Failed attempt: show why, and rate-limit after
+    /// [`MAX_UNLOCK_ATTEMPTS`] failures. The lockout lapses on the next minute
+    /// tick (`now_minute`), so there is no wall-clock dependency in tests.
+    pub fn unlock_denied(&mut self, message: &str) {
+        self.unlocking = false;
+        self.unlock_failures = self.unlock_failures.saturating_add(1);
+        if self.unlock_failures >= MAX_UNLOCK_ATTEMPTS {
+            self.lockout_until_minute = Some(self.now_minute.saturating_add(1));
+            self.lock_error =
+                "Too many attempts — try again in a minute".to_string();
+        } else {
+            self.lock_error = message.to_string();
+        }
+    }
+
+    /// True while the lock screen refuses further attempts (SHL-AC-08).
+    pub fn lockout_active(&self) -> bool {
+        match self.lockout_until_minute {
+            Some(until) => self.now_minute < until,
+            None => false,
         }
     }
 }
@@ -931,5 +973,37 @@ mod tests {
         assert_eq!(state.search_selected, 1);
         state.move_selection(1);
         assert_eq!(state.search_selected, 0);
+    }
+
+    #[test]
+    fn repeated_wrong_passwords_rate_limit_the_lock_screen() {
+        let mut state = ShellState::default();
+        state.overlay = Overlay::Lock;
+        for attempt in 1..MAX_UNLOCK_ATTEMPTS {
+            assert!(!state.submit_unlock("wrong"));
+            assert_eq!(state.unlock_failures, attempt);
+            assert!(!state.lockout_active());
+            assert!(state.lock_error.contains("Incorrect"));
+        }
+        // The fifth failure locks the screen for the next minute ...
+        assert!(!state.submit_unlock("wrong"));
+        assert_eq!(state.unlock_failures, MAX_UNLOCK_ATTEMPTS);
+        assert!(state.lockout_active());
+        assert!(state.lock_error.contains("Too many attempts"));
+        assert_eq!(state.overlay, Overlay::Lock);
+
+        // ... and the minute tick clears it, without unlocking on its own.
+        let until = state.lockout_until_minute.unwrap();
+        state.now_minute = until;
+        assert!(!state.lockout_active());
+        assert_eq!(state.overlay, Overlay::Lock);
+
+        // The right password unlocks, resets the budget and clears the message.
+        assert!(state.submit_unlock("aether"));
+        assert_eq!(state.overlay, Overlay::None);
+        assert!(state.unlocking);
+        assert_eq!(state.unlock_failures, 0);
+        assert!(state.lock_error.is_empty());
+        assert!(!state.lockout_active());
     }
 }

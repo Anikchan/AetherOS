@@ -5,13 +5,14 @@
 //! with `MockServices` and a temporary config root, then drive it through the
 //! headless element queries.
 
-use chrono::{Datelike, Timelike};
+use chrono::Timelike;
 use std::cell::RefCell;
 use std::rc::Rc;
 
 use crate::IconKind;
 use slint::{Model, ModelRc, VecModel};
 
+use crate::auth::{self, AuthOutcome, Authenticator};
 use crate::config::{self, Category, SettingKind, SettingsStore};
 use crate::desktop;
 use crate::model::{self, Notification, Overlay, PowerMode, SearchKind, ShellState, Window};
@@ -146,6 +147,9 @@ pub struct ShellController {
     store: SettingsStore,
     /// Spawn app processes on launch. Off in tests and in the renderer.
     spawn_apps: RefCell<bool>,
+    /// Lock-screen backend: PAM on Linux builds, the local prototype
+    /// elsewhere (P4-T06). Tests substitute a scripted backend.
+    authenticator: RefCell<Box<dyn Authenticator>>,
     pub log: RefCell<Vec<String>>,
 }
 
@@ -168,6 +172,7 @@ impl ShellController {
             services: RefCell::new(services),
             store,
             spawn_apps: RefCell::new(false),
+            authenticator: RefCell::new(auth::default_authenticator()),
             log: RefCell::new(Vec::new()),
         });
         controller.load_settings();
@@ -215,6 +220,17 @@ impl ShellController {
 
     pub fn set_spawn_apps(&self, enabled: bool) {
         *self.spawn_apps.borrow_mut() = enabled;
+    }
+
+    /// Replace the lock-screen backend (tests, and hosts that bring their own
+    /// PAM broker). P4-T06.
+    pub fn set_authenticator(&self, authenticator: Box<dyn Authenticator>) {
+        *self.authenticator.borrow_mut() = authenticator;
+    }
+
+    /// Name of the active lock-screen backend, for diagnostics.
+    pub fn authenticator_name(&self) -> String {
+        self.authenticator.borrow().name().to_string()
     }
 
     pub fn store(&self) -> &SettingsStore {
@@ -746,12 +762,35 @@ impl ShellController {
         self.sync();
     }
 
+    /// Lock screen submit (P4-T06): the backend decides, the model rate-limits,
+    /// and the surface shows the reason. Never keeps the password.
     fn submit_unlock(&self, password: &str) {
-        let unlocked = self.state.borrow_mut().submit_unlock(password);
-        if unlocked {
+        if self.state.borrow().lockout_active() {
+            // Rate-limited: do not even ask the backend (SHL-AC-08).
             self.ui.set_lock_password(slint::SharedString::new());
-            self.log.borrow_mut().push("unlocked".to_string());
+            self.sync();
+            return;
         }
+        let user = auth::session_user();
+        let outcome = self.authenticator.borrow().authenticate(&user, password);
+        let unlocked = outcome.is_allowed();
+        match outcome {
+            AuthOutcome::Allowed => {
+                self.state.borrow_mut().unlock_allowed();
+                self.log.borrow_mut().push("unlocked".to_string());
+            }
+            AuthOutcome::Unavailable(message) => {
+                // Backend down: say so, but do not count it as a wrong password.
+                let mut state = self.state.borrow_mut();
+                state.unlocking = false;
+                state.lock_error = message;
+            }
+            AuthOutcome::Denied(message) => {
+                self.state.borrow_mut().unlock_denied(&message);
+                self.log.borrow_mut().push("unlock-failed".to_string());
+            }
+        }
+        self.ui.set_lock_password(slint::SharedString::new());
         self.sync();
         if unlocked {
             self.ui.set_overlay(Overlay::None.code());
