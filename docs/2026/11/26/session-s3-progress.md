@@ -72,3 +72,17 @@ ui 1), config 34, ui 5 — all pass, 0 failed.
 - DA-AC-06 real audio, SHL-AC-* on-device rows, cold-launch/idle timings need
   AetherOS on the Dell (hardware paused).
 - P3-T03 XWayland validation, P3-T04 window management are S2 work.
+
+## Coordination note (2026-11-26, shared working tree)
+
+Commit `fcd0021` ("P4-T14: honest play/pause/seek edge cases") also contains
+S4's in-flight files (`apps/taskmanager/**`, `apps/runner/tests/**`,
+`update/tests/**`, `lifecycled/bench/**`, `installer/LIVE-USB.md`,
+`os-build/scripts/make-live-usb.sh`, design docs, `Cargo.lock`). Cause: the four
+sessions share one working tree and one Git index; S4 staged everything with
+`git add -A` between S3's staging and S3's `git commit`, so the commit swept the
+whole index. No work was lost and the commit is already pushed, so history was
+not rewritten; S3's own files are exactly the ones listed in the other two
+commits. **Mitigation for all sessions:** commit with
+`git commit --only -- <paths>` (or check `git diff --cached` immediately before
+committing) so another session's staged files cannot ride along.
