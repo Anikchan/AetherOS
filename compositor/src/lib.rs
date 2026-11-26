@@ -640,6 +640,7 @@ pub fn run() -> Result<(), String> {
     // Listening socket for Wayland clients.
     let socket_source = ListeningSocketSource::with_name("wayland-0")
         .map_err(|e| format!("bind wayland-0: {e:?}"))?;
+    println!("AETHER_COMPOSITOR_SOCKET_READY: wayland-0");
     event_loop
         .handle()
         .insert_source(socket_source, |stream, _, state| {
