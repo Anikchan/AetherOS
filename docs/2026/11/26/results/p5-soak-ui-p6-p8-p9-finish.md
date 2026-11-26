@@ -50,6 +50,16 @@ the contract-driven Energy column (`Energy ↓`, `High`/`Medium`/`Low`/
 `demo_rows` sample set because the dev host has no `/proc`; the labels, tones,
 sort order and header are the real contract values.
 
+## Commit attribution
+
+This round's files were staged for an S4 commit when a parallel session (S3)
+committed its own P4-T14 work in the same worktree; the staged S4 files were
+swept into that commit (`fcd0021`). The content is intact and reviewed — the
+file list in that commit contains this round's `apps/taskmanager`,
+`apps/runner/tests`, `lifecycled/bench`, `os-build/scripts`, `update/tests`
+and docs changes alongside S3's player changes. No history was rewritten; this
+note records the attribution so the tracker and review can find the work.
+
 ## Still pending (hardware / owner)
 
 - 72-hour soak and G-PM1 on the reference machines (harness now reports per

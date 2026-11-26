@@ -67,6 +67,9 @@ Must NOT touch: `os-build/kernel/`, `os-build/buildroot/`, `os-build/board/`,
   polish; docs updated (D3 §12, D4 §6/`LIVE-USB.md`, D5, D8 §5.1, D10 §5.1,
   project README, crate/bench/config READMEs). All 204 tests in the eight S4
   crates pass. Evidence: `docs/2026/11/26/results/p5-soak-ui-p6-p8-p9-finish.md`.
+  Commit note: a parallel S3 commit (`fcd0021`, P4-T14) swept the staged S4
+  files in the shared worktree; the S4 changes are in that commit and history
+  was not rewritten.
 
 ## Blockers (unchanged, owner/hardware)
 
