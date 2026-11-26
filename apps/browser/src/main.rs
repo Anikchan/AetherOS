@@ -4,8 +4,11 @@
 //!   aether-browser --render <dir>        write app-browser.png (headless evidence)
 //!   aether-browser --media-status        codec/hardware/DRM capability report
 //!   aether-browser --media-check <url>   classify a media URL and print its plan
+//!   aether-browser --security-status     security baseline and update channel
+//!   aether-browser --security-check      the same, and the engine must be installed
 //!   aether-browser --help
 
+use aether_browser::security::{SecurityPolicy, WebEngine};
 use aether_browser::{media, BrowserApp, BrowserController};
 use aether_media::MediaCapabilities;
 
@@ -16,6 +19,8 @@ fn usage() {
          \x20 --render <dir>       render the browser window to <dir>/app-browser.png\n\
          \x20 --media-status       print media capabilities (acceleration, codecs, DRM)\n\
          \x20 --media-check <url>  classify a media URL and print its playback plan\n\
+         \x20 --security-status    print the security baseline and update channel\n\
+         \x20 --security-check     as --security-status, and require the WebKitGTK engine\n\
          \x20 --help               this message"
     );
 }
@@ -47,6 +52,46 @@ fn media_check(url: &str) -> i32 {
     }
 }
 
+fn security_status(strict: bool) -> i32 {
+    let root = SecurityPolicy::default_root();
+    let policy = match SecurityPolicy::load(&root) {
+        Ok(policy) => policy,
+        Err(error) => {
+            eprintln!("{error}");
+            return 2;
+        }
+    };
+    let engine = WebEngine::detect();
+    let problems = if strict {
+        policy.strict_problems(&engine)
+    } else {
+        policy.problems(&engine)
+    };
+    if problems.is_empty() {
+        println!("AETHER_BROWSER_SECURITY_OK");
+    } else {
+        println!("AETHER_BROWSER_SECURITY_FAILED");
+    }
+    for line in policy.status_lines(&engine) {
+        println!("{line}");
+    }
+    if engine.version.is_none() && !strict {
+        println!(
+            "AETHER_BROWSER_SECURITY_NOTE: WebKitGTK is not installed on this host (engine adapter only); --security-check runs on the image"
+        );
+    }
+    for problem in &problems {
+        println!("AETHER_BROWSER_SECURITY_PROBLEM: {problem}");
+    }
+    if problems.is_empty() {
+        0
+    } else if engine.verdict() == "outdated" {
+        4
+    } else {
+        5
+    }
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     match args.first().map(String::as_str) {
@@ -75,6 +120,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 std::process::exit(2);
             }
         },
+        Some("--security-status") => std::process::exit(security_status(false)),
+        Some("--security-check") => std::process::exit(security_status(true)),
         Some("--help") | None => usage(),
         Some(other) => {
             eprintln!("unknown argument: {other}");

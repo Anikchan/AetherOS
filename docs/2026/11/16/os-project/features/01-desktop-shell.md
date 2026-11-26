@@ -57,10 +57,10 @@ Priority key: MVP (needed for the first daily-driver build), v1 (needed for rele
 | SHL-AC-01 | Menu bar shows the active app menu and updates within 100 ms of focus change | Implemented, headless-verified (2026-11-23) — menus are property-driven; the 100 ms figure needs compositor focus events (P3-T02) |
 | SHL-AC-02 | Dock shows running indicators; a closed app's indicator disappears within 1 s | Implemented, headless-verified — indicator is bound to `App.running`; live timing needs the session |
 | SHL-AC-03 | Launcher opens by keyboard shortcut within 200 ms and finds apps by partial name | Implemented, headless-verified — Super+Space opens it, ranking is a pure function (no I/O) and partial names rank above substrings |
-| SHL-AC-04 | Control center changes Wi-Fi, Bluetooth, volume, and brightness | Implemented, headless-verified with mock services — nmcli/bluetoothctl/wpctl/brightnessctl adapters exist; on-device confirmation pending |
+| SHL-AC-04 | Control center changes Wi-Fi, Bluetooth, volume, and brightness | Implemented, headless-verified with mock services — nmcli/bluetoothctl/wpctl/brightnessctl adapters exist; 2026-11-27 adds the Full/Reduced/Minimal effects-tier switch (persisted, published to the compositor, verified by `aether-shell --effects-check`); on-device confirmation pending |
 | SHL-AC-05 | Focus mode hides notifications during the scheduled time and shows them after | Implemented, headless-verified — the daily window comes from `notifications.toml` (`focus-start`/`focus-end`, overnight supported), manual Focus runs two hours, the minute tick expires it and refreshes cards and badge; the settings pane edits the keys |
 | SHL-AC-06 | Snap to halves and quarters works with a mouse drag and a keyboard shortcut | Not tested — compositor work (P3-T04) |
-| SHL-AC-07 | Glass tiers switch without restart; Minimal tier used when reduce transparency is on | Partially verified — tier selection and the reduce-transparency override are unit-tested; live switching needs the effect pipeline (P3-T05) |
+| SHL-AC-07 | Glass tiers switch without restart; Minimal tier used when reduce transparency is on | Implemented, headless-verified (2026-11-27) — the control centre's Full/Reduced/Minimal switch writes `theme.effects-tier` through aether-config, every panel re-renders at the resolved tier, and `theme.reduce-transparency` forces Minimal (D1 §9). The running compositor reads `AETHER_COMPOSITOR_EFFECT_TIER` at startup, so a tier change applies to the next compositor start; `aether-shell --effects-check` reads the compositor's own markers and reports the mismatch instead of claiming a live switch. Live full→reduced switch on the Dell is the remaining on-device step |
 | SHL-AC-08 | Lock screen rejects a wrong password and accepts the right one | Implemented, headless-verified (2026-11-26) — the screen is modal (scrim, Escape and shortcuts cannot dismiss it), five wrong attempts rate-limit the surface, and authentication goes through an `Authenticator` backend: greetd + PAM for login, `libpam` (`aether-lock` service) for the in-session lock, with the salted-digest prototype as the development fallback. PAM FFI is type-checked (`cargo check --features pam`); on-device PAM confirmation pending the image build |
 | SHL-AC-09 | Every settings category opens and every change is written to the config file | Implemented, headless-verified — categories switch the page (clicked in the test), rows are generated from the F4 schema, each shows file+key, and writes are atomic and read back from disk |
 | SHL-AC-10 | Two monitors with different scales work without restart | Partially verified (headless, 2026-11-26) — the compositor's `p3_t02_headless` test asserts two outputs at 1× and 1.5× including the logical layout, and the shell verifies the configure size per output with `aether-shell --host-check` (menubar 1920×28 on a 1.5×/1920-logical panel). Live re-scale on a real second monitor pending the on-device run |
@@ -164,3 +164,39 @@ cargo test -p aether-shell --test layer_host  # 5 tests, drives the real binary
 Status: headless-verified on the development host; the socket-level bind runs on
 the image because the development host has no `libwayland-client`. Evidence:
 `docs/2026/11/26/results/p3-t02-layer-host-wiring.md`.
+
+## 10. Effect-tier control (P4-T04 ↔ P3-T05, 2026-11-27)
+
+The control centre's effects row is the user-facing half of the compositor's
+glass tiers. The whole contract is one environment variable plus the
+compositor's markers, so neither side needs a new protocol:
+
+| Side | Interface |
+| --- | --- |
+| Shell → compositor | `AETHER_COMPOSITOR_EFFECT_TIER=full\|reduced\|minimal` (read once at startup) |
+| Shell → config | `theme.effects-tier` and `theme.reduce-transparency` in `~/.config/aether/theme/tokens.toml` |
+| Compositor → shell/harness | `AETHER_COMPOSITOR_EFFECT_TIER`, `..._EFFECT_TIER_SWITCH`, `..._EFFECT_SUMMARY`, `..._FRAME`, `..._FRAME_CALLBACKS`, `..._IDLE`, `..._FRAME_STATS` |
+
+Rules (`shell/src/effects.rs`):
+
+- Full is the default; Reduced is half-resolution blur without refraction;
+  Minimal is solid tinted panels (D1 §4).
+- `reduce-transparency = true` always resolves to Minimal, whatever tier is
+  requested — an accessibility override, not a preference.
+- The settings app's Appearance page and the control centre write the same key,
+  so both paths agree and a fresh shell instance sees the persisted tier.
+- The running compositor keeps its tier until restart (runtime switches come
+  from its own frame-budget policy), so the shell never claims a live switch;
+  `--effects-check` compares the log with the setting and names the mismatch.
+
+```sh
+aether-shell --effects-tier                     # effective tier, one word
+eval "$(aether-shell --effects-env)"            # export the compositor env
+aether-shell --effects-check /tmp/compositor.log # exit 0 only when tier+frames+idle agree
+cargo test -p aether-shell --lib effects         # 8 unit tests
+cargo test -p aether-shell --test effects        # 6 command tests
+cargo test -p aether-shell --test effects_ui     # control-centre switch
+```
+
+Evidence: `docs/2026/11/27/results/p4-t04-t18b-effects-and-browser-security.md`.
+

@@ -188,6 +188,39 @@ fn host_check_reads_stdin_and_scales_for_hidpi() {
 }
 
 #[test]
+fn host_check_accepts_a_journal_with_effect_and_frame_markers() {
+    // A real compositor journal interleaves the P3-T05/T06 effect/frame
+    // markers with the layer-shell ones. `--host-check` owns only the layer
+    // contract, so the extra markers must neither break nor leak into it.
+    let effect_lines = "\
+AETHER_COMPOSITOR_EFFECT_TIER: full
+AETHER_COMPOSITOR_EFFECT_PIPELINE: tier=full blur=dual-kawase
+AETHER_COMPOSITOR_FRAME: n=1 time_ms=16 damage_rects=2 damage_px=4096 windows=2 tier=full est_ms=2.440
+AETHER_COMPOSITOR_FRAME_CALLBACKS: n=4 time_ms=16
+AETHER_COMPOSITOR_IDLE: idle_ms=640 idle_pct=94.2 frames=6
+AETHER_COMPOSITOR_FRAME_STATS: frames=6 idle_skips=30 idle_ms=640 idle_pct=94.2 presented_px=24576 avg_gap_ms=16.00 last_gap_ms=16.00 target_fps=60
+AETHER_COMPOSITOR_EFFECT_SUMMARY: tier=full tier_switches=0 frame_callbacks=4
+";
+    let log = complete_log((1920, 1080)).replace(
+        "AETHER_COMPOSITOR_DONE\n",
+        &format!("{effect_lines}AETHER_COMPOSITOR_DONE\n"),
+    );
+    let path = temp_log("journal", &log);
+
+    let output = shell(&["--host-check", path.to_str().unwrap()]);
+    let text = String::from_utf8_lossy(&output.stdout);
+    assert!(output.status.success(), "stdout:\n{text}");
+    assert!(text.contains("LAYER_HOST output=aether-headless-0 logical=1920x1080"));
+    assert!(text.ends_with("AETHER_SHELL_LAYER_HOST_OK\n"), "{text}");
+    assert!(
+        !text.contains("EFFECT_"),
+        "host-check reports only the layer contract:\n{text}"
+    );
+
+    std::fs::remove_file(path).ok();
+}
+
+#[test]
 fn report_scan_flags_a_surface_configured_before_it_bound() {
     // Defensive: a configure line with no matching layer-surface line must not
     // be reported as a working surface.

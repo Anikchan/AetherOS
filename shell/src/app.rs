@@ -15,9 +15,11 @@ use slint::{Model, ModelRc, VecModel};
 use crate::auth::{self, AuthOutcome, Authenticator};
 use crate::config::{self, Category, SettingKind, SettingsStore};
 use crate::desktop;
+use crate::effects::{self, EffectSettings};
 use crate::features::FeaturesPage;
 use crate::model::{self, Notification, Overlay, PowerMode, SearchKind, ShellState, Window};
 use crate::services::{Battery, Services};
+use aether_ui::theme::Tier;
 use crate::{
     AppEntry, MenuEntry, MenuGroup, NotificationEntry, SearchResultEntry,
     SettingsCategoryEntry, SettingsRowEntry, ShellRoot, WindowEntry,
@@ -153,6 +155,8 @@ pub struct ShellController {
     authenticator: RefCell<Box<dyn Authenticator>>,
     /// Settings → Features state (P7-T07); the manager owns `features.toml`.
     features: RefCell<FeaturesPage>,
+    /// Effect tier: the persisted request and the resolved tier (P4-T04).
+    effects: RefCell<EffectSettings>,
     pub log: RefCell<Vec<String>>,
 }
 
@@ -170,6 +174,8 @@ impl ShellController {
         state.date_label = model::format_date(&now);
 
         let features_path = store.root().join("features").join("features.toml");
+        // P4-T04: the effect tier is a settings value the control centre owns.
+        let effects = EffectSettings::load(&store);
         let controller = Rc::new(ShellController {
             state: RefCell::new(state),
             ui,
@@ -178,6 +184,7 @@ impl ShellController {
             spawn_apps: RefCell::new(false),
             authenticator: RefCell::new(auth::default_authenticator()),
             features: RefCell::new(FeaturesPage::load(features_path)),
+            effects: RefCell::new(effects),
             log: RefCell::new(Vec::new()),
         });
         controller.load_settings();
@@ -381,6 +388,14 @@ impl ShellController {
                 }
             });
         }
+        {
+            let weak = Rc::downgrade(self);
+            self.ui.on_effect_tier_changed(move |tier| {
+                if let Some(controller) = weak.upgrade() {
+                    controller.apply_effect_tier(tier.as_str());
+                }
+            });
+        }
         self.ui.on_notification_dismissed(on(Self::dismiss_notification));
         {
             let weak = Rc::downgrade(self);
@@ -479,6 +494,16 @@ impl ShellController {
         self.ui.set_battery(state.battery as i32);
         self.ui.set_charging(state.charging);
         self.ui.set_power_mode(state.power_mode.as_str().into());
+        // P4-T04: every panel renders at the resolved tier (glass degrades with
+        // it) and the control centre shows which one is in effect.
+        {
+            let effects = self.effects.borrow();
+            let effective = effects.effective();
+            self.ui.set_tier(effects::to_slint(effective));
+            self.ui
+                .set_effects_tier(effective.as_str().into());
+            self.ui.set_effects_note(effects.subtitle().into());
+        }
         self.ui.set_unread(state.unread_badge().into());
         self.ui.set_overlay(state.overlay.code());
         self.ui.set_settings_page(state.settings_page as i32);
@@ -792,6 +817,33 @@ impl ShellController {
         self.sync();
     }
 
+    /// P4-T04: the control centre's Full/Reduced/Minimal switch. The request is
+    /// persisted through aether-config and published as the compositor's tier
+    /// env (`AETHER_COMPOSITOR_EFFECT_TIER`); the running compositor keeps its
+    /// own tier until restart, which `--effects-check` reports as a mismatch.
+    fn apply_effect_tier(&self, tier: &str) {
+        let Some(tier) = Tier::parse(tier) else {
+            self.log
+                .borrow_mut()
+                .push(format!("effects: unknown tier {tier}"));
+            return;
+        };
+        match EffectSettings::save(&self.store, tier) {
+            Ok(settings) => {
+                self.log.borrow_mut().push(format!(
+                    "effects tier={} effective={} env={}",
+                    settings.requested.as_str(),
+                    settings.effective().as_str(),
+                    settings.env_line()
+                ));
+                *self.effects.borrow_mut() = settings;
+            }
+            Err(error) => self.log.borrow_mut().push(format!("effects: {error}")),
+        }
+        self.refresh_settings_rows();
+        self.sync();
+    }
+
     /// Lock screen submit (P4-T06): the backend decides, the model rate-limits,
     /// and the surface shows the reason. Never keeps the password.
     fn submit_unlock(&self, password: &str) {
@@ -892,6 +944,23 @@ impl ShellController {
         self.features.borrow()
     }
 
+    // --------------------------------------------------------------- effects ---
+
+    /// Resolved effect settings (requested tier + accessibility override).
+    pub fn effect_settings(&self) -> EffectSettings {
+        *self.effects.borrow()
+    }
+
+    /// Tier every panel and the compositor should use.
+    pub fn effect_tier(&self) -> Tier {
+        self.effects.borrow().effective()
+    }
+
+    /// `AETHER_COMPOSITOR_EFFECT_TIER=<tier>` for the session environment.
+    pub fn effect_env_line(&self) -> String {
+        self.effects.borrow().env_line()
+    }
+
     fn set_setting_bool(&self, key: &str, value: bool) {
         let _ = self.store.save(key, toml::Value::Boolean(value));
         if let Some(def) = config::find_setting(key) {
@@ -909,6 +978,10 @@ impl ShellController {
             if def.key.starts_with("theme.") {
                 self.log.borrow_mut().push(format!("theme {key}={value}"));
             }
+        }
+        // Reduce transparency forces the Minimal tier (D1 section 9).
+        if key == effects::SETTING_REDUCE_TRANSPARENCY {
+            *self.effects.borrow_mut() = EffectSettings::load(&self.store);
         }
         self.refresh_settings_rows();
         self.sync();
@@ -954,6 +1027,15 @@ impl ShellController {
                 );
                 if key == "power.power-mode" {
                     self.apply_power_mode(values[index]);
+                }
+                if key == effects::SETTING_TIER {
+                    // The settings app writes the same key the control centre
+                    // does; keep the live tier and the compositor env in step.
+                    *self.effects.borrow_mut() = EffectSettings::load(&self.store);
+                    self.log.borrow_mut().push(format!(
+                        "effects tier={} source=settings",
+                        self.effects.borrow().requested.as_str()
+                    ));
                 }
             }
             SettingKind::Value => {

@@ -2,20 +2,25 @@
 //!
 //! Today the shell runs headlessly: it composes every surface, applies the
 //! presentation logic, can render each surface to a PNG, and can verify the
-//! layer-shell host contract against a compositor log. The interactive host (a
-//! layer-shell `Platform` over the VRAM/software renderer, proven by spike S1)
-//! arrives with the on-device image. Until then this binary is the reproducible
-//! way to inspect and verify the shell:
+//! layer-shell host contract and the compositor's effect/frame markers against
+//! a compositor log. The interactive host (a layer-shell `Platform` over the
+//! VRAM/software renderer, proven by spike S1) arrives with the on-device
+//! image. Until then this binary is the reproducible way to inspect and verify
+//! the shell:
 //!
 //! ```text
 //! aether-shell --render docs/2026/11/23/results/screenshots
 //! aether-shell --status
 //! aether-shell --host-check /var/log/aether-compositor.log
+//! aether-shell --effects-tier
+//! eval "$(aether-shell --effects-env)"
+//! aether-shell --effects-check /var/log/aether-compositor.log
 //! ```
 
 use std::path::PathBuf;
 
 use aether_shell::config::SettingsStore;
+use aether_shell::effects::{self, EffectSettings};
 use aether_shell::render;
 use aether_shell::services::CommandServices;
 use aether_shell::{Overlay, ShellController, ShellRoot};
@@ -29,8 +34,30 @@ fn usage() {
          \x20 aether-shell --status                print shell state as JSON-ish text\n\
          \x20 aether-shell --host-check <log|->    verify the layer-shell host contract\n\
          \x20 aether-shell --host-plan             print the layer-surface request plan\n\
+         \x20 aether-shell --effects-tier          print the effective glass tier\n\
+         \x20 aether-shell --effects-env           print the compositor tier export\n\
+         \x20 aether-shell --effects-check <log|-> verify the compositor's effect/frame markers\n\
          \x20 aether-shell --help                  this message"
     );
+}
+
+/// Read a log path, or stdin for `-`.
+fn read_source(source: &str) -> Result<String, Box<dyn std::error::Error>> {
+    if source == "-" {
+        use std::io::Read;
+        let mut buffer = String::new();
+        std::io::stdin().read_to_string(&mut buffer)?;
+        Ok(buffer)
+    } else {
+        std::fs::read_to_string(source)
+            .map_err(|error| format!("cannot read compositor log {source}: {error}").into())
+    }
+}
+
+/// Effective tier from the user's settings, for the session launcher:
+/// `AETHER_COMPOSITOR_EFFECT_TIER=$(aether-shell --effects-tier) aether-compositor`.
+fn effects_tier() -> EffectSettings {
+    EffectSettings::load(&SettingsStore::at_default_location())
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -53,16 +80,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 eprintln!("--host-check needs a compositor log path (or - for stdin)");
                 std::process::exit(2);
             };
-            let text = if source == "-" {
-                use std::io::Read;
-                let mut buffer = String::new();
-                std::io::stdin().read_to_string(&mut buffer)?;
-                buffer
-            } else {
-                std::fs::read_to_string(source).map_err(|error| {
-                    format!("cannot read compositor log {source}: {error}")
-                })?
-            };
+            let text = read_source(source)?;
             let report = aether_shell::BindingReport::scan(&text);
             print!("{}", report.summary());
             if !report.is_complete() {
@@ -85,6 +103,34 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             println!("AETHER_SHELL_LAYER_PLAN_OK");
         }
+        Some("--effects-tier") => {
+            println!("{}", effects_tier().effective().as_str());
+        }
+        Some("--effects-env") => {
+            // Sourced by the session launcher before the compositor starts.
+            let settings = effects_tier();
+            println!(
+                "# effects: requested={} reduce-transparency={}",
+                settings.requested.as_str(),
+                settings.reduce_transparency
+            );
+            println!("export {}", settings.env_line());
+        }
+        Some("--effects-check") => {
+            // P4-T04 ↔ P3-T05: the compositor's own markers must agree with the
+            // persisted tier and prove the frame/idle pipeline (P3-T06).
+            let Some(source) = args.get(1) else {
+                eprintln!("--effects-check needs a compositor log path (or - for stdin)");
+                std::process::exit(2);
+            };
+            let expected = effects_tier().effective();
+            let text = read_source(source)?;
+            let report = effects::EffectsReport::scan(&text);
+            print!("{}", report.summary(expected));
+            if !report.is_complete(expected) {
+                std::process::exit(1);
+            }
+        }
         Some("--status") => {
             aether_ui::render::init()?;
             let ui = ShellRoot::new()?;
@@ -106,6 +152,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("notifications: {}", state.notifications.len());
             println!("dock: {}", state.dock_apps().len());
             println!("windows: {}", state.windows.len());
+            println!("effects-tier: {}", controller.effect_settings().requested.as_str());
+            println!("effects-effective: {}", controller.effect_tier().as_str());
+            println!("effects-env: {}", controller.effect_env_line());
             println!("settings-root: {}", controller.store().root().display());
             println!("AETHER_SHELL_STATUS_OK");
         }

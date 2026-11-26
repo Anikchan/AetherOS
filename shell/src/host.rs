@@ -325,7 +325,8 @@ impl BindingReport {
 }
 
 /// Value of `key=value` inside a marker line (`value` ends at the next space).
-fn field<'a>(line: &'a str, key: &str) -> Option<&'a str> {
+/// Shared with [`crate::effects`], which reads the effect/frame markers.
+pub(crate) fn field<'a>(line: &'a str, key: &str) -> Option<&'a str> {
     let needle = format!("{key}=");
     let start = line.find(&needle)? + needle.len();
     let rest = &line[start..];

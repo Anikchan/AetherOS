@@ -1,6 +1,7 @@
 # On-device acceptance harness — F1 (Desktop Shell), DA-* (Default Apps), media
 
-- Date: 2026-11-26 (rev 2)
+- Date: 2026-11-26 (rev 3, 2026-11-27 additions: effect tier + frame/idle,
+  browser security)
 - Session: S3
 - Scope: the headless suites are green; this document is the executable runbook
   for confirming the remaining criteria against a running AetherOS image. It
@@ -110,6 +111,73 @@ EXPECT `test result: ok. 5 passed` and four non-blank PNGs.
 > covers the client half at marker level
 > (`docs/2026/11/26/results/p3-t02-layer-host-wiring.md`).
 
+## 1b. Effect tier and frame/idle checks (P3-T05/T06 ↔ P4-T04)
+
+The shell selects the glass tier, persists it, and publishes the compositor's
+own environment contract; the compositor reports what it actually runs.
+
+```sh
+say effects
+aether-shell --effects-tier
+eval "$(aether-shell --effects-env)"; echo "EFFECTS_ENV=$AETHER_COMPOSITOR_EFFECT_TIER"
+journalctl -b -u aether-compositor --no-pager > /tmp/compositor.log
+aether-shell --effects-check /tmp/compositor.log; echo "effects-check exit=$?"
+
+# do: control centre → Effects → Reduced, then Minimal, then Full.
+grep -E 'effects-tier|reduce-transparency' "$HOME/.config/aether/theme/tokens.toml"
+# Repeat the check after a compositor restart (the tier is read at startup):
+systemctl --user restart aether-compositor
+sleep 3; journalctl -b -u aether-compositor --no-pager > /tmp/compositor.log
+aether-shell --effects-check /tmp/compositor.log; echo "effects-check exit=$?"
+```
+
+EXPECT (fresh profile → Full):
+
+```
+full
+EFFECTS_ENV=full
+EFFECT_TIER expected=full compositor=full switches=0 last_switch=none
+EFFECT_FRAMES frames=<n> idle_skips=<n> idle_pct=<pct> callbacks=<n> markers=<n> est_ms=<ms> budget_ms=16.67
+AETHER_SHELL_EFFECTS_OK
+effects-check exit=0
+effects-tier = "reduced"          # after the control-centre clicks
+```
+
+Before the restart the check may report a mismatch (the image's compositor was
+started with the previous value); record it verbatim — that is the documented
+behaviour, not a failure of the switch:
+
+```
+AETHER_SHELL_EFFECTS_PROBLEM: compositor runs tier full, the setting resolves to reduced — restart the compositor to apply it
+AETHER_SHELL_EFFECTS_FAILED
+```
+
+After the restart with `AETHER_COMPOSITOR_EFFECT_TIER=reduced` exported by the
+session launcher, `EFFECT_TIER expected=reduced compositor=reduced` and exit 0.
+Record from the same log:
+
+| Measurement | Source marker | Pass condition |
+| --- | --- | --- |
+| Effect tier | `AETHER_COMPOSITOR_EFFECT_TIER` / `EFFECT_SUMMARY` | equals `aether-shell --effects-tier` |
+| Frames presented | `AETHER_COMPOSITOR_FRAME_STATS frames=` | `> 0` with the shell surfaces mapped |
+| Idle ratio | `..._FRAME_STATS idle_pct=` / `..._IDLE` | present; near-idle desktop ≥ 90% |
+| Frame callbacks | `..._FRAME_CALLBACKS n=` | `> 0` for every presented frame |
+| Modelled frame cost | `..._FRAME est_ms=` and `..._GLASS_PLAN` | `≤ 16.67 ms` at Full with three windows (the 60 fps gate; real GPU timing still needs the Dell) |
+| Pacing | `..._FRAME_STATS avg_gap_ms=` | `≈ 16.0–16.7 ms` with motion on screen |
+
+`reduce-transparency = true` in `theme/tokens.toml` must make `--effects-tier`
+print `minimal` even when `effects-tier = "full"` (D1 §9 accessibility override).
+
+Headless evidence (development host, no device):
+
+```sh
+cargo test -p aether-shell --lib effects        # 8 unit tests
+cargo test -p aether-shell --test effects       # 6 command tests
+cargo test -p aether-shell --test effects_ui    # control-centre switch
+```
+
+EXPECT `test result: ok. 8 passed`, `6 passed`, `1 passed`.
+
 ## 2. F1 (Desktop Shell) checklist
 
 ### SHL-AC-01 — Menu bar updates on focus change
@@ -153,17 +221,22 @@ Enter launches Calculator (process present), and the top result is Calculator.
 ### SHL-AC-04 — Control centre
 
 ```sh
-# do: open the control centre, toggle Wi-Fi and Bluetooth, move volume and brightness.
+# do: open the control centre, toggle Wi-Fi and Bluetooth, move volume and brightness,
+#     then switch Effects to Reduced / Minimal / Full.
 # verify:
 nmcli radio wifi
 bluetoothctl show | grep -E 'Powered|Name'
 wpctl get-volume @DEFAULT_AUDIO_SINK@
 brightnessctl -m | cut -d, -f4
+aether-shell --effects-tier
+grep 'effects-tier' "$HOME/.config/aether/theme/tokens.toml"
 ```
 
 EXPECT `enabled`/`disabled` follows the Wi-Fi toggle, `Powered: yes|no` follows
-the Bluetooth toggle, `Volume: 0.xx` follows the slider, and the brightness
-percentage follows the slider. Each control must change its service within 1 s.
+the Bluetooth toggle, `Volume: 0.xx` follows the slider, the brightness
+percentage follows the slider, and the printed tier plus the config line follow
+the Effects switch (`full` → `reduced` → `minimal`). Each control must change
+its service or file within 1 s.
 
 ### SHL-AC-05 — Focus mode
 
@@ -192,15 +265,25 @@ show the preview/border.
 ### SHL-AC-07 — Glass tiers
 
 ```sh
-# do: Settings → Appearance → "Reduce transparency" on, then off.
+# do: control centre → Effects → Reduced, then Minimal, then Full.
 # verify:
-grep -R "reduce_transparency\|reduce-transparency" -n "$HOME/.config/aether" || true
+aether-shell --effects-tier
+grep -E 'effects-tier|reduce-transparency' "$HOME/.config/aether/theme/tokens.toml"
+journalctl -b -u aether-compositor --no-pager > /tmp/compositor.log
+aether-shell --effects-check /tmp/compositor.log; echo "effects-check exit=$?"
+shot shl-ac-07-reduced
+shot shl-ac-07-minimal
+# Then Settings → Appearance → "Reduce transparency" on, then off.
 shot shl-ac-07-solid
 shot shl-ac-07-glass
 ```
 
-EXPECT the config file shows the new value, the panels become opaque without a
-shell restart, and the two screenshots differ in panel opacity.
+EXPECT the config file shows the new tier, `--effects-tier` prints the same
+value, the panels re-render at the resolved tier (screenshots differ), and with
+"Reduce transparency" on `--effects-tier` prints `minimal` regardless of the
+requested tier. Section 1b defines the tier/frame/idle evidence; a compositor
+started before the change reports the mismatch and needs a restart, which the
+check names.
 
 ### SHL-AC-08 — Lock screen
 
@@ -452,6 +535,38 @@ hyperfine --warmup 2 'aether-browser --media-status >/dev/null'
 EXPECT `≤ 0.500 s`, and the browser binary starts without a display (the
 `--media-status` path does not open a window).
 
+### DA-AC-13 — Browser security posture and update channel (P4-T18b)
+
+```sh
+say browser-security
+aether-browser --security-status; echo "status exit=$?"
+aether-browser --security-check;  echo "check exit=$?"
+cat "$HOME/.config/aether/browser/security.toml" 2>/dev/null || echo "security.toml absent (defaults: stable, HTTPS-only)"
+pkg-config --modversion webkit2gtk-4.1 || echo "webkit2gtk-4.1 not installed"
+```
+
+EXPECT on the image:
+
+```
+AETHER_BROWSER_SECURITY_OK
+channel=stable updates=os-image
+https-only=on mixed-content=blocked third-party-cookies=blocked
+engine=webkitgtk version=<2.44 or newer> minimum=2.44 verdict=supported
+private-window=no-profile-writes
+downloads=prompt
+status exit=0
+check exit=0
+```
+
+Set `channel = "beta"` in `security.toml`, re-run, and EXPECT
+`channel=beta updates=os-image` with exit 0. An engine below 2.44 must print
+`verdict=outdated`, the problem line naming the floor and the channel, and exit
+4; an image without WebKitGTK must print `verdict=absent` and make
+`--security-check` exit 5. The development host has only the adapter, so it
+prints `AETHER_BROWSER_SECURITY_NOTE` and exits 0 for `--security-status`.
+
+Headless regression: `cargo test -p aether-browser --test security` (5 tests).
+
 ## 4. Calendar & Clock v1 (P4-T16, DA-07)
 
 ```sh
@@ -519,6 +634,13 @@ the name (`shl-ac-01-menubar.png`).
   1 headless UI test that asserts the media status line) and
   `aether-browser --media-status` / `--media-check` —
   `docs/2026/11/26/results/p4-t16-t18a-media-calendar.md`.
+- Effect tier: `cargo test -p aether-shell --lib effects` (8),
+  `--test effects` (6), `--test effects_ui` (1) and
+  `--test layer_host` (6, now including a journal with effect/frame markers) —
+  `docs/2026/11/27/results/p4-t04-t18b-effects-and-browser-security.md`.
+- Browser security: `cargo test -p aether-browser --lib security` (8) and
+  `--test security` (5), plus `aether-browser --security-status` /
+  `--security-check` — same results log.
 - Calendar & Clock: `cargo test -p aether-calendar` (21 lib incl. week grid,
   time zones, alarms; 1 headless UI test) and the three `--render` surfaces —
   `docs/2026/11/26/results/p4-t16-t18a-media-calendar.md`.
@@ -538,3 +660,9 @@ the name (`shl-ac-01-menubar.png`).
 - The interactive layer-shell host (§1) needs `libwayland-client` on the image;
   the development host can neither link nor run the compositor.
 - Screen reader (SHL-AC-11) needs `orca` plus the AT-SPI bus in the image.
+- The effect-tier switch applies to the next compositor start (the tier is read
+  once at startup); `--effects-check` reports the mismatch until the session
+  launcher exports `AETHER_COMPOSITOR_EFFECT_TIER` and the compositor restarts.
+  The measured 60 fps Full-tier gate still needs the Dell GPU (`measured=false`).
+- Browser security (DA-AC-13) needs WebKitGTK in the image; the policy, channel
+  and version floor are already testable without it.

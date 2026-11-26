@@ -7,6 +7,8 @@
 //!   overlay toggling, credentials, power modes).
 //! * [`search`] — launcher ranking plus the inline calculator.
 //! * [`config`] — F4 settings schema and layered TOML persistence.
+//! * [`effects`] — effect-tier control and the compositor's tier/frame markers
+//!   (P4-T04 ↔ P3-T05).
 //! * [`desktop`] — `.desktop` discovery for the dock and the launcher.
 //! * [`services`] — nmcli / bluetoothctl / wpctl / brightnessctl / sysfs battery
 //!   adapters, with a mock for tests.
@@ -27,6 +29,7 @@ pub mod app;
 pub mod auth;
 pub mod config;
 pub mod desktop;
+pub mod effects;
 pub mod features;
 pub mod greetd;
 pub mod greeter;

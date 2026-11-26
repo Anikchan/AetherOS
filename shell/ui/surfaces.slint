@@ -640,16 +640,19 @@ export component ControlCenter inherits Rectangle {
     in property <bool> charging: false;
     in property <string> power-mode: "balanced";
     in property <GlassTier> tier: GlassTier.full;
+    in property <string> effects-tier: "full";
+    in property <string> effects-note: "";
 
     callback toggled(string, bool);
     callback volume-changed(float);
     callback brightness-changed(float);
     callback power-mode-changed(string);
+    callback effect-tier-changed(string);
     callback open-settings();
     callback lock();
 
     width: Tokens.controlcenter-width;
-    height: 428px;
+    height: 508px;
     border-radius: Tokens.radius-panel;
     background: Tokens.surface.with-alpha(0.95);
     border-width: 1px;
@@ -748,6 +751,35 @@ export component ControlCenter inherits Rectangle {
             current: root.power-mode == "saver" ? 0 : (root.power-mode == "performance" ? 2 : 1);
             selected(idx) => {
                 root.power-mode-changed(idx == 0 ? "saver" : (idx == 2 ? "performance" : "balanced"));
+            }
+        }
+
+        // Effect tier (P4-T04 ↔ P3-T05): persisted through aether-config and
+        // published to the compositor as AETHER_COMPOSITOR_EFFECT_TIER.
+        HorizontalLayout {
+            width: 100%;
+            spacing: Tokens.space(2);
+            Text {
+                text: "Effects";
+                color: Tokens.text;
+                font-size: Tokens.font-body;
+                font-weight: 600;
+                vertical-alignment: center;
+            }
+            Rectangle { horizontal-stretch: 1; background: transparent; }
+            Text {
+                text: root.effects-note;
+                color: Tokens.text-muted;
+                font-size: Tokens.font-small;
+                vertical-alignment: center;
+                overflow: elide;
+            }
+        }
+        SegmentedControl {
+            items: ["Full", "Reduced", "Minimal"];
+            current: root.effects-tier == "reduced" ? 1 : (root.effects-tier == "minimal" ? 2 : 0);
+            selected(idx) => {
+                root.effect-tier-changed(idx == 0 ? "full" : (idx == 2 ? "minimal" : "reduced"));
             }
         }
 
@@ -1318,6 +1350,8 @@ export component ShellRoot inherits Window {
     in-out property <float> brightness: 0.8;
     in-out property <int> battery: 84;
     in-out property <string> power-mode: "balanced";
+    in-out property <string> effects-tier: "full";
+    in-out property <string> effects-note: "";
     in-out property <string> search-query: "";
     in-out property <int> search-selected: 0;
     in-out property <string> lock-password: "";
@@ -1340,6 +1374,7 @@ export component ShellRoot inherits Window {
     callback volume-changed(float);
     callback brightness-changed(float);
     callback power-mode-changed(string);
+    callback effect-tier-changed(string);
     callback notification-dismissed(string);
     callback notifications-cleared();
     callback unlock-submitted(string);
@@ -1493,10 +1528,13 @@ export component ShellRoot inherits Window {
         charging: root.charging;
         power-mode: root.power-mode;
         tier: root.tier;
+        effects-tier: root.effects-tier;
+        effects-note: root.effects-note;
         toggled(id, value) => { root.quick-toggle(id, value); }
         volume-changed(value) => { root.volume-changed(value); }
         brightness-changed(value) => { root.brightness-changed(value); }
         power-mode-changed(mode) => { root.power-mode-changed(mode); }
+        effect-tier-changed(tier) => { root.effect-tier-changed(tier); }
         open-settings => { root.overlay-requested(5); }
         lock => { root.overlay-requested(6); }
     }

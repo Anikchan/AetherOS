@@ -7,12 +7,15 @@
 //! with the graphics bring-up while [`engine::ExternalEngine`] can hand URLs to
 //! a renderer today. Media playback policy (codecs, hardware decode, reduced
 //! quality, DRM) lives in [`media`] on top of the shared `aether-media` crate.
+//! Security posture, the WebKitGTK security floor and the update channel live
+//! in [`security`] (P4-T18b).
 
 slint::include_modules!();
 
 pub mod core;
 pub mod engine;
 pub mod media;
+pub mod security;
 pub mod store;
 pub mod tabs;
 pub mod url;

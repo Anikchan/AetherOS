@@ -24,6 +24,10 @@ Must NOT touch: `os-build/`, `compositor/`, `lifecycled/`, `powerd/`,
 | 2 | P4-T14: GStreamer play/pause/seek edge cases + tests | **Done (2026-11-26)** | `Engine::set_position`/`set_duration`, spawn-order guarantees, 5 new tests |
 | 3 | P7-T07: verify Settings → Features against `aether-config`'s `FeatureManager` | **Done (2026-11-26)** | 4 new page tests (catalog mirror, reload, errors, removal) |
 | 4 | On-device acceptance harness kept current | **Done (2026-11-26)** | §1 `--host-check`, §4 features commands, §5 evidence, §6 blocker |
+| 5 | P4-T04 ↔ P3-T05: control-centre effect-tier control | **Done (2026-11-27)** | `shell/src/effects.rs`, control-centre Full/Reduced/Minimal, `--effects-tier`/`--effects-env`/`--effects-check`; persisted through aether-config |
+| 6 | Shell tests for the tier control + layer-host check | **Done (2026-11-27)** | `tests/effects.rs` (6), `tests/effects_ui.rs` (1), `layer_host` +1 journal test |
+| 7 | Harness: effect-tier and frame/idle checks | **Done (2026-11-27)** | harness §1b + SHL-AC-04/07 + DA-AC-13 |
+| 8 | P4-T18b browser security/update-channel surface | **Done (2026-11-27)** | `apps/browser/src/security.rs`, `--security-status`/`--security-check`, 8 lib + 5 command tests |
 
 ## Progress log
 
@@ -62,6 +66,38 @@ Must NOT touch: `os-build/`, `compositor/`, `lifecycled/`, `powerd/`,
 → shell 91 lib + 8 integration (features 1, greeter 1, interaction 1,
 layer_host 5), player 19 lib + 3 integration (codec 1, transport_edges 1,
 ui 1), config 34, ui 5 — all pass, 0 failed.
+
+## 2026-11-27 — Effect tier + browser security (S3)
+
+- **P4-T04 ↔ P3-T05 effect-tier control.** `shell/src/effects.rs` resolves the
+  requested tier (`theme.effects-tier`) with the `theme.reduce-transparency`
+  override (Minimal always wins), persists through aether-config, publishes
+  `AETHER_COMPOSITOR_EFFECT_TIER`, and parses the compositor's own markers
+  (`EFFECT_TIER`, `EFFECT_TIER_SWITCH`, `EFFECT_SUMMARY`, `FRAME`,
+  `FRAME_CALLBACKS`, `IDLE`, `FRAME_STATS`). Control centre: Effects row +
+  Full/Reduced/Minimal segmented control. Commands `--effects-tier`,
+  `--effects-env`, `--effects-check`; `--status` prints the tier triplet. The
+  compositor was read, never edited.
+- **Tests.** `tests/effects.rs` (6), `tests/effects_ui.rs` (1, real switch),
+  `layer_host` +1 (`--host-check` on a journal that also carries effect/frame
+  markers).
+- **Harness.** `docs/2026/11/26/results/on-device-acceptance-harness.md` rev 3:
+  §1b effect tier + frame/idle table, SHL-AC-04/07 commands, DA-AC-13 browser
+  security, evidence and blocker updates.
+- **P4-T18b browser security.** `apps/browser/src/security.rs`: channel
+  contract (stable/beta, `os-image` source), WebKitGTK floor 2.44 with a dotted
+  version compare, hardening baseline (HTTPS-only, mixed content, third-party
+  cookies), `security.toml` load; `--security-status` (adapter-only host is a
+  note) and `--security-check` (engine required, exit 4 outdated / 5 absent).
+  8 lib + 5 command tests.
+- Evidence: `docs/2026/11/27/results/p4-t04-t18b-effects-and-browser-security.md`.
+
+## Final test status (2026-11-27)
+
+`cargo test -p aether-shell -p aether-browser -p aether-config` → shell 99 lib +
+15 integration (effects 6, effects_ui 1, features 1, greeter 1, interaction 1,
+layer_host 6), browser 54 lib + 6 integration (security 5, ui 1), config 34 —
+all pass, 0 failed.
 
 ## Blockers (unchanged, owner/hardware)
 
