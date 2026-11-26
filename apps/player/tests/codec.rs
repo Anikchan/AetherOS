@@ -101,7 +101,10 @@ fn codec_policy_gates_playback_and_uses_discovered_duration() {
         assert!(controller.status().is_empty());
         assert_eq!(
             calls.borrow().as_slice(),
-            &["play file:///home/aether/Music/glass-horizon.flac".to_string()]
+            &[
+                "seek 0".to_string(),
+                "play file:///home/aether/Music/glass-horizon.flac".to_string()
+            ]
         );
     }
 
@@ -111,7 +114,7 @@ fn codec_policy_gates_playback_and_uses_discovered_duration() {
         let controller = controller(MockProbe::unavailable(), calls.clone());
         controller.play();
         assert_eq!(controller.transport().state(), PlaybackState::Playing);
-        assert_eq!(calls.borrow().len(), 1);
+        assert_eq!(calls.borrow().len(), 2);
         assert!(controller.status().is_empty());
     }
 

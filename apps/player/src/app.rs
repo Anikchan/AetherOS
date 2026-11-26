@@ -165,8 +165,11 @@ impl PlayerController {
             Err(EngineError::NotAvailable(_)) => {}
             Err(error) => *self.status.borrow_mut() = format!("Could not inspect media: {}", error.message()),
         }
+        let position = self.transport.borrow().position();
         self.transport.borrow_mut().play();
+        let position = self.transport.borrow().position().max(position);
         let mut engine = self.engine.borrow_mut();
+        let _ = engine.seek(position);
         match engine.play(&uri) {
             Ok(()) => *self.status.borrow_mut() = String::new(),
             // The transport still runs so the interface is usable without an
@@ -177,8 +180,10 @@ impl PlayerController {
 
     fn toggle_play(&self) {
         if self.transport.borrow().is_playing() {
+            let position = self.transport.borrow().position();
             self.transport.borrow_mut().pause();
             let mut engine = self.engine.borrow_mut();
+            let _ = engine.seek(position);
             let _ = engine.pause();
         } else {
             self.play_current();

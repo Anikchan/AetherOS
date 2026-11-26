@@ -90,6 +90,9 @@ pub struct GStreamerEngine {
     program: PathBuf,
     child: Option<Child>,
     position: Duration,
+    /// URI currently loaded into the running (or last) pipeline, so a seek or
+    /// pause can relaunch `gst-play-1.0` at a new position.
+    current_uri: Option<String>,
 }
 
 impl GStreamerEngine {
@@ -107,6 +110,7 @@ impl GStreamerEngine {
             program,
             child: None,
             position: Duration::ZERO,
+            current_uri: None,
         })
     }
 
@@ -114,11 +118,17 @@ impl GStreamerEngine {
         &self.program
     }
 
-    /// The command used to play a URI: `gst-play-1.0 <uri>`.
+    /// The command used to play a URI: `gst-play-1.0 <uri>`, with
+    /// `--start-position` when resuming or seeking inside a track.
     pub fn play_command(&self, uri: &str) -> EngineCommand {
+        let mut args = Vec::new();
+        if !self.position.is_zero() {
+            args.push(format!("--start-position={}", self.position.as_secs_f64()));
+        }
+        args.push(uri.to_string());
         EngineCommand {
             program: self.program.clone(),
-            args: vec![uri.to_string()],
+            args,
         }
     }
 
@@ -137,6 +147,9 @@ impl Engine for GStreamerEngine {
 
     fn play(&mut self, uri: &str) -> Result<(), EngineError> {
         self.stop_child();
+        // The caller (PlayerController) records the desired start position
+        // through `seek` before calling play, so `play_command` can pass it to
+        // `gst-play-1.0 --start-position`.
         let command = self.play_command(uri);
         let child = Command::new(&command.program)
             .args(&command.args)
@@ -152,13 +165,15 @@ impl Engine for GStreamerEngine {
                 }
             })?;
         self.child = Some(child);
-        self.position = Duration::ZERO;
+        self.current_uri = Some(uri.to_string());
         Ok(())
     }
 
     fn pause(&mut self) -> Result<(), EngineError> {
-        // No control socket on the CLI player: stopping is the only honest
-        // pause. The transport keeps the position and resumes by relaunching.
+        // gst-play-1.0 has no control socket; the honest pause stops the
+        // process. The position recorded by the last `seek` (the transport's
+        // position, recorded by PlayerController) is kept so playback resumes
+        // there.
         self.stop_child();
         Ok(())
     }
@@ -166,12 +181,39 @@ impl Engine for GStreamerEngine {
     fn stop(&mut self) -> Result<(), EngineError> {
         self.stop_child();
         self.position = Duration::ZERO;
+        self.current_uri = None;
         Ok(())
     }
 
     fn seek(&mut self, position: Duration) -> Result<(), EngineError> {
-        // Recorded only; the player's own transport moves the position.
         self.position = position;
+        // While playing, relaunch at the new position so the seek is real
+        // instead of being recorded and ignored.
+        if let Some(uri) = self.current_uri.clone() {
+            if self.child.is_some() {
+                self.stop_child();
+                let command = self.play_command(&uri);
+                match Command::new(&command.program)
+                    .args(&command.args)
+                    .stdin(Stdio::null())
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null())
+                    .spawn()
+                {
+                    Ok(child) => {
+                        self.child = Some(child);
+                        self.current_uri = Some(uri);
+                    }
+                    Err(error) => {
+                        return Err(if error.kind() == std::io::ErrorKind::NotFound {
+                            EngineError::NotAvailable(command.program.display().to_string())
+                        } else {
+                            EngineError::Failed(format!("{}: {error}", command.command_line()))
+                        });
+                    }
+                }
+            }
+        }
         Ok(())
     }
 

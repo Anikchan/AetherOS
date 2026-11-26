@@ -28,6 +28,7 @@ pub mod desktop;
 pub mod features;
 pub mod greetd;
 pub mod greeter;
+pub mod layers;
 pub mod greeter_app;
 pub mod model;
 pub mod render;
