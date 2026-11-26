@@ -8,13 +8,24 @@ pub mod collect;
 pub mod manager;
 pub mod model;
 pub mod s7;
+pub mod shortcut;
+pub mod tabs;
 pub mod window;
 
 pub use collect::{pressure_label, ProcFs, ProcessSampler, SystemSampler};
 pub use manager::{
-    app_id_from_scope, parse_loginctl, parse_systemctl, ActivityManager, EndTaskOutcome, Snapshot,
+    app_id_from_scope, parse_loginctl, parse_systemctl, ActivityManager, ConfirmationDialog,
+    EndTaskOutcome, EndTaskRequest, Snapshot,
 };
-pub use window::{demo_rows, ActivityManagerWindow, ProcessRowView};
+pub use shortcut::{KeyChord, KeyName, ShortcutBinding};
+pub use tabs::{
+    battery_report, battery_view, performance_report, performance_view, sensors_report,
+    sensors_view, BatteryAppRow, BatteryTabView, GraphCard, MetricLine, PerformanceView,
+    SensorRowView, SensorsTabView,
+};
+pub use window::{
+    demo_history, demo_rows, demo_sensors, demo_system, ActivityManagerWindow, ProcessRowView,
+};
 pub use model::{
     BatteryView, Column, EnergyColumnContract, EnergyImpact, EnergyLevelSpec, EnergySourceSpec,
     ExportFormat, GraphPoint, PerformanceHistory, ProcessRow, SensorKind, SensorReading, ServiceRow,

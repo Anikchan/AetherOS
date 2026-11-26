@@ -10,18 +10,19 @@ and reads the Energy column from the contract — see Status.
 | Feature | State |
 |---|---|
 | TM-01 Processes tab (columns, per-column sort) | Core + window done: name, PID, PPID, state, CPU %, PSS/RSS, disk, GPU (when reported), energy, wakeups, threads, open files, command, lifecycle state/band |
-| TM-02 End task / end process tree | Core done: SIGTERM, `--force` SIGKILL, refuses PID 1 and itself; unsaved-work warning is delivered by the lifecycle SDK's `WillSuspend` before a suspend, and the CLI prints the warning |
+| TM-02 End task / end process tree | Core + dialog: SIGTERM, `--force` SIGKILL, refuses PID 1 and itself; `request_end_task` builds the confirmation dialog, and a hung app (flagged by the compositor's no-hang watchdog) gets the Force Quit wording; the window maps Cancel / End task / Force Quit to no signal / SIGTERM / SIGKILL |
 | TM-03 Efficiency mode | Core done: lowers nice and `cpu.weight` of the app scope, restores on disable |
-| TM-04/05/06/07/08 Performance tab | Core done: CPU total/per-core, meminfo, zram, PSI level, disk and network rates, 60 s graphs |
+| TM-04/05/06/07/08 Performance tab | Core + window: five 60-second graphs (CPU, memory, disk, network, GPU) normalised per section, per-core bars, and CPU/memory/disk/network/GPU detail columns |
 | TM-09 GPU detail | Busy % and VRAM where the driver reports them; per-process GPU is Pack D |
-| TM-10 Sensors | hwmon + thermal + fans, with explicit "Not reported" fallbacks |
-| TM-11 Battery tab | Reads `powerd` `PowerStatus` JSON |
+| TM-10 Sensors | Core + window: hwmon + thermal + fans sorted by name, 85 °C warning / 95 °C danger tones and alert lines, GPU engine/VRAM; explicit "Not reported" fallbacks instead of fake zeros |
+| TM-11 Battery tab | Core + window: live `powerd` `PowerStatus`/sysfs values plus the F14 history (health trend sparkline, per-app energy for 24 h using the P5-T15 energy levels) |
 | TM-12 App history | Battery analytics energy by app (last 24 h / 7 days) |
 | TM-13 Startup apps | Lists user + system autostart entries; enable/disable persists in the `.desktop` file |
 | TM-14 Users | `loginctl list-users` |
 | TM-16 Details tab | Same process table with PPID, user, threads, open files, command |
 | TM-17 Services | `systemctl list-units --type=service` |
 | TM-19 Export | CSV, JSON and text |
+| TM-AC-01 shortcut | Contract + matcher: `Ctrl+Shift+Esc` (Windows profile) and `Super+Escape` (default); the window accepts both while focused and `--shortcut` publishes the binding for the shell to register globally |
 | TM-20 Alerts / TM-21 menu-bar indicator | v1, not started |
 
 ## Energy column contract (P5-T15)
@@ -68,7 +69,9 @@ aether-taskmanager --startup-list
 aether-taskmanager --startup-disable ~/.config/autostart/mail.desktop
 aether-taskmanager --services
 aether-taskmanager --energy-contract      # JSON binding for the Energy column
-aether-taskmanager --render DIR           # draw the window to DIR/activity-manager.png
+aether-taskmanager --shortcut [--windows-profile]  # shortcut binding for the shell
+aether-taskmanager --tab performance      # text view of one tab (also battery/sensors/processes)
+aether-taskmanager --render DIR           # draw every tab to DIR/activity-manager-<tab>.png
 ```
 
 Integration flags: `--lifecycle-status` (lifecycled `--once` JSON) adds app
@@ -94,8 +97,13 @@ opt-in (`ProcessSampler::detailed`), matching the F13 §6 overhead rules.
   sensors.
 - G-TM1 (overhead) and G-TM2 (accuracy vs reference tools) need the reference
   machines; TM-AC-04/05/06 need real hardware.
-- The window covers the Processes tab; the remaining tabs, the Ctrl+Shift+Esc
-  shortcut, the unsaved-work confirmation dialog and the "Not responding"
-  force-quit flow still need their UI. The core exposes every command they call.
-- `tests/ui.rs` (one test, testing backend) pins the contract binding; the
+- The window covers Processes, Performance, Battery and Sensors. App history,
+  Startup apps, Users, Details, Services and Android still show a placeholder
+  ("not rendered yet"); their data is available from the CLI.
+- The window accepts the shortcut only while focused. Registering it globally
+  is the compositor/shell's job; `--shortcut` prints the exact binding, and the
+  hung flag for the Force Quit wording must come from the compositor's no-hang
+  watchdog (P3-T08), not guessed.
+- `tests/ui.rs` pins the contract binding of the Processes tab; `tests/tabs.rs`
+  pins the tab models, the shortcut hint and the dialog-to-signal mapping. The
   screenshot path is `--render`.

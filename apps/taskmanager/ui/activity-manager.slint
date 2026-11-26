@@ -1,9 +1,11 @@
-// AetherOS Activity Manager (P5-T07, F13) — Processes tab.
+// AetherOS Activity Manager (P5-T07, F13) — Processes, Performance, Battery,
+// Sensors, plus the end-task / force-quit dialog and the shortcut hint.
 //
 // Presentation only. Every row, label and threshold comes from Rust
 // (`src/window.rs` over the F13 core): the Energy column header, null label,
-// tooltip and level labels are the P5-T15 contract (`EnergyColumnContract`),
-// never hard-coded here, so the window and the analytics agree by construction.
+// tooltip and level labels are the P5-T15 contract, the graphs and detail
+// lines are the tab view models in `src/tabs.rs`, and the shortcut string is
+// the F13/F9 binding. Nothing is hard-coded twice.
 import {
     Tokens,
     Icon,
@@ -12,6 +14,7 @@ import {
     AetherButton,
     SearchField,
     SectionLabel,
+    SegmentedControl,
     Pill,
 } from "../../../ui/design.slint";
 
@@ -29,6 +32,134 @@ export struct ProcessRowView {
     energy_share: float,
 }
 
+// One Performance graph (TM-04). Values are normalised 0..1 by Rust.
+export struct GraphCardView {
+    key: string,
+    label: string,
+    current: string,
+    peak: string,
+    hint: string,
+    tone: string,
+    available: bool,
+    values: [float],
+}
+
+// A label/value line in a detail column (TM-05..TM-09).
+export struct MetricLineView {
+    label: string,
+    value: string,
+}
+
+// One app in the Battery tab's energy table (BAT-08, P5-T15 levels).
+export struct AppEnergyView {
+    app: string,
+    energy: string,
+    share: float,
+    label: string,
+    tone: string,
+}
+
+// One sensor row (TM-10).
+export struct SensorRowView {
+    name: string,
+    value: string,
+    tone: string,
+}
+
+// Design token name -> colour, so Rust can pass the contract's tone string.
+export global Tone {
+    public pure function color(tone: string) -> color {
+        if (tone == "danger") { return Tokens.danger; }
+        if (tone == "warning") { return Tokens.warning; }
+        if (tone == "success") { return Tokens.success; }
+        if (tone == "accent") { return Tokens.accent-strong; }
+        return Tokens.text-faint;
+    }
+}
+
+// One Performance section: label, current value, 60-second graph, peak/hint.
+component GraphCardTile inherits Rectangle {
+    in property <GraphCardView> card;
+    height: 112px;
+    border-radius: Tokens.radius-panel;
+    background: Tokens.surface;
+
+    VerticalLayout {
+        padding: Tokens.space(2);
+        spacing: Tokens.space(1);
+
+        HorizontalLayout {
+            spacing: Tokens.space(2);
+            Text {
+                text: card.label;
+                color: Tokens.text;
+                font-size: Tokens.font-body;
+                font-weight: 600;
+                vertical-alignment: center;
+                accessible-role: text;
+                accessible-label: card.label;
+            }
+            Rectangle { horizontal-stretch: 1; }
+            Text {
+                text: card.current;
+                color: card.available ? Tokens.text : Tokens.text-faint;
+                font-size: Tokens.font-body;
+                font-family: Tokens.font-family-mono;
+                vertical-alignment: center;
+            }
+        }
+
+        Rectangle {
+            height: 54px;
+            clip: true;
+            background: Tokens.surface-low;
+            border-radius: Tokens.radius-button;
+
+            for value[index] in card.values : Rectangle {
+                x: (index * (parent.width - 2px)) / card.values.length;
+                width: (parent.width / card.values.length) - 1px;
+                height: max(value * (parent.height - 6px), 1px);
+                y: parent.height - self.height;
+                background: Tone.color(card.tone);
+            }
+        }
+
+        Text {
+            text: card.peak + " · " + card.hint;
+            color: Tokens.text-faint;
+            font-size: Tokens.font-small;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+    }
+}
+
+// A label/value line, used by every detail column.
+component MetricLineRow inherits Rectangle {
+    in property <MetricLineView> line;
+    height: 24px;
+    background: transparent;
+    HorizontalLayout {
+        spacing: Tokens.space(2);
+        Text {
+            text: line.label;
+            color: Tokens.text-muted;
+            font-size: Tokens.font-small;
+            vertical-alignment: center;
+            horizontal-stretch: 1;
+            accessible-role: text;
+            accessible-label: line.label;
+        }
+        Text {
+            text: line.value;
+            color: Tokens.text;
+            font-size: Tokens.font-small;
+            font-family: Tokens.font-family-mono;
+            vertical-alignment: center;
+        }
+    }
+}
+
 export component ActivityManagerApp inherits Window {
     title: "Activity Manager";
     width: 1080px;
@@ -41,6 +172,14 @@ export component ActivityManagerApp inherits Window {
     in property <string> energy_tooltip: "";
     in property <string> energy_sort: "desc";
 
+    // --- shortcut contract (F13 section 2, F9 AP-14) ------------------------
+    in property <string> shortcut_label: "";
+
+    // --- tabs --------------------------------------------------------------
+    in property <[string]> tab_labels: ["Processes"];
+    in-out property <int> tab_index: 0;
+    in property <string> active_tab: "processes";
+
     // --- model, set by Rust ------------------------------------------------
     in property <[ProcessRowView]> rows: [];
     in property <int> process_count: 0;
@@ -49,89 +188,139 @@ export component ActivityManagerApp inherits Window {
     in property <string> status: "Ready";
     in-out property <string> query: "";
 
+    // Performance tab
+    in property <[GraphCardView]> graph_cards: [];
+    in property <[MetricLineView]> cpu_lines: [];
+    in property <[float]> core_bars: [];
+    in property <[MetricLineView]> memory_lines: [];
+    in property <[MetricLineView]> disk_lines: [];
+    in property <[MetricLineView]> network_lines: [];
+    in property <[MetricLineView]> gpu_lines: [];
+
+    // Battery tab
+    in property <string> battery_percent: "Not reported";
+    in property <string> battery_state: "Not reported";
+    in property <[MetricLineView]> battery_lines: [];
+    in property <[AppEnergyView]> battery_apps: [];
+    in property <[float]> battery_health_trend: [];
+    in property <string> battery_history_label: "";
+    in property <string> battery_note: "";
+
+    // Sensors tab
+    in property <[SensorRowView]> temperature_sensors: [];
+    in property <[SensorRowView]> fan_sensors: [];
+    in property <[MetricLineView]> sensor_gpu_lines: [];
+    in property <[string]> sensor_alerts: [];
+    in property <[string]> sensor_unavailable: [];
+
+    // End-task / force-quit dialog (TM-02, TM-AC-03)
+    in property <bool> dialog_visible: false;
+    in property <string> dialog_title: "";
+    in property <string> dialog_message: "";
+    in property <string> dialog_confirm_label: "End task";
+    in property <string> dialog_force_label: "Force Quit";
+    in property <string> dialog_cancel_label: "Cancel";
+    in property <bool> dialog_hung: false;
+    in property <int> dialog_pid: 0;
+
     // --- intents -----------------------------------------------------------
     callback search_edited(string);
     callback end_task(int);
     callback refresh();
+    callback tab_selected(int);
+    callback shortcut_activated();
+    // 0 = cancel, 1 = end task (SIGTERM), 2 = force quit (SIGKILL).
+    callback dialog_choice(int);
 
-    pure function tone-color(tone: string) -> color {
-        if (tone == "danger") { return Tokens.danger; }
-        if (tone == "warning") { return Tokens.warning; }
-        if (tone == "accent") { return Tokens.accent-strong; }
-        if (tone == "success") { return Tokens.success; }
-        return Tokens.text-faint;
-    }
+    init => { root_focus.focus(); }
 
-    VerticalLayout {
-        spacing: 0;
-
-        // --- header --------------------------------------------------------
-        Rectangle {
-            height: 56px;
-            background: Tokens.background-alt;
-            HorizontalLayout {
-                padding-left: Tokens.space(4);
-                padding-right: Tokens.space(4);
-                padding-top: Tokens.space(2);
-                padding-bottom: Tokens.space(2);
-                spacing: Tokens.space(2);
-                Icon { kind: IconKind.activity; size: 18px; tint: Tokens.accent-strong; }
-                Text {
-                    text: "Activity Manager";
-                    color: Tokens.text;
-                    font-size: Tokens.font-title;
-                    font-weight: 600;
-                    vertical-alignment: center;
+    root_focus := FocusScope {
+        key-pressed(event) => {
+            if (event.text == "\u{1b}") {
+                if (event.modifiers.control && event.modifiers.shift) {
+                    root.shortcut_activated();
+                    return accept;
                 }
-                Rectangle { horizontal-stretch: 1; height: 1px; background: transparent; }
-                SearchField {
-                    placeholder: "Search processes";
-                    width: 220px;
-                    vertical-stretch: 0;
-                    edited(text) => { root.search_edited(text); }
-                }
-                AetherButton {
-                    text: "End task";
-                    clicked => {
-                        if (root.rows.length > 0) { root.end_task(root.rows[0].pid); }
-                    }
-                }
-                AetherButton {
-                    text: "Refresh";
-                    clicked => { root.refresh(); }
+                if (event.modifiers.meta) {
+                    root.shortcut_activated();
+                    return accept;
                 }
             }
+            return reject;
         }
-        Divider {}
 
-        // --- body ----------------------------------------------------------
         Rectangle {
-            vertical-stretch: 1;
             background: Tokens.background;
+
             VerticalLayout {
                 spacing: 0;
 
+                // --- header ------------------------------------------------
                 Rectangle {
-                    height: 40px;
-                    background: Tokens.background;
+                    height: 56px;
+                    background: Tokens.background-alt;
                     HorizontalLayout {
-                        padding-left: Tokens.space(3);
-                        padding-right: Tokens.space(3);
-                        spacing: Tokens.space(3);
-                        SectionLabel { label: "PROCESSES"; vertical-alignment: center; }
+                        padding-left: Tokens.space(4);
+                        padding-right: Tokens.space(4);
+                        padding-top: Tokens.space(2);
+                        padding-bottom: Tokens.space(2);
+                        spacing: Tokens.space(2);
+                        Icon { kind: IconKind.activity; size: 18px; tint: Tokens.accent-strong; }
                         Text {
-                            text: root.cpu_summary;
-                            color: Tokens.text-muted;
-                            font-size: Tokens.font-small;
+                            text: "Activity Manager";
+                            color: Tokens.text;
+                            font-size: Tokens.font-title;
+                            font-weight: 600;
                             vertical-alignment: center;
                         }
                         Text {
-                            text: root.memory_summary;
-                            color: Tokens.text-muted;
+                            text: root.shortcut_label;
+                            color: Tokens.text-faint;
                             font-size: Tokens.font-small;
+                            font-family: Tokens.font-family-mono;
                             vertical-alignment: center;
                         }
                         Rectangle { horizontal-stretch: 1; height: 1px; background: transparent; }
+                        SearchField {
+                            placeholder: "Search processes";
+                            width: 220px;
+                            vertical-stretch: 0;
+                            edited(text) => { root.search_edited(text); }
+                        }
+                        AetherButton {
+                            text: "End task";
+                            clicked => {
+                                if (root.rows.length > 0) { root.end_task(root.rows[0].pid); }
+                            }
+                        }
+                        AetherButton {
+                            text: "Refresh";
+                            clicked => { root.refresh(); }
+                        }
+                    }
+                }
+                Divider {}
+
+                // --- tab bar -----------------------------------------------
+                Rectangle {
+                    height: 44px;
+                    background: Tokens.background-alt;
+                    HorizontalLayout {
+                        padding-left: Tokens.space(3);
+                        padding-right: Tokens.space(3);
+                        padding-top: Tokens.space(1);
+                        padding-bottom: Tokens.space(1);
+                        spacing: Tokens.space(2);
+                        SegmentedControl {
+                            items: root.tab_labels;
+                            current: root.tab_index;
+                            vertical-stretch: 0;
+                            selected(index) => {
+                                root.tab_index = index;
+                                root.tab_selected(index);
+                            }
+                        }
+                        Rectangle { horizontal-stretch: 1; }
                         Text {
                             text: root.status;
                             color: Tokens.text-faint;
@@ -142,186 +331,579 @@ export component ActivityManagerApp inherits Window {
                 }
                 Divider {}
 
-                // Column header: the Energy title and sort direction come from
-                // the contract, not from this file.
+                // --- body --------------------------------------------------
                 Rectangle {
-                    height: 28px;
-                    background: Tokens.surface-low;
-                    HorizontalLayout {
-                        padding-left: Tokens.space(3);
-                        padding-right: Tokens.space(3);
-                        spacing: Tokens.space(2);
-                        Text {
-                            text: "Name";
-                            horizontal-stretch: 1;
-                            color: Tokens.text-faint;
-                            font-size: Tokens.font-small;
-                            font-weight: 600;
-                            vertical-alignment: center;
-                        }
-                        Text {
-                            text: "PID";
-                            width: 64px;
-                            color: Tokens.text-faint;
-                            font-size: Tokens.font-small;
-                            font-weight: 600;
-                            vertical-alignment: center;
-                        }
-                        Text {
-                            text: "CPU";
-                            width: 64px;
-                            color: Tokens.text-faint;
-                            font-size: Tokens.font-small;
-                            font-weight: 600;
-                            horizontal-alignment: right;
-                            vertical-alignment: center;
-                        }
-                        Text {
-                            text: "Memory";
-                            width: 84px;
-                            color: Tokens.text-faint;
-                            font-size: Tokens.font-small;
-                            font-weight: 600;
-                            horizontal-alignment: right;
-                            vertical-alignment: center;
-                        }
-                        Text {
-                            text: root.energy_header
-                                + (root.energy_sort == "desc" ? " ↓" : " ↑");
-                            width: 96px;
-                            color: Tokens.text-faint;
-                            font-size: Tokens.font-small;
-                            font-weight: 600;
-                            horizontal-alignment: right;
-                            vertical-alignment: center;
-                            accessible-role: text;
-                            accessible-label: root.energy_header;
-                        }
-                    }
-                }
-                Divider {}
-
-                // Empty state.
-                if root.rows.length == 0 : Rectangle {
                     vertical-stretch: 1;
                     background: Tokens.background;
-                    VerticalLayout {
-                        alignment: center;
-                        spacing: Tokens.space(2);
-                        HorizontalLayout {
-                            alignment: center;
-                            Icon { kind: IconKind.activity; size: 28px; tint: Tokens.text-faint; }
-                        }
-                        Text {
-                            text: "No processes reported";
-                            color: Tokens.text-muted;
-                            font-size: Tokens.font-title;
-                            horizontal-alignment: center;
-                        }
-                        Text {
-                            text: "The sampler has not produced a snapshot yet.";
-                            color: Tokens.text-faint;
-                            font-size: Tokens.font-small;
-                            horizontal-alignment: center;
-                        }
-                    }
-                }
 
-                // Rows.
-                if root.rows.length > 0 : Flickable {
-                    vertical-stretch: 1;
-                    content-width: self.width;
-                    content-height: list-content.preferred-height;
-                    list-content := VerticalLayout {
-                        padding-top: Tokens.space(2);
-                        padding-bottom: Tokens.space(2);
-                        padding-left: Tokens.space(2);
-                        padding-right: Tokens.space(2);
-                        spacing: 1px;
-                        alignment: start;
-                        for row in root.rows : Rectangle {
-                            height: 34px;
-                            border-radius: Tokens.radius-button;
-                            background: ta.has-hover ? Tokens.hover : transparent;
-                            accessible-role: list-item;
-                            accessible-label: row.name;
+                    // ---------------- Processes -----------------------------
+                    if root.active_tab == "processes" : VerticalLayout {
+                        spacing: 0;
+
+                        Rectangle {
+                            height: 40px;
+                            background: Tokens.background;
                             HorizontalLayout {
-                                padding-left: Tokens.space(2);
-                                padding-right: Tokens.space(2);
+                                padding-left: Tokens.space(3);
+                                padding-right: Tokens.space(3);
+                                spacing: Tokens.space(3);
+                                SectionLabel { label: "PROCESSES"; vertical-alignment: center; }
+                                Text {
+                                    text: root.cpu_summary;
+                                    color: Tokens.text-muted;
+                                    font-size: Tokens.font-small;
+                                    vertical-alignment: center;
+                                }
+                                Text {
+                                    text: root.memory_summary;
+                                    color: Tokens.text-muted;
+                                    font-size: Tokens.font-small;
+                                    vertical-alignment: center;
+                                }
+                                Rectangle { horizontal-stretch: 1; height: 1px; background: transparent; }
+                            }
+                        }
+                        Divider {}
+
+                        // Column header: the Energy title and sort direction come from
+                        // the contract, not from this file.
+                        Rectangle {
+                            height: 28px;
+                            background: Tokens.surface-low;
+                            HorizontalLayout {
+                                padding-left: Tokens.space(3);
+                                padding-right: Tokens.space(3);
                                 spacing: Tokens.space(2);
                                 Text {
-                                    text: row.name;
+                                    text: "Name";
                                     horizontal-stretch: 1;
-                                    color: Tokens.text;
-                                    font-size: Tokens.font-body;
+                                    color: Tokens.text-faint;
+                                    font-size: Tokens.font-small;
+                                    font-weight: 600;
+                                    vertical-alignment: center;
+                                }
+                                Text {
+                                    text: "PID";
+                                    width: 64px;
+                                    color: Tokens.text-faint;
+                                    font-size: Tokens.font-small;
+                                    font-weight: 600;
+                                    vertical-alignment: center;
+                                }
+                                Text {
+                                    text: "CPU";
+                                    width: 64px;
+                                    color: Tokens.text-faint;
+                                    font-size: Tokens.font-small;
+                                    font-weight: 600;
+                                    horizontal-alignment: right;
+                                    vertical-alignment: center;
+                                }
+                                Text {
+                                    text: "Memory";
+                                    width: 84px;
+                                    color: Tokens.text-faint;
+                                    font-size: Tokens.font-small;
+                                    font-weight: 600;
+                                    horizontal-alignment: right;
+                                    vertical-alignment: center;
+                                }
+                                Text {
+                                    text: root.energy_header
+                                        + (root.energy_sort == "desc" ? " ↓" : " ↑");
+                                    width: 96px;
+                                    color: Tokens.text-faint;
+                                    font-size: Tokens.font-small;
+                                    font-weight: 600;
+                                    horizontal-alignment: right;
+                                    vertical-alignment: center;
+                                    accessible-role: text;
+                                    accessible-label: root.energy_header;
+                                }
+                            }
+                        }
+                        Divider {}
+
+                        // Empty state.
+                        if root.rows.length == 0 : Rectangle {
+                            vertical-stretch: 1;
+                            background: Tokens.background;
+                            VerticalLayout {
+                                alignment: center;
+                                spacing: Tokens.space(2);
+                                HorizontalLayout {
+                                    alignment: center;
+                                    Icon { kind: IconKind.activity; size: 28px; tint: Tokens.text-faint; }
+                                }
+                                Text {
+                                    text: "No processes reported";
+                                    color: Tokens.text-muted;
+                                    font-size: Tokens.font-title;
+                                    horizontal-alignment: center;
+                                }
+                                Text {
+                                    text: "The sampler has not produced a snapshot yet.";
+                                    color: Tokens.text-faint;
+                                    font-size: Tokens.font-small;
+                                    horizontal-alignment: center;
+                                }
+                            }
+                        }
+
+                        // Rows.
+                        if root.rows.length > 0 : Flickable {
+                            vertical-stretch: 1;
+                            content-width: self.width;
+                            content-height: list-content.preferred-height;
+                            list-content := VerticalLayout {
+                                padding-top: Tokens.space(2);
+                                padding-bottom: Tokens.space(2);
+                                padding-left: Tokens.space(2);
+                                padding-right: Tokens.space(2);
+                                spacing: 1px;
+                                alignment: start;
+                                for row in root.rows : Rectangle {
+                                    height: 34px;
+                                    border-radius: Tokens.radius-button;
+                                    background: ta.has-hover ? Tokens.hover : transparent;
+                                    accessible-role: list-item;
+                                    accessible-label: row.name;
+                                    HorizontalLayout {
+                                        padding-left: Tokens.space(2);
+                                        padding-right: Tokens.space(2);
+                                        spacing: Tokens.space(2);
+                                        Text {
+                                            text: row.name;
+                                            horizontal-stretch: 1;
+                                            color: Tokens.text;
+                                            font-size: Tokens.font-body;
+                                            vertical-alignment: center;
+                                            overflow: elide;
+                                        }
+                                        Text {
+                                            text: row.state;
+                                            width: 20px;
+                                            color: Tokens.text-faint;
+                                            font-size: Tokens.font-small;
+                                            font-family: Tokens.font-family-mono;
+                                            vertical-alignment: center;
+                                        }
+                                        Text {
+                                            text: row.pid;
+                                            width: 64px;
+                                            color: Tokens.text-muted;
+                                            font-size: Tokens.font-small;
+                                            font-family: Tokens.font-family-mono;
+                                            vertical-alignment: center;
+                                        }
+                                        Text {
+                                            text: row.cpu;
+                                            width: 64px;
+                                            color: Tokens.text-muted;
+                                            font-size: Tokens.font-small;
+                                            horizontal-alignment: right;
+                                            vertical-alignment: center;
+                                        }
+                                        Text {
+                                            text: row.memory;
+                                            width: 84px;
+                                            color: Tokens.text-muted;
+                                            font-size: Tokens.font-small;
+                                            horizontal-alignment: right;
+                                            vertical-alignment: center;
+                                        }
+                                        Pill {
+                                            text: row.energy_label;
+                                            tone: Tone.color(row.energy_tone);
+                                            width: 96px;
+                                            vertical-stretch: 0;
+                                        }
+                                    }
+                                    ta := TouchArea {}
+                                }
+                            }
+                        }
+
+                        Divider {}
+                        Rectangle {
+                            height: 30px;
+                            background: Tokens.surface-low;
+                            HorizontalLayout {
+                                padding-left: Tokens.space(3);
+                                padding-right: Tokens.space(3);
+                                spacing: Tokens.space(3);
+                                Text {
+                                    text: root.process_count + " processes";
+                                    color: Tokens.text-muted;
+                                    font-size: Tokens.font-small;
+                                    vertical-alignment: center;
+                                    horizontal-stretch: 1;
+                                }
+                                Text {
+                                    text: root.energy_tooltip;
+                                    color: Tokens.text-faint;
+                                    font-size: Tokens.font-small;
                                     vertical-alignment: center;
                                     overflow: elide;
                                 }
+                            }
+                        }
+                    }
+
+                    // ---------------- Performance ---------------------------
+                    if root.active_tab == "performance" : HorizontalLayout {
+                        spacing: 0;
+
+                        // Graphs (TM-04): one card per section, 60 s window.
+                        Flickable {
+                            width: 62%;
+                            vertical-stretch: 1;
+                            content-width: self.width;
+                            content-height: graphs.preferred-height;
+                            graphs := VerticalLayout {
+                                padding: Tokens.space(3);
+                                spacing: Tokens.space(2);
+                                alignment: start;
+                                for card in root.graph_cards : GraphCardTile { card: card; }
+                            }
+                        }
+                        Rectangle { width: 1px; background: Tokens.divider; }
+                        Flickable {
+                            horizontal-stretch: 1;
+                            vertical-stretch: 1;
+                            content-width: self.width;
+                            content-height: details.preferred-height;
+                            details := VerticalLayout {
+                                padding: Tokens.space(3);
+                                spacing: Tokens.space(2);
+                                alignment: start;
+
+                                SectionLabel { label: "CPU"; }
+                                for line in root.cpu_lines : MetricLineRow { line: line; }
+                                // Per-core busy share (TM-05).
+                                if root.core_bars.length > 0 : Rectangle {
+                                    height: 54px;
+                                    clip: true;
+                                    background: Tokens.surface-low;
+                                    border-radius: Tokens.radius-button;
+                                    for value[index] in root.core_bars : Rectangle {
+                                        x: (index * (parent.width - 2px)) / root.core_bars.length;
+                                        width: (parent.width / root.core_bars.length) - 1px;
+                                        height: max(value * (parent.height - 6px), 1px);
+                                        y: parent.height - self.height;
+                                        background: Tone.color("accent");
+                                    }
+                                }
+
+                                SectionLabel { label: "MEMORY"; }
+                                for line in root.memory_lines : MetricLineRow { line: line; }
+
+                                SectionLabel { label: "DISK"; }
+                                for line in root.disk_lines : MetricLineRow { line: line; }
+
+                                SectionLabel { label: "NETWORK"; }
+                                for line in root.network_lines : MetricLineRow { line: line; }
+
+                                SectionLabel { label: "GPU"; }
+                                for line in root.gpu_lines : MetricLineRow { line: line; }
+                            }
+                        }
+                    }
+
+                    // ---------------- Battery ------------------------------
+                    if root.active_tab == "battery" : HorizontalLayout {
+                        spacing: 0;
+
+                        Flickable {
+                            width: 42%;
+                            vertical-stretch: 1;
+                            content-width: self.width;
+                            content-height: battery-details.preferred-height;
+                            battery-details := VerticalLayout {
+                                padding: Tokens.space(3);
+                                spacing: Tokens.space(2);
+                                alignment: start;
+
+                                HorizontalLayout {
+                                    spacing: Tokens.space(2);
+                                    Text {
+                                        text: root.battery_percent;
+                                        color: Tokens.text;
+                                        font-size: Tokens.font-hero;
+                                        font-weight: 600;
+                                        vertical-alignment: center;
+                                        accessible-role: text;
+                                        accessible-label: "battery percent";
+                                    }
+                                    Pill {
+                                        text: root.battery_state;
+                                        tone: Tokens.accent-strong;
+                                        vertical-stretch: 0;
+                                    }
+                                }
+                                for line in root.battery_lines : MetricLineRow { line: line; }
+
+                                // Health trend (BAT-02), oldest first.
+                                if root.battery_health_trend.length > 0 : Rectangle {
+                                    height: 44px;
+                                    clip: true;
+                                    background: Tokens.surface-low;
+                                    border-radius: Tokens.radius-button;
+                                    for value[index] in root.battery_health_trend : Rectangle {
+                                        x: (index * (parent.width - 2px)) / root.battery_health_trend.length;
+                                        width: (parent.width / root.battery_health_trend.length) - 1px;
+                                        height: max(value * (parent.height - 4px), 1px);
+                                        y: parent.height - self.height;
+                                        background: Tone.color("success");
+                                    }
+                                }
                                 Text {
-                                    text: row.state;
-                                    width: 20px;
+                                    text: "Health trend (BAT-02, one point per day)";
                                     color: Tokens.text-faint;
                                     font-size: Tokens.font-small;
-                                    font-family: Tokens.font-family-mono;
-                                    vertical-alignment: center;
-                                }
-                                Text {
-                                    text: row.pid;
-                                    width: 64px;
-                                    color: Tokens.text-muted;
-                                    font-size: Tokens.font-small;
-                                    font-family: Tokens.font-family-mono;
-                                    vertical-alignment: center;
-                                }
-                                Text {
-                                    text: row.cpu;
-                                    width: 64px;
-                                    color: Tokens.text-muted;
-                                    font-size: Tokens.font-small;
-                                    horizontal-alignment: right;
-                                    vertical-alignment: center;
-                                }
-                                Text {
-                                    text: row.memory;
-                                    width: 84px;
-                                    color: Tokens.text-muted;
-                                    font-size: Tokens.font-small;
-                                    horizontal-alignment: right;
-                                    vertical-alignment: center;
-                                }
-                                Pill {
-                                    text: row.energy_label;
-                                    tone: root.tone-color(row.energy_tone);
-                                    width: 96px;
-                                    vertical-stretch: 0;
                                 }
                             }
-                            ta := TouchArea {}
+                        }
+                        Rectangle { width: 1px; background: Tokens.divider; }
+                        Flickable {
+                            horizontal-stretch: 1;
+                            vertical-stretch: 1;
+                            content-width: self.width;
+                            content-height: battery-apps.preferred-height;
+                            battery-apps := VerticalLayout {
+                                padding: Tokens.space(3);
+                                spacing: Tokens.space(1);
+                                alignment: start;
+                                SectionLabel { label: "ENERGY BY APP"; }
+                                Text {
+                                    text: root.battery_history_label;
+                                    color: Tokens.text-faint;
+                                    font-size: Tokens.font-small;
+                                }
+                                for app in root.battery_apps : Rectangle {
+                                    height: 30px;
+                                    accessible-role: list-item;
+                                    accessible-label: app.app;
+                                    HorizontalLayout {
+                                        spacing: Tokens.space(2);
+                                        Text {
+                                            text: app.app;
+                                            horizontal-stretch: 1;
+                                            color: Tokens.text;
+                                            font-size: Tokens.font-body;
+                                            vertical-alignment: center;
+                                            overflow: elide;
+                                        }
+                                        Text {
+                                            text: app.energy;
+                                            width: 80px;
+                                            color: Tokens.text-muted;
+                                            font-size: Tokens.font-small;
+                                            font-family: Tokens.font-family-mono;
+                                            horizontal-alignment: right;
+                                            vertical-alignment: center;
+                                        }
+                                        Pill {
+                                            text: app.label;
+                                            tone: Tone.color(app.tone);
+                                            width: 96px;
+                                            vertical-stretch: 0;
+                                        }
+                                    }
+                                }
+                                if root.battery_note != "" : Text {
+                                    text: root.battery_note;
+                                    color: Tokens.text-faint;
+                                    font-size: Tokens.font-small;
+                                    wrap: word-wrap;
+                                }
+                            }
+                        }
+                    }
+
+                    // ---------------- Sensors -------------------------------
+                    if root.active_tab == "sensors" : HorizontalLayout {
+                        spacing: 0;
+
+                        Flickable {
+                            width: 50%;
+                            vertical-stretch: 1;
+                            content-width: self.width;
+                            content-height: sensor-details.preferred-height;
+                            sensor-details := VerticalLayout {
+                                padding: Tokens.space(3);
+                                spacing: Tokens.space(1);
+                                alignment: start;
+
+                                SectionLabel { label: "TEMPERATURES"; }
+                                for row in root.temperature_sensors : Rectangle {
+                                    height: 26px;
+                                    accessible-role: list-item;
+                                    accessible-label: row.name;
+                                    HorizontalLayout {
+                                        spacing: Tokens.space(2);
+                                        Text {
+                                            text: row.name;
+                                            horizontal-stretch: 1;
+                                            color: Tokens.text;
+                                            font-size: Tokens.font-body;
+                                            vertical-alignment: center;
+                                            overflow: elide;
+                                        }
+                                        Text {
+                                            text: row.value;
+                                            width: 96px;
+                                            color: Tone.color(row.tone);
+                                            font-size: Tokens.font-body;
+                                            font-family: Tokens.font-family-mono;
+                                            horizontal-alignment: right;
+                                            vertical-alignment: center;
+                                        }
+                                    }
+                                }
+
+                                Rectangle { height: 8px; background: transparent; }
+                                SectionLabel { label: "FANS"; }
+                                for row in root.fan_sensors : Rectangle {
+                                    height: 26px;
+                                    accessible-role: list-item;
+                                    accessible-label: row.name;
+                                    HorizontalLayout {
+                                        spacing: Tokens.space(2);
+                                        Text {
+                                            text: row.name;
+                                            horizontal-stretch: 1;
+                                            color: Tokens.text;
+                                            font-size: Tokens.font-body;
+                                            vertical-alignment: center;
+                                            overflow: elide;
+                                        }
+                                        Text {
+                                            text: row.value;
+                                            width: 96px;
+                                            color: Tokens.text-muted;
+                                            font-size: Tokens.font-body;
+                                            font-family: Tokens.font-family-mono;
+                                            horizontal-alignment: right;
+                                            vertical-alignment: center;
+                                        }
+                                    }
+                                }
+
+                                for note in root.sensor_unavailable : Text {
+                                    text: note;
+                                    color: Tokens.text-faint;
+                                    font-size: Tokens.font-small;
+                                    wrap: word-wrap;
+                                }
+                            }
+                        }
+                        Rectangle { width: 1px; background: Tokens.divider; }
+                        Flickable {
+                            horizontal-stretch: 1;
+                            vertical-stretch: 1;
+                            content-width: self.width;
+                            content-height: sensor-gpu.preferred-height;
+                            sensor-gpu := VerticalLayout {
+                                padding: Tokens.space(3);
+                                spacing: Tokens.space(2);
+                                alignment: start;
+                                SectionLabel { label: "GPU"; }
+                                for line in root.sensor_gpu_lines : MetricLineRow { line: line; }
+
+                                if root.sensor_alerts.length > 0 : SectionLabel { label: "ALERTS"; }
+                                for alert in root.sensor_alerts : Text {
+                                    text: alert;
+                                    color: Tokens.warning;
+                                    font-size: Tokens.font-small;
+                                    wrap: word-wrap;
+                                }
+                            }
+                        }
+                    }
+
+                    // ---------------- Tabs without a rendered view ----------
+                    if root.active_tab != "processes"
+                        && root.active_tab != "performance"
+                        && root.active_tab != "battery"
+                        && root.active_tab != "sensors" : Rectangle {
+                        background: Tokens.background;
+                        VerticalLayout {
+                            alignment: center;
+                            spacing: Tokens.space(2);
+                            Text {
+                                text: "This tab is not rendered yet";
+                                color: Tokens.text-muted;
+                                font-size: Tokens.font-title;
+                                horizontal-alignment: center;
+                            }
+                            Text {
+                                text: "The core behind it is available from the CLI (--tab " + root.active_tab + ").";
+                                color: Tokens.text-faint;
+                                font-size: Tokens.font-small;
+                                horizontal-alignment: center;
+                            }
                         }
                     }
                 }
+            }
 
-                Divider {}
+            // --- force-quit / end-task dialog (TM-02, TM-AC-03) ------------
+            if root.dialog_visible : Rectangle {
+                x: 0;
+                y: 0;
+                width: parent.width;
+                height: parent.height;
+                background: Tokens.scrim;
+
                 Rectangle {
-                    height: 30px;
-                    background: Tokens.surface-low;
-                    HorizontalLayout {
-                        padding-left: Tokens.space(3);
-                        padding-right: Tokens.space(3);
-                        spacing: Tokens.space(3);
+                    width: 440px;
+                    height: 196px;
+                    x: (parent.width - self.width) / 2;
+                    y: (parent.height - self.height) / 2;
+                    border-radius: Tokens.radius-panel;
+                    background: Tokens.surface-high;
+                    border-width: 1px;
+                    border-color: Tokens.glass-edge-soft;
+
+                    VerticalLayout {
+                        padding: Tokens.space(4);
+                        spacing: Tokens.space(2);
+                        alignment: start;
+
                         Text {
-                            text: root.process_count + " processes";
-                            color: Tokens.text-muted;
-                            font-size: Tokens.font-small;
-                            vertical-alignment: center;
-                            horizontal-stretch: 1;
+                            text: root.dialog_title;
+                            color: Tokens.text;
+                            font-size: Tokens.font-title;
+                            font-weight: 600;
+                            accessible-role: text;
+                            accessible-label: "dialog title";
                         }
                         Text {
-                            text: root.energy_tooltip;
-                            color: Tokens.text-faint;
-                            font-size: Tokens.font-small;
-                            vertical-alignment: center;
-                            overflow: elide;
+                            text: root.dialog_message;
+                            color: Tokens.text-muted;
+                            font-size: Tokens.font-body;
+                            wrap: word-wrap;
+                        }
+                        Rectangle { vertical-stretch: 1; }
+                        HorizontalLayout {
+                            spacing: Tokens.space(2);
+                            alignment: end;
+                            AetherButton {
+                                text: root.dialog_cancel_label;
+                                clicked => { root.dialog_choice(0); }
+                            }
+                            if !root.dialog_hung : AetherButton {
+                                text: root.dialog_confirm_label;
+                                clicked => { root.dialog_choice(1); }
+                            }
+                            AetherButton {
+                                text: root.dialog_hung
+                                    ? root.dialog_confirm_label
+                                    : root.dialog_force_label;
+                                primary: true;
+                                clicked => { root.dialog_choice(2); }
+                            }
                         }
                     }
                 }

@@ -25,6 +25,10 @@ build: ## Build the Rust workspace
 test: ## Run the Rust workspace tests
 	cd $(ROOT_DIR) && cargo test --workspace
 
+.PHONY: landlock-probe
+landlock-probe: ## Probe Landlock on this host (exit 126 = unavailable, fail-closed)
+	cargo run -q -p aether-sandbox --bin aether-landlock -- --probe
+
 .PHONY: check-budgets
 check-budgets: ## Compare metrics/sample.txt against budgets.toml
 	cd $(ROOT_DIR) && $(PYTHON) os-build/check-budgets.py os-build/metrics/sample.txt

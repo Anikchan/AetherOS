@@ -291,6 +291,40 @@ impl Tab {
         }
     }
 
+    /// Stable identifier the window and CLI use for a tab.
+    pub fn key(self) -> &'static str {
+        match self {
+            Self::Processes => "processes",
+            Self::Performance => "performance",
+            Self::AppHistory => "app-history",
+            Self::StartupApps => "startup-apps",
+            Self::Users => "users",
+            Self::Details => "details",
+            Self::Services => "services",
+            Self::Battery => "battery",
+            Self::Sensors => "sensors",
+            Self::Android => "android",
+        }
+    }
+
+    /// Resolve a stable identifier back to a tab (CLI `--tab`).
+    pub fn from_key(key: &str) -> Option<Self> {
+        [
+            Self::Processes,
+            Self::Performance,
+            Self::AppHistory,
+            Self::StartupApps,
+            Self::Details,
+            Self::Services,
+            Self::Battery,
+            Self::Sensors,
+            Self::Users,
+            Self::Android,
+        ]
+        .into_iter()
+        .find(|tab| tab.key() == key)
+    }
+
     /// Android tab only exists when Pack A is installed (F15).
     pub fn visible(self, android_pack: bool) -> bool {
         self != Self::Android || android_pack
@@ -540,6 +574,26 @@ mod tests {
         assert!(!Tab::Android.visible(false));
         assert!(Tab::Android.visible(true));
         assert!(Tab::Processes.visible(false));
+    }
+
+    #[test]
+    fn tab_keys_round_trip() {
+        for tab in [
+            Tab::Processes,
+            Tab::Performance,
+            Tab::AppHistory,
+            Tab::StartupApps,
+            Tab::Users,
+            Tab::Details,
+            Tab::Services,
+            Tab::Battery,
+            Tab::Sensors,
+            Tab::Android,
+        ] {
+            assert_eq!(Tab::from_key(tab.key()), Some(tab));
+        }
+        assert_eq!(Tab::from_key("performance"), Some(Tab::Performance));
+        assert_eq!(Tab::from_key("nope"), None);
     }
 
     #[test]

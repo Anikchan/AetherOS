@@ -102,12 +102,33 @@ Must NOT touch: `os-build/kernel/`, `os-build/buildroot/`, `os-build/board/`,
   Boot) is recorded as deferred with prerequisites, risks and a test matrix;
   no code. Docs: D4 §2.2/§5.1, F5 §5.1 + INS-AC-10, project README.
 
+- 2026-11-27 (P5-T07 tabs + P6-T04 Landlock): the Activity Manager window now
+  renders the Performance (five 60 s graphs + CPU/memory/disk/network/GPU
+  details), Battery (powerd status + F14 24 h energy-by-app with P5-T15 levels,
+  health trend) and Sensors (temperatures with 85/95 °C tones, fans, GPU,
+  alerts, explicit fallbacks) tabs from `src/tabs.rs`; `src/shortcut.rs`
+  publishes the `Ctrl+Shift+Esc` (Windows profile) / `Super+Escape` binding and
+  matches toolkit key events; `request_end_task` builds the unsaved-work and
+  Force Quit dialogs and the window maps Cancel/End task/Force Quit to
+  none/SIGTERM/SIGKILL. CLI: `--shortcut`, `--tab`, `--render` draws all four
+  tabs. Landlock: `apps/sandbox/src/landlock.rs` (ABI probe, profile → rules,
+  ABI masking, raw 444/445/446 syscalls, `PR_SET_NO_NEW_PRIVS`) and the
+  `aether-landlock` shim, which exits 126 without running the app when
+  enforcement is impossible; `Enforcer::command_with_landlock` and
+  `Runner::require_landlock`/`--strict-landlock` use it. Verified: taskmanager
+  44 tests, sandbox 30 (incl. 3 shim integration tests), runner 45.
+  Evidence: `docs/2026/11/27/results/p5-t07-tabs-p6-t04-landlock-s4.md`.
+
 ## Blockers (unchanged, owner/hardware)
 
 - 72-hour soak, real G-PM1/B2/B6 values, G-BAT*, G-TM*, AP-AC-03/04 and the live
   USB stick boot need AetherOS on the Dell (hardware paused).
-- Activity Manager window: Processes tab bound; the remaining tabs and the
-  shortcut/confirmation flows are still open.
+- Activity Manager window: Processes/Performance/Battery/Sensors bound; the
+  remaining tabs (App history, Startup apps, Users, Details, Services,
+  Android) are placeholders. Global Ctrl+Shift+Esc registration is the
+  compositor/shell's, and the hung flag comes from the P3-T08 watchdog.
+- Landlock kernel allow/deny runs and the `/usr/libexec/aether-landlock`
+  install need the Linux image (S1 packaging).
 - Live persistence service and the BIOS live path are image-overlay/S1 work.
 - The 40 compatibility slots are defined, the reference spec is ready and the
   harness runs, but the 40 real Windows apps (APP-AC-06), the encrypted boot

@@ -33,6 +33,38 @@ pub enum EndTaskOutcome {
     Refused { pid: u32, reason: String },
 }
 
+/// Text of the dialog shown before a task is ended (TM-02, TM-AC-03).
+///
+/// A hung app gets the Force Quit wording (F13 section 5); the `hung` flag
+/// comes from the compositor's no-hang watchdog (P3-T08) and is supplied by
+/// the caller, never guessed here.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConfirmationDialog {
+    pub title: String,
+    pub message: String,
+    pub confirm_label: String,
+    pub cancel_label: String,
+    /// Window offers "Force Quit" (SIGKILL) as well as "End task" (SIGTERM).
+    pub hung: bool,
+}
+
+/// What the window should do after the user pressed End task.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum EndTaskRequest {
+    Refused { pid: u32, reason: String },
+    Confirm { pid: u32, dialog: ConfirmationDialog },
+}
+
+impl EndTaskRequest {
+    /// The confirmation text, when one is needed.
+    pub fn dialog(&self) -> Option<&ConfirmationDialog> {
+        match self {
+            Self::Confirm { dialog, .. } => Some(dialog),
+            Self::Refused { .. } => None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct EfficiencyRecord {
     old_nice: i32,
@@ -121,6 +153,45 @@ impl ActivityManager {
                 }
             }
         }
+    }
+
+    /// Validate a PID before a task is ended. PID 1 and the manager itself are
+    /// refused without a dialog; everything else needs confirmation.
+    pub fn request_end_task(&self, pid: u32, name: &str, hung: bool) -> EndTaskRequest {
+        if pid <= 1 {
+            return EndTaskRequest::Refused {
+                pid,
+                reason: "PID 1 is the init system".into(),
+            };
+        }
+        if pid == std::process::id() {
+            return EndTaskRequest::Refused {
+                pid,
+                reason: "refusing to end the Activity Manager itself".into(),
+            };
+        }
+        let dialog = if hung {
+            ConfirmationDialog {
+                title: format!("Force Quit “{name}”?"),
+                message: format!(
+                    "“{name}” is not responding. Force Quit ends it immediately and unsaved work will be lost."
+                ),
+                confirm_label: "Force Quit".into(),
+                cancel_label: "Cancel".into(),
+                hung: true,
+            }
+        } else {
+            ConfirmationDialog {
+                title: format!("End “{name}”?"),
+                message:
+                    "Unsaved work may be lost. Apps built with the lifecycle SDK save their state before they close."
+                        .into(),
+                confirm_label: "End task".into(),
+                cancel_label: "Cancel".into(),
+                hung: false,
+            }
+        };
+        EndTaskRequest::Confirm { pid, dialog }
     }
 
     /// End task (TM-02). Refuses PID 1 and the manager itself.
@@ -707,6 +778,38 @@ mod tests {
             band: None,
             cgroup: None,
         }
+    }
+
+    #[test]
+    fn end_task_dialog_words_hung_and_normal_apps() {
+        let dir = temp_dir("dialog");
+        let manager = ActivityManager::new(ProcFs::at(&dir), true);
+
+        let normal = manager.request_end_task(4242, "AetherMail", false);
+        let dialog = normal.dialog().expect("a dialog is required");
+        assert_eq!(dialog.title, "End “AetherMail”?");
+        assert_eq!(dialog.confirm_label, "End task");
+        assert_eq!(dialog.cancel_label, "Cancel");
+        assert!(!dialog.hung);
+        assert!(dialog.message.contains("Unsaved work"));
+
+        let hung = manager.request_end_task(4242, "AetherMail", true);
+        let dialog = hung.dialog().expect("a dialog is required");
+        assert_eq!(dialog.title, "Force Quit “AetherMail”?");
+        assert_eq!(dialog.confirm_label, "Force Quit");
+        assert!(dialog.hung);
+        assert!(dialog.message.contains("not responding"));
+
+        // No dialog for processes that must never be ended.
+        assert!(matches!(
+            manager.request_end_task(1, "init", false),
+            EndTaskRequest::Refused { .. }
+        ));
+        assert!(matches!(
+            manager.request_end_task(std::process::id(), "aether-taskmanager", true),
+            EndTaskRequest::Refused { .. }
+        ));
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[test]

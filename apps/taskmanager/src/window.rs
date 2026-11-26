@@ -1,10 +1,11 @@
 //! Slint window binding for the Activity Manager (P5-T07, F13; P5-T15, F7 PWR-12).
 //!
 //! The window is presentation only: it renders [`ProcessRow`] values produced by
-//! the core and reads every Energy-column string from [`EnergyColumnContract`].
-//! That makes the published contract the single source of truth for the header,
-//! the null label, the level labels, the design tones and the sort direction, so
-//! changing the contract changes the window without touching Slint code.
+//! the core, reads every Energy-column string from [`EnergyColumnContract`], and
+//! renders the Performance/Battery/Sensors tabs from the view models in
+//! [`crate::tabs`]. That makes the published contracts the single source of
+//! truth for labels, thresholds, graph values and sort direction, so changing a
+//! contract changes the window without touching Slint code.
 //!
 //! Headless rendering (`--render`) uses the same binding as the on-device
 //! window, which is how the P5 evidence screenshots are produced.
@@ -13,10 +14,14 @@ slint::include_modules!();
 
 use aether_lifecycled::state::Band;
 
-use slint::{ModelRc, VecModel};
+use slint::{ComponentHandle, ModelRc, VecModel};
 
-use crate::manager::human_bytes;
-use crate::model::{EnergyColumnContract, EnergyImpact, ProcessRow, SystemSample};
+use crate::manager::{human_bytes, ConfirmationDialog};
+use crate::model::{
+    EnergyColumnContract, EnergyImpact, PerformanceHistory, ProcessRow, SystemSample, Tab,
+};
+use crate::shortcut::ShortcutBinding;
+use crate::tabs::{BatteryTabView, MetricLine, PerformanceView, SensorsTabView};
 
 /// Height/width used for the headless evidence render.
 pub const RENDER_WIDTH: u32 = 1080;
@@ -37,8 +42,9 @@ impl ActivityManagerWindow {
 
     /// Build the window with an explicit contract (tests, theme overrides).
     pub fn with_contract(ui: ActivityManagerApp, contract: EnergyColumnContract) -> Self {
-        apply_contract(&ui, &contract);
-        Self { ui, contract }
+        let window = Self { ui, contract };
+        window.apply_contract();
+        window
     }
 
     pub fn ui(&self) -> &ActivityManagerApp {
@@ -52,8 +58,19 @@ impl ActivityManagerWindow {
 
     /// Re-apply a different contract (used when settings change the column).
     pub fn set_contract(&mut self, contract: EnergyColumnContract) {
-        apply_contract(&self.ui, &contract);
         self.contract = contract;
+        self.apply_contract();
+    }
+
+    fn apply_contract(&self) {
+        self.ui
+            .set_energy_header(self.contract.header.clone().into());
+        self.ui
+            .set_energy_null_label(self.contract.null_label.clone().into());
+        self.ui
+            .set_energy_tooltip(self.contract.tooltip.clone().into());
+        self.ui
+            .set_energy_sort(self.contract.default_sort.clone().into());
     }
 
     /// Show rows. `system` fills the CPU/memory summary line; `query` filters
@@ -139,14 +156,204 @@ impl ActivityManagerWindow {
             energy_share: (row.energy.score() / EnergyImpact::High.score()) as f32,
         }
     }
+
+    /// Bind the tab bar and make `active` the visible tab.
+    pub fn bind_tabs(&self, tabs: &[Tab], active: Tab) {
+        let labels: Vec<slint::SharedString> = tabs
+            .iter()
+            .map(|tab| tab.label().into())
+            .collect();
+        self.ui
+            .set_tab_labels(ModelRc::new(VecModel::from(labels)));
+        let index = tabs
+            .iter()
+            .position(|tab| *tab == active)
+            .unwrap_or(0);
+        self.ui.set_tab_index(index as i32);
+        self.ui.set_active_tab(active.key().into());
+    }
+
+    /// Bind the shortcut hint (F13 section 2, F9 AP-14).
+    pub fn bind_shortcut(&self, binding: &ShortcutBinding, windows_profile: bool) {
+        self.ui
+            .set_shortcut_label(binding.accel(windows_profile).into());
+    }
+
+    /// Bind the Performance tab (TM-04..TM-09).
+    pub fn bind_performance(&self, view: &PerformanceView) {
+        let cards: Vec<GraphCardView> = view
+            .cards
+            .iter()
+            .map(|card| GraphCardView {
+                key: card.key.clone().into(),
+                label: card.label.clone().into(),
+                current: card.current.clone().into(),
+                peak: card.peak.clone().into(),
+                hint: card.hint.clone().into(),
+                tone: card.tone.clone().into(),
+                available: card.available,
+                values: ModelRc::new(VecModel::from(card.values.clone())),
+            })
+            .collect();
+        self.ui
+            .set_graph_cards(ModelRc::new(VecModel::from(cards)));
+        self.ui.set_cpu_lines(lines(&view.cpu));
+        self.ui
+            .set_core_bars(ModelRc::new(VecModel::from(view.per_core.clone())));
+        self.ui.set_memory_lines(lines(&view.memory));
+        self.ui.set_disk_lines(lines(&view.disk));
+        self.ui.set_network_lines(lines(&view.network));
+        self.ui.set_gpu_lines(lines(&view.gpu));
+    }
+
+    /// Bind the Battery tab (TM-11, P5-T16 history).
+    pub fn bind_battery(&self, view: &BatteryTabView) {
+        self.ui.set_battery_percent(view.percent.clone().into());
+        self.ui.set_battery_state(view.state.clone().into());
+        self.ui.set_battery_lines(lines(&[
+            MetricLine {
+                label: "Power draw".into(),
+                value: view.power.clone(),
+            },
+            MetricLine {
+                label: "Time remaining".into(),
+                value: view.time_remaining.clone(),
+            },
+            MetricLine {
+                label: "Health".into(),
+                value: view.health.clone(),
+            },
+            MetricLine {
+                label: "Cycle count".into(),
+                value: view.cycles.clone(),
+            },
+            MetricLine {
+                label: "Estimated cycles".into(),
+                value: view.estimated_cycles.clone(),
+            },
+            MetricLine {
+                label: "Temperature".into(),
+                value: view.temperature.clone(),
+            },
+        ]));
+        let apps: Vec<AppEnergyView> = view
+            .apps
+            .iter()
+            .map(|app| AppEnergyView {
+                app: app.app.clone().into(),
+                energy: app.energy.clone().into(),
+                share: app.share,
+                label: app.label.clone().into(),
+                tone: app.tone.clone().into(),
+            })
+            .collect();
+        self.ui
+            .set_battery_apps(ModelRc::new(VecModel::from(apps)));
+        self.ui.set_battery_health_trend(ModelRc::new(VecModel::from(
+            view.health_trend.clone(),
+        )));
+        self.ui
+            .set_battery_history_label(view.history_label.clone().into());
+        self.ui
+            .set_battery_note(view.empty_reason.clone().unwrap_or_default().into());
+    }
+
+    /// Bind the Sensors tab (TM-10).
+    pub fn bind_sensors(&self, view: &SensorsTabView) {
+        self.ui
+            .set_temperature_sensors(sensor_rows(view, true));
+        self.ui.set_fan_sensors(sensor_rows(view, false));
+        self.ui.set_sensor_gpu_lines(lines(&view.gpu));
+        let alerts: Vec<slint::SharedString> =
+            view.alerts.iter().map(|alert| alert.as_str().into()).collect();
+        self.ui
+            .set_sensor_alerts(ModelRc::new(VecModel::from(alerts)));
+        let unavailable: Vec<slint::SharedString> = view
+            .unavailable
+            .iter()
+            .map(|note| note.as_str().into())
+            .collect();
+        self.ui
+            .set_sensor_unavailable(ModelRc::new(VecModel::from(unavailable)));
+    }
+
+    /// Show the end-task / force-quit dialog for `pid` (TM-02, TM-AC-03).
+    pub fn show_dialog(&self, pid: u32, dialog: &ConfirmationDialog) {
+        self.ui.set_dialog_pid(pid as i32);
+        self.ui.set_dialog_title(dialog.title.clone().into());
+        self.ui.set_dialog_message(dialog.message.clone().into());
+        self.ui
+            .set_dialog_confirm_label(dialog.confirm_label.clone().into());
+        self.ui
+            .set_dialog_cancel_label(dialog.cancel_label.clone().into());
+        self.ui.set_dialog_hung(dialog.hung);
+        self.ui.set_dialog_visible(true);
+    }
+
+    pub fn hide_dialog(&self) {
+        self.ui.set_dialog_visible(false);
+    }
+
+    pub fn dialog_visible(&self) -> bool {
+        self.ui.get_dialog_visible()
+    }
+
+    /// Register the handler for the dialog buttons: cancel does nothing,
+    /// "End task" sends SIGTERM and "Force Quit" sends SIGKILL.
+    pub fn on_end_task<F>(&self, handler: F)
+    where
+        F: Fn(u32, bool) + 'static,
+    {
+        let weak = self.ui.as_weak();
+        self.ui.on_dialog_choice(move |choice| {
+            let Some(ui) = weak.upgrade() else {
+                return;
+            };
+            ui.set_dialog_visible(false);
+            if choice == 0 {
+                return;
+            }
+            let pid = ui.get_dialog_pid().max(0) as u32;
+            handler(pid, choice == 2);
+        });
+    }
+
+    /// Register the shortcut handler (the window only sees it while focused;
+    /// the shell registers the global accelerator from the same contract).
+    pub fn on_shortcut<F>(&self, handler: F)
+    where
+        F: Fn() + 'static,
+    {
+        self.ui.on_shortcut_activated(handler);
+    }
 }
 
-/// Level labels are contract values; tokens map to colours in the Slint file.
-fn apply_contract(ui: &ActivityManagerApp, contract: &EnergyColumnContract) {
-    ui.set_energy_header(contract.header.clone().into());
-    ui.set_energy_null_label(contract.null_label.clone().into());
-    ui.set_energy_tooltip(contract.tooltip.clone().into());
-    ui.set_energy_sort(contract.default_sort.clone().into());
+fn lines(values: &[MetricLine]) -> ModelRc<MetricLineView> {
+    let views: Vec<MetricLineView> = values
+        .iter()
+        .map(|line| MetricLineView {
+            label: line.label.clone().into(),
+            value: line.value.clone().into(),
+        })
+        .collect();
+    ModelRc::new(VecModel::from(views))
+}
+
+fn sensor_rows(view: &SensorsTabView, temperatures: bool) -> ModelRc<SensorRowView> {
+    let rows: &[crate::tabs::SensorRowView] = if temperatures {
+        &view.temperatures
+    } else {
+        &view.fans
+    };
+    let views: Vec<SensorRowView> = rows
+        .iter()
+        .map(|row| SensorRowView {
+            name: row.name.clone().into(),
+            value: row.value.clone().into(),
+            tone: row.tone.clone().into(),
+        })
+        .collect();
+    ModelRc::new(VecModel::from(views))
 }
 
 fn band_label(band: Band) -> &'static str {
@@ -160,6 +367,83 @@ fn band_label(band: Band) -> &'static str {
         Band::Hibernated => "Hibernated",
         Band::Terminated => "Terminated",
     }
+}
+
+/// Sample system values for `--render` on hosts without `/proc`, so the
+/// evidence screenshots show laid-out graphs instead of empty cards. Every
+/// value is demo data and is documented as such.
+pub fn demo_system() -> SystemSample {
+    let mut system = SystemSample {
+        cpu_total_percent: 24.0,
+        per_core_percent: vec![18.0, 42.0, 12.0, 30.0, 8.0, 55.0, 21.0, 14.0],
+        cpu_mhz: Some(2800),
+        governor: Some("schedutil".into()),
+        uptime_secs: 7_420,
+        process_count: 187,
+        mem_total_bytes: 16 * 1024 * 1024 * 1024,
+        mem_available_bytes: 10 * 1024 * 1024 * 1024,
+        mem_cached_bytes: 5 * 1024 * 1024 * 1024,
+        swap_total_bytes: 4 * 1024 * 1024 * 1024,
+        swap_free_bytes: 4 * 1024 * 1024 * 1024,
+        zram_used_bytes: Some(420 * 1024 * 1024),
+        disk_read_bytes_per_sec: 2.4e6,
+        disk_write_bytes_per_sec: 0.9e6,
+        network_rx_bytes_per_sec: 320e3,
+        network_tx_bytes_per_sec: 48e3,
+        gpu_busy_percent: Some(14.0),
+        gpu_memory_used_bytes: Some(512 * 1024 * 1024),
+        ..Default::default()
+    };
+    system.temperatures_c.insert("coretemp/Package id 0".into(), 52.0);
+    system.temperatures_c.insert("nvme/Composite".into(), 38.5);
+    system
+}
+
+/// 60 one-second points for the Performance tab when no `/proc` exists.
+pub fn demo_history(system: &SystemSample) -> PerformanceHistory {
+    let mut history = PerformanceHistory::default();
+    for step in 0..60u64 {
+        let wave = (step % 20) as f32;
+        let sample = SystemSample {
+            cpu_total_percent: 12.0 + wave * 1.6,
+            mem_total_bytes: system.mem_total_bytes,
+            mem_available_bytes: system.mem_available_bytes.saturating_sub(step * 4_000_000),
+            disk_read_bytes_per_sec: 1.2e6 + f64::from(wave) * 9.0e4,
+            disk_write_bytes_per_sec: 0.5e6 + f64::from(wave) * 4.0e4,
+            network_rx_bytes_per_sec: 220e3 + f64::from(wave) * 9.0e3,
+            network_tx_bytes_per_sec: 30e3 + f64::from(wave) * 1.5e3,
+            gpu_busy_percent: Some(6.0 + wave * 0.7),
+            ..Default::default()
+        };
+        history.push(&sample, step * 1_000);
+    }
+    history
+}
+
+/// Sample sensors for `--render` on hosts without hwmon/thermal sysfs.
+pub fn demo_sensors() -> Vec<crate::model::SensorReading> {
+    vec![
+        crate::model::SensorReading {
+            name: "coretemp/Package id 0".into(),
+            kind: crate::model::SensorKind::TemperatureC,
+            value: 52.0,
+        },
+        crate::model::SensorReading {
+            name: "nvme/Composite".into(),
+            kind: crate::model::SensorKind::TemperatureC,
+            value: 38.5,
+        },
+        crate::model::SensorReading {
+            name: "BAT0/temp".into(),
+            kind: crate::model::SensorKind::TemperatureC,
+            value: 30.5,
+        },
+        crate::model::SensorReading {
+            name: "thinkpad/fan1".into(),
+            kind: crate::model::SensorKind::FanRpm,
+            value: 2_800.0,
+        },
+    ]
 }
 
 /// Rows used by `--render` when the host has no `/proc` (evidence on macOS).

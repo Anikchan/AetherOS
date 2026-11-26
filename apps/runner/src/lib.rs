@@ -276,6 +276,8 @@ pub struct Runner {
     pub paths: Paths,
     pub engines: EngineRegistry,
     pub dry_run: bool,
+    /// Fail-closed Landlock enforcement through the `aether-landlock` shim.
+    pub strict_landlock: bool,
     capabilities: Option<SandboxCapabilities>,
 }
 
@@ -285,12 +287,20 @@ impl Runner {
             paths,
             engines,
             dry_run: false,
+            strict_landlock: false,
             capabilities: None,
         }
     }
 
     pub fn dry_run(mut self) -> Self {
         self.dry_run = true;
+        self
+    }
+
+    /// Require Landlock on top of the namespace sandbox (P6-T04 follow-up).
+    /// When the kernel cannot enforce it, launch fails closed.
+    pub fn require_landlock(mut self, required: bool) -> Self {
+        self.strict_landlock = required;
         self
     }
 
@@ -376,7 +386,15 @@ impl Runner {
         let plan = self.plan(id)?;
         let enforcer = self.enforcer()?;
         let program = plan.program.clone();
-        let mut command = enforcer.command(&plan.profile, &program)?;
+        let mut command = if self.strict_landlock {
+            enforcer.command_with_landlock(
+                &plan.profile,
+                &program,
+                Path::new(aether_sandbox::landlock::SHIM_PATH),
+            )?
+        } else {
+            enforcer.command(&plan.profile, &program)?
+        };
         for arg in &plan.args {
             command.arg(arg);
         }
@@ -516,6 +534,35 @@ mod tests {
         let handle = runner.launch(&id).unwrap();
         assert_eq!(handle.pid, 0);
         assert!(handle.plan.preview().contains("bin/app"));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn strict_landlock_is_fail_closed() {
+        let root = temp_root("strict-ll");
+        let (paths, id) = make_bundle(&root, PackageKind::NativeBundle);
+        let landlock = aether_sandbox::landlock::probe().is_available();
+        let runner = Runner::new(paths.clone(), EngineRegistry::at(root.join("engines")))
+            .with_capabilities(SandboxCapabilities {
+                bwrap: Some(PathBuf::from("/usr/bin/bwrap")),
+                user_namespaces: true,
+                landlock,
+            })
+            .require_landlock(true)
+            .dry_run();
+        match runner.launch(&id) {
+            Ok(handle) => {
+                assert!(landlock, "strict launch only succeeds where Landlock exists");
+                assert_eq!(handle.pid, 0);
+            }
+            Err(LaunchError::SandboxFailed(message)) => {
+                assert!(
+                    message.to_ascii_lowercase().contains("landlock"),
+                    "unexpected refusal: {message}"
+                );
+            }
+            Err(other) => panic!("unexpected launch error: {other:?}"),
+        }
         let _ = std::fs::remove_dir_all(root);
     }
 

@@ -13,6 +13,8 @@
 //!   aether-taskmanager --startup-list | --startup-disable FILE | --startup-enable FILE
 //!   aether-taskmanager --services | --users
 //!   aether-taskmanager --energy-contract
+//!   aether-taskmanager --shortcut [--windows-profile]
+//!   aether-taskmanager --tab processes|performance|battery|sensors
 //!   aether-taskmanager --render DIR
 //!
 //! `--yes` is required for real signals and nice changes; without it actions
@@ -38,6 +40,9 @@ struct Args {
     tui: bool,
     spike_s7: bool,
     energy_contract: bool,
+    shortcut: bool,
+    windows_profile: bool,
+    tab: Option<String>,
     limit: Option<usize>,
     interval: u64,
     end_task: Option<u32>,
@@ -78,6 +83,9 @@ fn parse_args() -> Args {
             "--tui" => args.tui = true,
             "--spike-s7" => args.spike_s7 = true,
             "--energy-contract" => args.energy_contract = true,
+            "--shortcut" => args.shortcut = true,
+            "--windows-profile" => args.windows_profile = true,
+            "--tab" => args.tab = Some(value("--tab")),
             "--limit" => args.limit = value("--limit").parse().ok(),
             "--interval" => args.interval = value("--interval").parse().unwrap_or(1),
             "--end-task" => args.end_task = value("--end-task").parse().ok(),
@@ -133,6 +141,24 @@ fn main() {
     if args.energy_contract {
         let contract = aether_taskmanager::EnergyImpact::contract();
         println!("{}", serde_json::to_string_pretty(&contract).unwrap_or_default());
+        return;
+    }
+    if args.shortcut {
+        let binding = aether_taskmanager::ShortcutBinding::default();
+        let mut payload = serde_json::to_value(&binding).unwrap_or_default();
+        if let Some(object) = payload.as_object_mut() {
+            object.insert(
+                "active_accel".into(),
+                serde_json::Value::String(binding.accel(args.windows_profile).to_string()),
+            );
+            object.insert(
+                "profile".into(),
+                serde_json::Value::String(
+                    if args.windows_profile { "windows" } else { "default" }.into(),
+                ),
+            );
+        }
+        println!("{}", serde_json::to_string_pretty(&payload).unwrap_or_default());
         return;
     }
     let roots = ProcFs::system();
@@ -262,6 +288,62 @@ fn main() {
         }
     };
 
+    if let Some(name) = args.tab.as_deref() {
+        let tab = aether_taskmanager::model::Tab::from_key(name).unwrap_or_else(|| {
+            eprintln!("unknown tab: {name} (processes, performance, battery, sensors)");
+            std::process::exit(2);
+        });
+        // On hosts without /proc (the macOS dev host) the tab still prints its
+        // explicit "Not reported" fallbacks instead of failing.
+        let (mut rows, system, history) = match manager.refresh(epoch_ms()) {
+            Ok(snapshot) => (snapshot.rows, snapshot.system, snapshot.history),
+            Err(error) => {
+                eprintln!("sampling unavailable ({error}); printing tab fallbacks");
+                (
+                    Vec::new(),
+                    aether_taskmanager::SystemSample::default(),
+                    aether_taskmanager::PerformanceHistory::default(),
+                )
+            }
+        };
+        apply_context(&mut manager, &mut rows);
+        match tab {
+            aether_taskmanager::model::Tab::Processes => {
+                print!("{}", ActivityManager::performance_text(&system));
+                println!();
+                print!("{}", ActivityManager::export(&rows, ExportFormat::Text));
+            }
+            aether_taskmanager::model::Tab::Performance => {
+                print!(
+                    "{}",
+                    aether_taskmanager::performance_report(
+                        &aether_taskmanager::performance_view(&system, &history)
+                    )
+                );
+            }
+            aether_taskmanager::model::Tab::Battery => {
+                let status = args
+                    .battery_status
+                    .as_ref()
+                    .and_then(|path| manager.battery_view(path));
+                let view = aether_taskmanager::battery_view(
+                    status.as_ref().or(system.battery.as_ref()),
+                    analytics.as_ref(),
+                    epoch_ms() / 1000,
+                );
+                print!("{}", aether_taskmanager::battery_report(&view));
+            }
+            aether_taskmanager::model::Tab::Sensors => {
+                let sensors =
+                    aether_taskmanager::collect::read_sensors(&roots.sys_root);
+                let view = aether_taskmanager::sensors_view(&sensors, &system);
+                print!("{}", aether_taskmanager::sensors_report(&view));
+            }
+            other => println!("{} tab has no rendered view yet (core data is sampled).", other.label()),
+        }
+        return;
+    }
+
     if args.tui {
         loop {
             let snapshot = match manager.refresh(epoch_ms()) {
@@ -370,8 +452,8 @@ fn truncate(value: &str, max: usize) -> String {
     value.chars().take(max.saturating_sub(1)).collect::<String>() + "…"
 }
 
-/// Draw the Activity Manager window to `<dir>/activity-manager.png` through the
-/// shared headless renderer (P5-T15 evidence).
+/// Draw the Activity Manager window to `<dir>/activity-manager-<tab>.png` for
+/// every rendered tab through the shared headless renderer (P5 evidence).
 ///
 /// The rows come from the live sampler where `/proc` exists and from
 /// [`aether_taskmanager::demo_rows`] on the dev host; the Energy column is
@@ -381,40 +463,128 @@ fn render_window(dir: &Path, args: &Args, manager: &mut ActivityManager) {
         eprintln!("cannot initialise the renderer: {error}");
         std::process::exit(1);
     }
-    let window = match ActivityManagerWindow::new() {
-        Ok(window) => window,
-        Err(error) => {
-            eprintln!("cannot build the window: {error}");
-            std::process::exit(1);
-        }
-    };
-    let snapshot = manager.refresh(epoch_ms()).ok();
-    let (mut rows, system) = match snapshot {
-        Some(snapshot) => (snapshot.rows, Some(snapshot.system)),
-        None => (aether_taskmanager::demo_rows(), None),
-    };
-    if let Some(path) = &args.power_history {
-        if let Ok(analytics) = BatteryAnalytics::load(path) {
-            manager.apply_energy_impact(&mut rows, &analytics);
-        }
-    }
-    window.bind(&rows, system.as_ref(), "");
-
     if let Err(error) = std::fs::create_dir_all(dir) {
         eprintln!("cannot create {}: {error}", dir.display());
         std::process::exit(1);
     }
-    let path = dir.join("activity-manager.png");
-    match aether_ui::render::render_png(window.ui(), RENDER_WIDTH, RENDER_HEIGHT, &path) {
-        Ok(frame) => println!(
-            "AETHER_ACTIVITY_MANAGER_RENDERED {} ({}x{})",
-            path.display(),
-            frame.width,
-            frame.height
+    let snapshot = manager.refresh(epoch_ms()).ok();
+    let (mut rows, system, mut history) = match snapshot {
+        Some(snapshot) => (snapshot.rows, Some(snapshot.system), snapshot.history),
+        None => (
+            aether_taskmanager::demo_rows(),
+            Some(aether_taskmanager::demo_system()),
+            aether_taskmanager::PerformanceHistory::default(),
         ),
-        Err(error) => {
-            eprintln!("render failed: {error}");
-            std::process::exit(1);
+    };
+    let analytics = args
+        .power_history
+        .as_ref()
+        .and_then(|path| BatteryAnalytics::load(path).ok())
+        .or_else(|| {
+            // Evidence render without a history file: three demo apps so the
+            // Battery tab shows the contract-driven energy table.
+            let now = epoch_ms() / 1000;
+            let mut analytics = BatteryAnalytics::new(64);
+            analytics.record_app_energy(now - 600, "org.aether.Browser", 18.4);
+            analytics.record_app_energy(now - 900, "org.aether.Player", 4.1);
+            analytics.record_app_energy(now - 1_200, "org.aether.Files", 0.6);
+            Some(analytics)
+        });
+    if let Some(analytics) = &analytics {
+        manager.apply_energy_impact(&mut rows, analytics);
+    }
+
+    let tabs = manager.tabs();
+    let sample_system = system.clone().unwrap_or_default();
+    if history.cpu.is_empty() {
+        // Evidence render on a host without /proc: draw the demo series.
+        history = aether_taskmanager::demo_history(&sample_system);
+    }
+    let status = args
+        .battery_status
+        .as_ref()
+        .and_then(|path| manager.battery_view(path))
+        .or_else(|| sample_system.battery.clone())
+        .or_else(|| {
+            Some(aether_taskmanager::BatteryView {
+                percent: 79.0,
+                charging: false,
+                power_w: Some(9.8),
+                time_remaining_secs: Some(3_780),
+                cycle_count: Some(120),
+                health_percent: Some(88.5),
+                temperature_c: Some(30.5),
+            })
+        });
+    let sensors = {
+        let live = aether_taskmanager::collect::read_sensors(&ProcFs::system().sys_root);
+        if live.is_empty() {
+            aether_taskmanager::demo_sensors()
+        } else {
+            live
         }
+    };
+
+    let mut rendered = Vec::new();
+    for tab in [
+        aether_taskmanager::model::Tab::Processes,
+        aether_taskmanager::model::Tab::Performance,
+        aether_taskmanager::model::Tab::Battery,
+        aether_taskmanager::model::Tab::Sensors,
+    ] {
+        let window = match ActivityManagerWindow::new() {
+            Ok(window) => window,
+            Err(error) => {
+                eprintln!("cannot build the window: {error}");
+                std::process::exit(1);
+            }
+        };
+        window.bind_tabs(&tabs, tab);
+        window.bind_shortcut(&aether_taskmanager::ShortcutBinding::default(), args.windows_profile);
+        window.bind(&rows, Some(&sample_system), "");
+        match tab {
+            aether_taskmanager::model::Tab::Performance => {
+                window.bind_performance(&aether_taskmanager::performance_view(
+                    &sample_system,
+                    &history,
+                ));
+            }
+            aether_taskmanager::model::Tab::Battery => {
+                window.bind_battery(&aether_taskmanager::battery_view(
+                    status.as_ref().or(sample_system.battery.as_ref()),
+                    analytics.as_ref(),
+                    epoch_ms() / 1000,
+                ));
+            }
+            aether_taskmanager::model::Tab::Sensors => {
+                window.bind_sensors(&aether_taskmanager::sensors_view(
+                    &sensors,
+                    &sample_system,
+                ));
+            }
+            _ => {}
+        }
+
+        let path = dir.join(format!("activity-manager-{}.png", tab.key()));
+        match aether_ui::render::render_png(window.ui(), RENDER_WIDTH, RENDER_HEIGHT, &path) {
+            Ok(frame) => {
+                println!(
+                    "AETHER_ACTIVITY_MANAGER_RENDERED {} ({}x{}) [{}]",
+                    path.display(),
+                    frame.width,
+                    frame.height,
+                    tab.label()
+                );
+                rendered.push(path);
+            }
+            Err(error) => {
+                eprintln!("render failed: {error}");
+                std::process::exit(1);
+            }
+        }
+    }
+    if rendered.is_empty() {
+        eprintln!("nothing rendered");
+        std::process::exit(1);
     }
 }

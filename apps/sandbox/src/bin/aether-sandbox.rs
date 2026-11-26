@@ -6,6 +6,7 @@
 //!   aether-sandbox revoke APP-ID PERMISSION
 //!   aether-sandbox list APP-ID
 //!   aether-sandbox profile --manifest FILE --data DIR [--granted a,b] [--network]
+//!   aether-sandbox landlock --manifest FILE --data DIR [--granted a,b]
 
 use std::collections::BTreeSet;
 use std::path::PathBuf;
@@ -92,14 +93,22 @@ fn main() {
     match command {
         "doctor" => {
             let caps = aether_sandbox::SandboxCapabilities::detect();
+            let landlock = aether_sandbox::landlock::probe();
             println!(
                 "{}",
                 serde_json::to_string_pretty(&serde_json::json!({
                     "bwrap": caps.bwrap,
                     "user_namespaces": caps.user_namespaces,
                     "landlock": caps.landlock,
+                    "landlock_status": landlock,
+                    "landlock_shim": aether_sandbox::landlock::SHIM_PATH,
                     "usable": caps.usable(),
-                    "note": if caps.usable() { "sandbox enforcement available" } else { "apps will refuse to launch unsandboxed (D8 failure mode)" },
+                    "strict_launch": caps.usable() && caps.landlock,
+                    "note": if caps.usable() {
+                        "namespace sandbox available; strict Landlock launch requires landlock_status = available"
+                    } else {
+                        "apps will refuse to launch unsandboxed (D8 failure mode)"
+                    },
                 }))
                 .unwrap_or_default()
             );
@@ -157,6 +166,48 @@ fn main() {
                 }))
                 .unwrap_or_default()
             );
+        }
+        "landlock" => {
+            let Some(manifest_path) = manifest_path else {
+                eprintln!("landlock needs --manifest FILE");
+                std::process::exit(2);
+            };
+            let manifest = read_manifest(&manifest_path).unwrap_or_else(|error| {
+                eprintln!("manifest error: {error}");
+                std::process::exit(1);
+            });
+            let data = data_dir.unwrap_or_else(|| PathBuf::from("/tmp/aether-app-data"));
+            let home = std::env::var_os("HOME")
+                .map(PathBuf::from)
+                .unwrap_or_else(|| PathBuf::from("/home/user"));
+            let sandbox = aether_sandbox::Sandbox::new(granted, &data, home);
+            let profile = sandbox.profile_for(&manifest);
+            let policy = aether_sandbox::landlock::LandlockPolicy::from_profile(&profile);
+            let status = aether_sandbox::landlock::probe();
+            match aether_sandbox::landlock::plan(&status, &policy) {
+                Ok(plan) => {
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(&serde_json::json!({
+                            "app": manifest.id,
+                            "status": status,
+                            "abi": plan.abi,
+                            "handled": plan.handled,
+                            "rules": plan.rules.iter().map(|(path, mask)| serde_json::json!({
+                                "path": path,
+                                "access": mask,
+                            })).collect::<Vec<_>>(),
+                            "shim": aether_sandbox::landlock::SHIM_PATH,
+                        }))
+                        .unwrap_or_default()
+                    );
+                    println!("LANDLOCK_PLAN_OK");
+                }
+                Err(error) => {
+                    println!("LANDLOCK_PLAN_REFUSED {error}");
+                    std::process::exit(1);
+                }
+            }
         }
         "profile" => {
             let Some(manifest_path) = manifest_path else {

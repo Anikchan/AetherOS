@@ -20,6 +20,12 @@ pub enum SandboxError {
     MissingEntry(PathBuf),
     #[error("the app data folder {0} is not writable")]
     DataFolder(String),
+    #[error("Landlock enforcement is unavailable: {0}")]
+    LandlockUnavailable(String),
+    #[error("Landlock refused the rule for {path}: {reason}")]
+    LandlockRule { path: String, reason: String },
+    #[error("Landlock could not be applied: {0}")]
+    LandlockFailed(String),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -39,9 +45,9 @@ impl SandboxCapabilities {
                 .and_then(|v| v.trim().parse::<u64>().ok())
                 .map(|v| v > 0)
                 .unwrap_or(false),
-            landlock: fs::read_to_string("/sys/kernel/security/lsm")
-                .map(|text| text.split(',').any(|name| name.trim() == "landlock"))
-                .unwrap_or(false),
+            // The Landlock syscall is authoritative; `/sys/kernel/security/lsm`
+            // is only readable with the securityfs mounted.
+            landlock: crate::landlock::probe().is_available(),
         }
     }
 
@@ -88,6 +94,47 @@ impl Enforcer {
             bwrap,
             capabilities,
         })
+    }
+
+    /// Fail-closed Landlock launch (P6-T04 follow-up).
+    ///
+    /// The namespace sandbox stays, and the entry point runs through the
+    /// `aether-landlock` shim, which applies the Landlock ruleset and only then
+    /// `exec`s the app. When the kernel or an ABI-masked rule cannot be
+    /// enforced, this returns an error and **nothing is started**; it never
+    /// falls back to a namespace-only launch.
+    pub fn command_with_landlock(
+        &self,
+        profile: &SandboxProfile,
+        entry: &Path,
+        shim: &Path,
+    ) -> Result<Command, SandboxError> {
+        let policy = crate::landlock::LandlockPolicy::from_profile(profile);
+        let plan = crate::landlock::plan(&crate::landlock::probe(), &policy)?;
+        if !self.capabilities.landlock {
+            return Err(SandboxError::LandlockUnavailable(
+                "Landlock is not enabled on this kernel; the app will not start unsandboxed".into(),
+            ));
+        }
+        if plan.rule_count() == 0 {
+            return Err(SandboxError::LandlockUnavailable(
+                "no filesystem rule survived the ABI mask; the app will not start".into(),
+            ));
+        }
+
+        let command = self.command(profile, entry)?;
+        // Replace the trailing entry point with the shim invocation so the
+        // namespace sandbox still wraps the whole chain.
+        let mut args: Vec<std::ffi::OsString> =
+            command.get_args().map(|arg| arg.to_os_string()).collect();
+        args.pop();
+        args.push(shim.as_os_str().to_os_string());
+        for arg in crate::landlock::shim_arguments(&policy, entry) {
+            args.push(arg.into());
+        }
+        let mut wrapped = Command::new(&self.bwrap);
+        wrapped.args(args);
+        Ok(wrapped)
     }
 
     /// Test seam: use a specific bwrap binary and capabilities.
@@ -189,6 +236,17 @@ impl Enforcer {
             "Landlock available: {} (namespace enforcement via bwrap)",
             self.capabilities.landlock
         ));
+        if let Some(abi) = crate::landlock::probe().abi() {
+            lines.push(format!(
+                "Landlock enforcement: ABI {abi}, applied by {SHIM_PATH} (fail-closed)",
+                SHIM_PATH = crate::landlock::SHIM_PATH
+            ));
+        } else {
+            lines.push(
+                "Landlock enforcement: not reported by this kernel; strict launches are refused"
+                    .into(),
+            );
+        }
         lines
     }
 }
@@ -324,6 +382,75 @@ mod tests {
         );
         let lines = enforcer.describe(&profile(false, &app));
         assert!(lines.iter().any(|line| line.contains("blocked")));
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn landlock_launch_is_fail_closed_without_landlock() {
+        let dir = temp_dir("ll-fail");
+        let app = dir.join("app-data");
+        fs::create_dir_all(&app).unwrap();
+        let entry = dir.join("app");
+        fs::write(&entry, "#!/bin/sh\ntrue").unwrap();
+        let enforcer = Enforcer::with_bwrap(
+            "/usr/bin/bwrap",
+            SandboxCapabilities {
+                bwrap: Some(PathBuf::from("/usr/bin/bwrap")),
+                user_namespaces: true,
+                landlock: false,
+            },
+        );
+        // No Landlock: refuse instead of falling back to namespaces only.
+        assert!(matches!(
+            enforcer.command_with_landlock(
+                &profile(false, &app),
+                &entry,
+                Path::new("/usr/libexec/aether-landlock")
+            ),
+            Err(SandboxError::LandlockUnavailable(_)) | Err(SandboxError::LandlockFailed(_))
+        ));
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn landlock_launch_wraps_the_entry_with_the_shim() {
+        // Only Linux kernels report a Landlock ABI; elsewhere the fail-closed
+        // path above is the contract.
+        if !crate::landlock::probe().is_available() {
+            return;
+        }
+        let dir = temp_dir("ll-wrap");
+        let app = dir.join("app-data");
+        fs::create_dir_all(&app).unwrap();
+        let entry = dir.join("app");
+        fs::write(&entry, "#!/bin/sh\ntrue").unwrap();
+        let enforcer = Enforcer::with_bwrap(
+            "/usr/bin/bwrap",
+            SandboxCapabilities {
+                bwrap: Some(PathBuf::from("/usr/bin/bwrap")),
+                user_namespaces: true,
+                landlock: true,
+            },
+        );
+        let command = enforcer
+            .command_with_landlock(
+                &profile(false, &app),
+                &entry,
+                Path::new(crate::landlock::SHIM_PATH),
+            )
+            .unwrap();
+        let args: Vec<String> = command
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect();
+        let shim = args
+            .iter()
+            .position(|arg| arg == crate::landlock::SHIM_PATH)
+            .expect("shim precedes the entry point");
+        assert_eq!(args[shim + 1], "--ro");
+        assert!(args.iter().any(|arg| arg == "--rw"));
+        assert_eq!(args.last().unwrap(), &entry.to_string_lossy());
+        assert!(args[..shim].contains(&"--unshare-user".to_string()));
         let _ = fs::remove_dir_all(dir);
     }
 }
