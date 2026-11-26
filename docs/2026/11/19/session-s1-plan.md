@@ -56,20 +56,32 @@ Own the build verification loop, defconfig, kernel fragment, and boot chains; dr
 - `docs/2026/11/16/os-project/03-roadmap-plan.md` (tracker only)
 - `docs/2026/11/17/os-implementation/plan.md`
 
-## Status (2026-11-26, M1 achieved, P2 in progress)
+## Status (2026-11-26, M1 achieved, P2 hardware validation run 2)
 
-**P1 DONE — M1 achieved.** All tasks T01–T08 complete. UEFI fixed (linuxefi module
-preference + PARTUUID root + rootwait + VT/fbcon + getty@tty1). Verified on QEMU
-and bare-metal display. Image 14 MB (gate 150 MB). Direct 25 s, BIOS 30 s, UEFI 33 s (TCG).
-P0 essentially complete (T10 battery spike passed on Dell).
-P2 In progress:
-- T01 (firmware list) ✅, T02 (Mesa+Vulkan, CI green, 27 MB) ✅
-- T07 (matrix) ✅, T08 (coverage report) ✅
-- T03–T06 (Wi-Fi/BT, audio, input, sleep/resume) — image fixes in flight
-  (ath10k/i2c-hid/uvcvideo modules, regdb, ALSA/BT tools, openssh, rootwait,
-  PARTUUID, console=tty0). New build 45788955461 in progress; auto-test loop
-  running on the Dell.
-**Dell is ready** (Ubuntu, SSH, sudo, runner, reserved IP 192.168.68.112).
+**P1 DONE — M1 achieved.** All tasks T01–T08 complete (UEFI linuxefi + PARTUUID +
+rootwait + VT/fbcon + getty@tty1 verified in QEMU and on the Dell display).
+**P0** essentially complete. **P2** in progress:
+- T01 firmware list ✅, T02 Mesa+Vulkan ✅ (i915 bound, 1920×1080, DMC v2.12),
+  T04 audio ✅ (PipeWire + ALSA HDA, speaker-test + mic round-trip),
+  T06 sleep/resume ✅ (10/10 cycles via RTC wakealarm),
+  T07 matrix ✅, T08 coverage report ✅.
+- T03 partial: ath10k firmware loaded, `iw dev wlan0 scan` finds 6 SSIDs;
+  connect pending credentials; BT adapter up + bluetoothctl present.
+- T05 partial: keyboard + PS/2 mouse + backlight 96000; touchpad is PS/2-only
+  (Ubuntu sees I2C-HID "DLL09D9:00 04F3:3147 Touchpad"; AetherOS only "PS/2
+  Generic Mouse" — I2C-HID binding needs investigation); webcam /dev/video0
+  present; brightness/volume keys manual.
+- Battery ✅ (100%, 24.795 Wh, 46.77%), temp ✅ (55 °C).
+- Pending: Wi-Fi connect (SSID/password), touchpad gestures + key verification,
+  external display hot-plug, reboot-to-Windows, M2 closure.
+**Build** 45788955461 ✅ (38 MB, all boot chains). **CI** green (45869439628).
+**Dell** on Ubuntu (192.168.68.112); USB has the latest AetherOS image.
+
+### Remaining S1 work
+1. Re-boot AetherOS on the Dell; run Wi-Fi connect (needs credentials), touchpad,
+   brightness/volume keys, external display, reboot-to-Windows.
+2. Close M2 (04 §6.1 checklist).
+3. Keep the image build green (kernel-config now accepts DRM_I915=m).
 
 P1 verification (run 44936414669 + 44948381548) completed. Results:
 - P1-T01 Done (kernel config verified, run 44936411307 PASS).
