@@ -3,3 +3,6 @@ Cargo.lock.orig
 *.swp
 .DS_Store
 os-build/test/images/
+
+# Local build cache (kernel tarball etc.)
+os-build/.cache/
