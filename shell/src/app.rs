@@ -15,6 +15,7 @@ use slint::{Model, ModelRc, VecModel};
 use crate::auth::{self, AuthOutcome, Authenticator};
 use crate::config::{self, Category, SettingKind, SettingsStore};
 use crate::desktop;
+use crate::features::FeaturesPage;
 use crate::model::{self, Notification, Overlay, PowerMode, SearchKind, ShellState, Window};
 use crate::services::{Battery, Services};
 use crate::{
@@ -150,6 +151,8 @@ pub struct ShellController {
     /// Lock-screen backend: PAM on Linux builds, the local prototype
     /// elsewhere (P4-T06). Tests substitute a scripted backend.
     authenticator: RefCell<Box<dyn Authenticator>>,
+    /// Settings → Features state (P7-T07); the manager owns `features.toml`.
+    features: RefCell<FeaturesPage>,
     pub log: RefCell<Vec<String>>,
 }
 
@@ -166,6 +169,7 @@ impl ShellController {
         state.clock = model::format_clock(&now);
         state.date_label = model::format_date(&now);
 
+        let features_path = store.root().join("features").join("features.toml");
         let controller = Rc::new(ShellController {
             state: RefCell::new(state),
             ui,
@@ -173,6 +177,7 @@ impl ShellController {
             store,
             spawn_apps: RefCell::new(false),
             authenticator: RefCell::new(auth::default_authenticator()),
+            features: RefCell::new(FeaturesPage::load(features_path)),
             log: RefCell::new(Vec::new()),
         });
         controller.load_settings();
@@ -423,6 +428,30 @@ impl ShellController {
         }
         {
             let weak = Rc::downgrade(self);
+            self.ui.on_feature_install(move |id| {
+                if let Some(controller) = weak.upgrade() {
+                    controller.install_feature(id.as_str());
+                }
+            });
+        }
+        {
+            let weak = Rc::downgrade(self);
+            self.ui.on_feature_remove(move |id| {
+                if let Some(controller) = weak.upgrade() {
+                    controller.remove_feature(id.as_str());
+                }
+            });
+        }
+        {
+            let weak = Rc::downgrade(self);
+            self.ui.on_feature_enabled(move |id, enabled| {
+                if let Some(controller) = weak.upgrade() {
+                    controller.set_feature_enabled(id.as_str(), enabled);
+                }
+            });
+        }
+        {
+            let weak = Rc::downgrade(self);
             self.ui.on_workspace_requested(move |index| {
                 if let Some(controller) = weak.upgrade() {
                     controller.state.borrow_mut().workspace = (index.max(0) as usize).min(3);
@@ -544,6 +573,7 @@ impl ShellController {
             .collect();
         self.ui
             .set_settings_rows(ModelRc::new(VecModel::from(rows)));
+        self.sync_features();
     }
 
     // ------------------------------------------------------------- handlers ---
@@ -828,6 +858,38 @@ impl ShellController {
         let category = Category::ALL[page.min(Category::ALL.len() - 1)];
         let rows = self.store.rows_for(category);
         self.state.borrow_mut().settings_rows = rows;
+    }
+
+    // -------------------------------------------------------------- features ---
+
+    fn sync_features(&self) {
+        let page = self.features.borrow();
+        self.ui
+            .set_feature_rows(ModelRc::new(VecModel::from(page.rows())));
+        self.ui.set_feature_budget(page.budget_label().into());
+        self.ui.set_feature_usage(page.usage_label().into());
+        self.ui.set_feature_message(page.message().into());
+        self.ui.set_feature_failed(page.failed());
+    }
+
+    /// Settings → Features (P7-T07). Every action persists through the manager.
+    pub fn install_feature(&self, id: &str) {
+        self.features.borrow_mut().install(id);
+        self.sync_features();
+    }
+
+    pub fn remove_feature(&self, id: &str) {
+        self.features.borrow_mut().remove(id);
+        self.sync_features();
+    }
+
+    pub fn set_feature_enabled(&self, id: &str, enabled: bool) {
+        self.features.borrow_mut().set_enabled(id, enabled);
+        self.sync_features();
+    }
+
+    pub fn features_page(&self) -> std::cell::Ref<'_, FeaturesPage> {
+        self.features.borrow()
     }
 
     fn set_setting_bool(&self, key: &str, value: bool) {

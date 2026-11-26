@@ -85,6 +85,19 @@ export struct SettingsRowEntry {
     on: bool,
 }
 
+// Optional feature pack row (P7-T07, F15).
+export struct FeatureRowEntry {
+    id: string,
+    name: string,
+    status: string,
+    description: string,
+    disk: string,
+    cpu: string,
+    memory: string,
+    installed: bool,
+    enabled: bool,
+}
+
 // Wallpaper: a calm gradient with two soft colour fields. Original artwork —
 // no photographic assets are shipped.
 export component Wallpaper inherits Rectangle {
@@ -1060,9 +1073,22 @@ export component SettingsApp inherits Rectangle {
     in property <[SettingsRowEntry]> rows: [];
     in property <string> foot: "Every change is written to your config files";
 
+    // Settings → Features (P7-T07); visible when `page == features-page`.
+    // Must equal `Category::FEATURES_INDEX` in shell/src/config.rs (asserted by
+    // the headless features test).
+    in property <int> features-page: 10;
+    in property <[FeatureRowEntry]> features: [];
+    in property <string> feature-budget: "";
+    in property <string> feature-usage: "";
+    in property <string> feature-message: "";
+    in property <bool> feature-failed: false;
+
     callback row-toggled(string, bool);
     callback row-activated(string);
     callback page-changed(int);
+    callback feature-install(string);
+    callback feature-remove(string);
+    callback feature-enabled(string, bool);
 
     background: Tokens.background;
 
@@ -1115,7 +1141,105 @@ export component SettingsApp inherits Rectangle {
                 font-weight: 700;
             }
             Divider {}
-            Flickable {
+
+            if root.page == root.features-page : VerticalLayout {
+                vertical-stretch: 1;
+                spacing: Tokens.space(2);
+                alignment: start;
+
+                HorizontalLayout {
+                    spacing: Tokens.space(3);
+                    Text {
+                        text: root.feature-budget;
+                        color: Tokens.text-muted;
+                        font-size: Tokens.font-small;
+                    }
+                    Rectangle { horizontal-stretch: 1; background: transparent; }
+                    Text {
+                        text: root.feature-usage;
+                        color: Tokens.text-faint;
+                        font-size: Tokens.font-small;
+                    }
+                }
+                if root.feature-message != "" : Text {
+                    text: root.feature-message;
+                    color: root.feature-failed ? Tokens.danger : Tokens.success;
+                    font-size: Tokens.font-small;
+                    wrap: word-wrap;
+                }
+                SectionLabel { label: "OPTIONAL PACKS"; }
+                Flickable {
+                    vertical-stretch: 1;
+                    VerticalLayout {
+                        width: 100%;
+                        height: self.preferred-height;
+                        alignment: start;
+                        spacing: 6px;
+                        for pack in root.features : Rectangle {
+                            height: 72px;
+                            border-radius: Tokens.radius-button;
+                            background: Tokens.surface-low;
+                            border-width: 1px;
+                            border-color: pack.enabled ? Tokens.accent-soft : Tokens.divider;
+                            accessible-role: list-item;
+                            accessible-label: pack.name;
+
+                            HorizontalLayout {
+                                padding-left: 12px;
+                                padding-right: 12px;
+                                spacing: 12px;
+                                VerticalLayout {
+                                    alignment: center;
+                                    spacing: 2px;
+                                    Text {
+                                        text: "Pack " + pack.id + " · " + pack.name;
+                                        color: Tokens.text;
+                                        font-size: Tokens.font-body;
+                                        font-weight: 600;
+                                    }
+                                    Text {
+                                        text: pack.description;
+                                        color: Tokens.text-muted;
+                                        font-size: Tokens.font-small;
+                                        overflow: elide;
+                                    }
+                                    Text {
+                                        text: pack.disk + "  ·  " + pack.cpu + "  ·  " + pack.memory;
+                                        color: Tokens.text-faint;
+                                        font-size: 10px;
+                                    }
+                                }
+                                Rectangle { horizontal-stretch: 1; background: transparent; }
+                                Pill {
+                                    text: pack.status;
+                                    tone: pack.enabled ? Tokens.success : (pack.installed ? Tokens.warning : Tokens.text-faint);
+                                }
+                                if pack.installed : ToggleSwitch {
+                                    checked: pack.enabled;
+                                    label: pack.name;
+                                    toggled(value) => { root.feature-enabled(pack.id, value); }
+                                }
+                                if !pack.installed : AetherButton {
+                                    text: "Install";
+                                    primary: true;
+                                    clicked => { root.feature-install(pack.id); }
+                                }
+                                if pack.installed : AetherButton {
+                                    text: "Remove";
+                                    clicked => { root.feature-remove(pack.id); }
+                                }
+                            }
+                        }
+                    }
+                }
+                Text {
+                    text: "Installing is refused when the idle budget (G-OPT1) would be exceeded; every change is written to features/features.toml.";
+                    color: Tokens.text-faint;
+                    font-size: Tokens.font-small;
+                }
+            }
+
+            if root.page != root.features-page : Flickable {
                 vertical-stretch: 1;
                 VerticalLayout {
                     width: 100%;
@@ -1178,6 +1302,11 @@ export component ShellRoot inherits Window {
     in-out property <[SearchResultEntry]> results: [];
     in-out property <[SettingsCategoryEntry]> settings-categories: [];
     in-out property <[SettingsRowEntry]> settings-rows: [];
+    in-out property <[FeatureRowEntry]> feature-rows: [];
+    in-out property <string> feature-budget: "";
+    in-out property <string> feature-usage: "";
+    in-out property <string> feature-message: "";
+    in-out property <bool> feature-failed: false;
     in-out property <string> unread: "";
     in-out property <bool> wifi: true;
     in-out property <bool> bluetooth: true;
@@ -1218,6 +1347,9 @@ export component ShellRoot inherits Window {
     callback settings-row-toggled(string, bool);
     callback settings-row-activated(string);
     callback settings-page-requested(int);
+    callback feature-install(string);
+    callback feature-remove(string);
+    callback feature-enabled(string, bool);
     callback workspace-requested(int);
     callback window-activated(string);
 
@@ -1399,9 +1531,17 @@ export component ShellRoot inherits Window {
         categories: root.settings-categories;
         page: root.settings-page;
         rows: root.settings-rows;
+        features: root.feature-rows;
+        feature-budget: root.feature-budget;
+        feature-usage: root.feature-usage;
+        feature-message: root.feature-message;
+        feature-failed: root.feature-failed;
         row-toggled(key, value) => { root.settings-row-toggled(key, value); }
         row-activated(key) => { root.settings-row-activated(key); }
         page-changed(index) => { root.settings-page-requested(index); }
+        feature-install(id) => { root.feature-install(id); }
+        feature-remove(id) => { root.feature-remove(id); }
+        feature-enabled(id, value) => { root.feature-enabled(id, value); }
     }
 
     if root.overlay == 6 : LockScreen {

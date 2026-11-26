@@ -25,11 +25,12 @@ pub enum Category {
     Apps,
     Notifications,
     Privacy,
+    Features,
     About,
 }
 
 impl Category {
-    pub const ALL: [Category; 11] = [
+    pub const ALL: [Category; 12] = [
         Category::Appearance,
         Category::Display,
         Category::Sound,
@@ -40,8 +41,13 @@ impl Category {
         Category::Apps,
         Category::Notifications,
         Category::Privacy,
+        Category::Features,
         Category::About,
     ];
+
+    /// Sidebar index of Settings → Features (P7-T07); the surface shows the
+    /// pack page instead of schema rows at this index.
+    pub const FEATURES_INDEX: usize = 10;
 
     pub fn name(self) -> &'static str {
         match self {
@@ -55,6 +61,7 @@ impl Category {
             Category::Apps => "Apps",
             Category::Notifications => "Notifications",
             Category::Privacy => "Privacy",
+            Category::Features => "Features",
             Category::About => "About",
         }
     }
@@ -71,6 +78,7 @@ impl Category {
             Category::Apps => IconKind::Apps,
             Category::Notifications => IconKind::Bell,
             Category::Privacy => IconKind::Shield,
+            Category::Features => IconKind::Download,
             Category::About => IconKind::Info,
         }
     }
@@ -455,14 +463,21 @@ mod tests {
     }
 
     #[test]
-    fn every_category_has_at_least_one_setting() {
+    fn every_schema_category_has_at_least_one_setting() {
         for category in Category::ALL {
+            // Features is the P7-T07 pack page, backed by features.toml
+            // instead of the F4 schema, so it has no SettingDef rows.
+            if category == Category::Features {
+                continue;
+            }
             assert!(
                 !settings_for(category).is_empty(),
                 "{} must expose settings",
                 category.name()
             );
         }
+        assert!(settings_for(Category::Features).is_empty());
+        assert_eq!(Category::ALL[Category::FEATURES_INDEX], Category::Features);
     }
 
     #[test]

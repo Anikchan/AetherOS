@@ -105,3 +105,42 @@ pinned = ["org.mozilla.firefox", "com.nexa.terminal", "org.gnome.TextEditor"]
 ## 9. Open Questions
 
 - Whether Lua hooks may run at login without a confirmation prompt. Proposed: yes for local user scripts; extensions need an explicit approval.
+
+## 10. Optional Feature Packs — Settings → Features (P7-T07, 2026-11-26)
+
+F15's optional packs are installed and removed from **Settings → Features**
+(sidebar index `Category::FEATURES_INDEX` in `shell/src/config.rs`). The page is
+presentation only: the rules live in `aether-config`'s `FeatureManager`
+(S4-owned, used read-only here — `shell/src/features.rs` wraps it).
+
+- **One row per pack A–G** with name, description, status pill
+  (Not installed / Installed / Disabled) and the full cost **before** install:
+  disk, idle CPU and memory. The manager reports 0 MB for packs that are not
+  installed, so the row reads the catalog values instead (`OPT-AC-02`).
+- **Budget bar** shows the limit (`Idle budget 1.0% CPU · 256 MB memory`, F6
+  RES-03/04) and current use (packs installed, CPU %, memory and disk).
+- **Install** calls `FeatureManager::install`; if the idle budget would be
+  exceeded the install is refused, nothing is written, and the reason
+  ("idle budget would be exceeded: …") is shown in the danger colour
+  (G-OPT1/`OPT-AC-04`).
+- **Enabled** packs can be disabled with the row switch (state stays
+  installed) and removed with **Remove**, which clears the pack's state so
+  nothing is left behind (G-OPT3).
+- Every change is written to `~/.config/aether/features/features.toml` — the
+  same file `aetherctl features list|install|remove|disable|enable` reads and
+  writes, so the CLI and the GUI never diverge.
+- Unknown packs and remove-before-install errors are reported in the page, not
+  swallowed.
+
+Acceptance:
+
+| ID | Criterion | Result |
+| --- | --- | --- |
+| OPT-AC-01 | Pack catalog lists every pack with status | Pass (headless, 2026-11-26) — 7 rows, status and pill asserted |
+| OPT-AC-02 | Cost (disk, idle CPU, memory) is visible before install | Pass (headless) — unit and surface tests assert the labels |
+| OPT-AC-03 | Install and remove work and persist | Pass (headless) — file written and reloaded; `aetherctl` reads the same path |
+| OPT-AC-04 | An install that breaks the idle budget is refused with the reason | Pass (headless) — `OverBudget` message shown, pack stays uninstalled |
+| OPT-AC-05 | Disable keeps a pack installed; removal clears its state | Pass (headless) |
+
+Evidence: `shell/tests/features.rs`, `shell/src/features.rs` unit tests and the
+`shell-features` screenshot from `aether-shell --render`.

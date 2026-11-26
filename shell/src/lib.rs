@@ -16,6 +16,8 @@
 //! * [`auth`] — lock-screen authenticators: PAM (Linux, feature `pam`) or the
 //!   local credential prototype (P4-T06).
 //! * [`greeter_app`] — `GreeterController` for the standalone login surface.
+//! * [`features`] — Settings → Features page over `aether-config`'s optional
+//!   feature manager (P7-T07).
 
 slint::include_modules!();
 
@@ -23,6 +25,7 @@ pub mod app;
 pub mod auth;
 pub mod config;
 pub mod desktop;
+pub mod features;
 pub mod greetd;
 pub mod greeter;
 pub mod greeter_app;
@@ -33,6 +36,7 @@ pub mod services;
 
 pub use app::ShellController;
 pub use auth::{default_authenticator, AuthOutcome, Authenticator};
+pub use features::FeaturesPage;
 pub use greeter_app::GreeterController;
 pub use greetd::GreetdConnection;
 pub use model::{Overlay, PowerMode, ShellState};

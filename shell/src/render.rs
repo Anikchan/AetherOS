@@ -87,6 +87,15 @@ pub fn specs() -> Vec<SurfaceSpec> {
             lock_error: false,
         },
         SurfaceSpec {
+            name: "shell-features",
+            overlay: Overlay::Settings,
+            width: 1440,
+            height: 900,
+            search: None,
+            settings_page: Some(Category::Features),
+            lock_error: false,
+        },
+        SurfaceSpec {
             name: "shell-menubar",
             overlay: Overlay::None,
             width: 1440,

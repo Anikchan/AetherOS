@@ -329,9 +329,14 @@ fn shell_surfaces_are_interactive() {
             "the dock still lists the app, just not as running"
         );
 
-        // The settings schema is complete: every category renders rows.
+        // The settings schema is complete: every schema category renders rows
+        // (Features is the P7-T07 pack page, backed by features.toml).
         for category in Category::ALL {
             let rows = SettingsStore::new(root.clone()).rows_for(category);
+            if category == Category::Features {
+                assert!(rows.is_empty(), "Features is a pack page, not schema rows");
+                continue;
+            }
             assert!(
                 !rows.is_empty(),
                 "{} must expose settings",
