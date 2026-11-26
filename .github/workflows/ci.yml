@@ -26,7 +26,8 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            libxkbcommon-dev libfontconfig1-dev libfreetype-dev pkg-config fonts-dejavu-core
+            libxkbcommon-dev libfontconfig1-dev libfreetype-dev pkg-config fonts-dejavu-core \
+            xwayland x11-apps
 
       - name: Cache cargo registry and target
         uses: actions/cache@v4
@@ -64,6 +65,18 @@ jobs:
 
       - name: Check budgets (P0-T11)
         run: python3 os-build/check-budgets.py os-build/metrics/sample.txt
+
+      - name: S4 harness and contract checks
+        # Hardware-independent guards: gate-report self-test, the Activity
+        # Manager energy-column contract, the shipped RAUC A/B config, and the
+        # live-USB/bundle script syntax.
+        run: |
+          python3 lifecycled/bench/gate-report.py --self-test
+          cargo run -q -p aether-taskmanager -- --energy-contract > /dev/null
+          cargo run -q -p aether-update -- rauc-config | grep -q RAUC_CONFIG_OK
+          bash -n os-build/scripts/make-live-usb.sh
+          bash -n os-build/scripts/rauc-bundle.sh
+          echo "S4 harness checks: PASS"
 
       - name: Upload build log
         if: always()
