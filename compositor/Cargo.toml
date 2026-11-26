@@ -9,6 +9,12 @@ name = "aether-compositor"
 path = "src/main.rs"
 
 [dependencies]
+smithay = { version = "0.7.0", default-features = false, features = ["wayland_frontend"] }
+
+# XWayland support is Linux-only: smithay's `xwayland` feature pulls in
+# rustix APIs that are not available on macOS (the dev host). CI (ubuntu-latest)
+# gets the extra feature via the target-specific dependency below.
+[target.'cfg(target_os = "linux")'.dependencies]
 smithay = { version = "0.7.0", default-features = false, features = ["wayland_frontend", "xwayland"] }
 
 # P3-T02 headless acceptance test: a Wayland client that checks the two

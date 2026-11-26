@@ -45,6 +45,7 @@ use std::time::{Duration, Instant};
 
 use smithay::delegate_compositor;
 use smithay::delegate_fractional_scale;
+#[cfg(target_os = "linux")]
 use smithay::delegate_xwayland_shell;
 use smithay::delegate_layer_shell;
 use smithay::delegate_output;
@@ -72,10 +73,13 @@ use smithay::wayland::fractional_scale::{
     with_fractional_scale, FractionalScaleHandler, FractionalScaleManagerState,
 };
 use smithay::wayland::socket::ListeningSocketSource;
+#[cfg(target_os = "linux")]
 use smithay::wayland::xwayland_shell::{
     XWaylandShellHandler, XWaylandShellState,
 };
+#[cfg(target_os = "linux")]
 use smithay::xwayland::{XWayland, XWaylandEvent};
+#[cfg(target_os = "linux")]
 use smithay::xwayland::xwm::{X11Surface, X11Wm, XwmHandler, XwmId};
 use smithay::wayland::output::{OutputHandler, OutputManagerState};
 use smithay::wayland::shell::wlr_layer::{
@@ -163,12 +167,16 @@ pub struct AetherCompositor {
     pub layer_surfaces: Vec<LayerSurfaceEntry>,
     pub toplevels: Vec<ToplevelSurface>,
     /// xwayland shell global (associates X11 windows with wl_surfaces).
+    #[cfg(target_os = "linux")]
     pub xwayland_shell: XWaylandShellState,
     /// Running X11 window manager, if XWayland spawned successfully.
+    #[cfg(target_os = "linux")]
     pub xwm: Option<X11Wm>,
     /// Wayland client representing the XWayland server.
+    #[cfg(target_os = "linux")]
     pub xwayland_client: Option<smithay::reexports::wayland_server::Client>,
     /// Display number chosen by XWayland.
+    #[cfg(target_os = "linux")]
     pub xwayland_display: Option<u32>,
     /// Preferred fractional scale per surface, decided when the surface is
     /// assigned to an output.
@@ -197,9 +205,13 @@ impl AetherCompositor {
             outputs: Vec::new(),
             layer_surfaces: Vec::new(),
             toplevels: Vec::new(),
+            #[cfg(target_os = "linux")]
             xwayland_shell: XWaylandShellState::new::<Self>(dh),
+            #[cfg(target_os = "linux")]
             xwm: None,
+            #[cfg(target_os = "linux")]
             xwayland_client: None,
+            #[cfg(target_os = "linux")]
             xwayland_display: None,
             surface_scales: HashMap::new(),
             scaled_surfaces: HashSet::new(),
@@ -365,6 +377,7 @@ delegate_xdg_shell!(AetherCompositor);
 delegate_layer_shell!(AetherCompositor);
 delegate_output!(AetherCompositor);
 delegate_fractional_scale!(AetherCompositor);
+#[cfg(target_os = "linux")]
 delegate_xwayland_shell!(AetherCompositor);
 
 impl CompositorHandler for AetherCompositor {
@@ -520,6 +533,7 @@ impl SeatHandler for AetherCompositor {
     }
 }
 
+#[cfg(target_os = "linux")]
 impl XWaylandShellHandler for AetherCompositor {
     fn xwayland_shell_state(&mut self) -> &mut XWaylandShellState {
         &mut self.xwayland_shell
@@ -534,6 +548,7 @@ impl XWaylandShellHandler for AetherCompositor {
     }
 }
 
+#[cfg(target_os = "linux")]
 impl XwmHandler for AetherCompositor {
     fn xwm_state(&mut self, _xwm: XwmId) -> &mut X11Wm {
         self.xwm.as_mut().expect("xwm not initialised")
@@ -615,9 +630,22 @@ pub fn run() -> Result<(), String> {
     let mut state = AetherCompositor::new(&dh);
     state.deadline = Some(Instant::now() + OVERALL_TIMEOUT);
 
+    // XWayland (and smithay's prepare_x11_sockets) bind Unix sockets under
+    // /tmp/.X11-unix; that directory is not always present on minimal CI images
+    // (e.g. ubuntu-latest with only `xwayland`/`x11-apps` installed), which
+    // would make XWayland::spawn fail silently. Make sure it exists.
+    let _ = std::fs::create_dir_all("/tmp/.X11-unix");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions("/tmp/.X11-unix", std::fs::Permissions::from_mode(0o1777));
+    }
+
     // Spawn XWayland if available (Linux CI). Failure is non-fatal: the
-    // compositor keeps running as a pure Wayland compositor.
-    let xwayland_pair = XWayland::spawn(
+    // compositor keeps running as a pure Wayland compositor, but log the
+    // reason so a missing binary / socket dir is diagnosable in CI.
+    #[cfg(target_os = "linux")]
+    let xwayland_pair = match XWayland::spawn(
         &dh,
         None,
         std::iter::empty::<(String, String)>(),
@@ -625,8 +653,14 @@ pub fn run() -> Result<(), String> {
         std::process::Stdio::null(),
         std::process::Stdio::null(),
         |_ud| {},
-    )
-    .ok();
+    ) {
+        Ok(pair) => Some(pair),
+        Err(err) => {
+            eprintln!("aether-compositor: XWayland spawn failed: {err}");
+            None
+        }
+    };
+    #[cfg(target_os = "linux")]
     if let Some((_, client)) = &xwayland_pair {
         state.xwayland_client = Some(client.clone());
     }
@@ -634,6 +668,7 @@ pub fn run() -> Result<(), String> {
     let mut event_loop: smithay::reexports::calloop::EventLoop<'_, AetherCompositor> =
         smithay::reexports::calloop::EventLoop::try_new()
             .map_err(|e| format!("EventLoop::try_new: {e:?}"))?;
+    #[cfg_attr(not(target_os = "linux"), allow(unused_variables))]
     let loop_handle = event_loop.handle();
     let signal = event_loop.get_signal();
 
@@ -654,6 +689,7 @@ pub fn run() -> Result<(), String> {
         .map_err(|e| format!("insert socket source: {e:?}"))?;
 
     // XWayland event source.
+    #[cfg(target_os = "linux")]
     if let Some((xwayland, _client)) = xwayland_pair {
         let lh = loop_handle.clone();
         event_loop
