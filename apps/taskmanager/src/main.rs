@@ -505,17 +505,15 @@ fn render_window(dir: &Path, args: &Args, manager: &mut ActivityManager) {
         .as_ref()
         .and_then(|path| manager.battery_view(path))
         .or_else(|| sample_system.battery.clone())
-        .or_else(|| {
-            Some(aether_taskmanager::BatteryView {
-                percent: 79.0,
-                charging: false,
-                power_w: Some(9.8),
-                time_remaining_secs: Some(3_780),
-                cycle_count: Some(120),
-                health_percent: Some(88.5),
-                temperature_c: Some(30.5),
-            })
-        });
+        .or(Some(aether_taskmanager::BatteryView {
+            percent: 79.0,
+            charging: false,
+            power_w: Some(9.8),
+            time_remaining_secs: Some(3_780),
+            cycle_count: Some(120),
+            health_percent: Some(88.5),
+            temperature_c: Some(30.5),
+        }));
     let sensors = {
         let live = aether_taskmanager::collect::read_sensors(&ProcFs::system().sys_root);
         if live.is_empty() {
