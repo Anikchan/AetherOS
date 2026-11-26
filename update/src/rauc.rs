@@ -184,7 +184,13 @@ pub fn sync_state(state: &mut UpdateState, status: &RaucStatus) -> bool {
     let changed = previous != status.booted;
     if changed {
         state.boot_attempts = 0;
-        state.update_in_progress = true;
+        // Only a pending slot needs the health handshake; switching to a
+        // previously confirmed slot is not an update in progress.
+        let pending = state
+            .slot(status.booted)
+            .map(|slot| slot.state == SlotState::Pending)
+            .unwrap_or(false);
+        state.update_in_progress = pending;
     }
     changed
 }
