@@ -12,7 +12,10 @@
 | P3-T01 | Done 2026-11-23 (previous session) | `docs/…/p3-t01` commit `0a4778e` |
 | P3-T02 | **Done 2026-11-26 (S2)** — xdg-shell, layer shell, two monitors at different scales, HiDPI (fractional scale + buffer scale + xdg-output logical geometry), headless acceptance test | `docs/2026/11/26/results/p3-t02-multi-monitor-hidpi.md` |
 | P3-T03 | **Blocked 2026-11-26** — no `Xwayland` binary on the macOS dev host, none installed in CI (`ci.yml` is S4's file), none in the image (`buildroot/` is S1's file). Needs `xwayland` + `x11-apps` in CI/image first. | Same results doc, section 5 |
-| P3-T04..T08 | Not started | — |
+| P3-T04 | **Done 2026-11-26** — floating/snap/tile/workspaces wired into toplevels + unit tests (commit `f6fe3dd`, CI run 45869439628) | `docs/2026/11/26/results/` |
+| P3-T05 | **Done 2026-11-26 (S2)** — glass material pipeline, Full/Reduced/Minimal tiers, tier switch (`AETHER_COMPOSITOR_EFFECT_TIER` + `set_effect_tier` + automatic `TierPolicy`), 60 Hz budget check; **60 fps number is modelled, hardware gap noted** | `docs/2026/11/26/results/p3-t05-t06-glass-and-frame-scheduling.md` |
+| P3-T06 | **Done 2026-11-26 (S2)** — damage tracking, 60 Hz frame pacing, `wl_surface.frame` callbacks, idle measurement hooks (`AETHER_COMPOSITOR_IDLE` / `FRAME_STATS`) | Same results doc |
+| P3-T07..T08 | Not started | — |
 
 ## What was delivered for P3-T02
 
@@ -50,13 +53,37 @@ format string) — that is session S3's in-flight work, unrelated to this crate;
 
 ## Next for S2
 
-1. Once S1 adds `xwayland` to the image and S4 adds it to `ci.yml`: implement
-   P3-T03 (smithay `xwayland` feature, `XWayland::spawn`, `X11Wm`, 
-   `xwayland_shell_v1` association, `xeyes` acceptance marker).
-2. P3-T04 window management (floating/snap/tiling/workspaces) can start now —
-   it is headless-testable at the model level.
-3. P3-T08 no-hang design (Wayland ping, frame-gap logger) is also
-   headless-testable.
+1. **P3-T07** direct scanout for full-screen apps (consumes the T06 damage
+   model: a full-screen single-surface frame can bypass composition).
+2. **P3-T08** no-hang design (Wayland ping, "Not responding", shell watchdog,
+   frame-gap logger — `FrameScheduler::last_gap_ms` / `average_gap_ms` already
+   expose the gaps it will log).
+3. Once S1 adds `xwayland` to the image and S4 adds it to `ci.yml`, re-verify
+   P3-T03 on CI (the code is in place and `xeyes` is reported as mapped).
+4. On the Dell (when hardware work resumes): measure real Full-tier frame time
+   with three windows, set `GpuProfile::measured = true` with observed
+   throughput, and close the P3-T05 60 fps gate.
+
+## P3-T05 / P3-T06 delivery summary (2026-11-26)
+
+- `compositor/src/glass.rs`: tier material model (design doc §4 values 1:1),
+  resolved pass list (Full 16 / Reduced 13 / Minimal 5 passes), damage-only
+  effect plan, modelled frame cost vs. the 60 Hz budget, `TierPolicy`
+  hysteresis (30 over-budget frames → lower, 120 comfortable → raise).
+- `compositor/src/scheduling.rs`: `DamageRegion` (coalescing + exact union
+  area), `FrameScheduler` (frame pacing, callbacks bookkeeping, idle
+  time/ratio/skips, gap stats).
+- `compositor/src/lib.rs`: damage from `wl_surface.commit` (surface + buffer
+  coords, buffer-scaled) and WM geometry changes; frame tick in the event loop;
+  frame callbacks answered per presented frame; tier switch via
+  `AETHER_COMPOSITOR_EFFECT_TIER` / `set_effect_tier`; markers
+  `EFFECT_TIER`, `EFFECT_PIPELINE`, `EFFECT_TIER_SWITCH`, `GLASS_GPU_PROFILE`,
+  `GLASS_PLAN`, `FRAME`, `FRAME_CALLBACKS`, `IDLE`, `FRAME_STATS`.
+- `compositor/tests/p3_t05_t06_effects_frames.rs`: real binary at Full and
+  Minimal, three toplevels with damage + frame callbacks.
+- Numbers: Full tier 3 windows fully repainted = 2.440 ms of 16.67 ms
+  (modelled); damage-only frame = 0.176 ms; Minimal tier = 0.114 ms.
+
 
 ## Notes for other sessions
 

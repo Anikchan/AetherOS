@@ -19,6 +19,14 @@
 //!   `wp_fractional_scale_v1` scale; `wl_surface.set_buffer_scale` is accepted
 //!   and recorded.
 //!
+//! Phase P3-T05 adds the glass material pipeline and effect tiers (design doc
+//! D1 section 4) in [`glass`]: the tier resolves to a concrete pass list
+//! (Dual Kawase blur levels + saturation + tint + edge refraction + edge
+//! highlight + shadow + composite), blur is only planned over the damaged
+//! region, and the modelled frame cost is checked against the 60 Hz budget.
+//! Phase P3-T06 adds [`scheduling`]: damage tracking, frame pacing, frame
+//! callbacks and idle measurement.
+//!
 //! Run: `cargo run -p aether-compositor` (or `aether-compositor` binary).
 //! Markers: `AETHER_COMPOSITOR_SOCKET_READY: wayland-0`,
 //!          `AETHER_COMPOSITOR_OUTPUT: …`,
@@ -29,12 +37,26 @@
 //!          `AETHER_COMPOSITOR_LAYER_CONFIGURE: …`,
 //!          `AETHER_COMPOSITOR_BUFFER_SCALE: …`,
 //!          `AETHER_COMPOSITOR_CLIENT_MAPPED`,
+//!          `AETHER_COMPOSITOR_FRAME_RATE: 60`,
+//!          `AETHER_COMPOSITOR_EFFECT_TIER: full`,
+//!          `AETHER_COMPOSITOR_EFFECT_PIPELINE: tier=… blur=…`,
+//!          `AETHER_COMPOSITOR_EFFECT_TIER_SWITCH: from=… to=… reason=…`,
+//!          `AETHER_COMPOSITOR_GLASS_GPU_PROFILE: name=… measured=false …`,
+//!          `AETHER_COMPOSITOR_GLASS_PLAN: tier=… windows=… passes=… est_ms=…`,
+//!          `AETHER_COMPOSITOR_FRAME: n=… damage_px=… tier=… est_ms=…`,
+//!          `AETHER_COMPOSITOR_FRAME_CALLBACKS: n=…`,
+//!          `AETHER_COMPOSITOR_IDLE: idle_ms=… idle_pct=…`,
+//!          `AETHER_COMPOSITOR_FRAME_STATS: frames=… idle_skips=…`,
+//!          `AETHER_COMPOSITOR_EFFECT_SUMMARY: tier=… tier_switches=…`,
 //!          `AETHER_COMPOSITOR_DONE`.
 //!
 //! Env: `AETHER_COMPOSITOR_GRACE_MS` (default 3000) — how long the compositor
 //! keeps running after the first mapped surface before exiting. The headless
 //! multi-output test raises it so two clients' worth of surfaces can be
 //! exercised in one run.
+//! `AETHER_COMPOSITOR_EFFECT_TIER` (`full` | `reduced` | `minimal`, default
+//! `full`) selects the glass tier; `AETHER_COMPOSITOR_TARGET_FPS` (default 60)
+//! sets the frame pacing/budget target.
 //!
 //! The Rust module and the wire protocol share the word "compositor"; see
 //! [`AetherCompositor`] (state) vs. `wayland::compositor` (protocol).
@@ -67,7 +89,7 @@ use smithay::utils::{Logical, Serial, Size, Transform};
 use smithay::wayland::buffer::BufferHandler;
 use smithay::wayland::compositor::{
     with_states, BufferAssignment, CompositorClientState, CompositorHandler, CompositorState,
-    SurfaceAttributes,
+    Damage, SurfaceAttributes,
 };
 use smithay::wayland::fractional_scale::{
     with_fractional_scale, FractionalScaleHandler, FractionalScaleManagerState,
@@ -90,7 +112,11 @@ use smithay::wayland::shell::xdg::{
 };
 use smithay::wayland::shm::{ShmHandler, ShmState};
 
+mod glass;
+mod scheduling;
 mod wm;
+pub use glass::*;
+pub use scheduling::*;
 pub use wm::*;
 
 /// Per-client state, as required by the smithay compositor module.
@@ -186,6 +212,20 @@ pub struct AetherCompositor {
     /// P3-T04 window-management model: floating/snap/tile + workspaces.
     /// Layer surfaces (shell chrome) are deliberately *not* managed here.
     pub wm: WorkspaceManager,
+    /// P3-T05 glass material pipeline: tier, theme, GPU profile, effect plans.
+    pub effects: GlassPipeline,
+    /// P3-T05 automatic tier switching (hysteresis) from measured frame times.
+    pub tier_policy: TierPolicy,
+    /// P3-T06 damage tracking and frame pacing.
+    pub frames: FrameScheduler,
+    /// Start instant, used for `wl_callback.done` timestamps.
+    pub started: Instant,
+    /// `wl_surface.frame` callbacks answered so far.
+    pub frame_callbacks_sent: u64,
+    /// Tier changes performed at runtime (env, API, or the tier policy).
+    pub tier_switches: u32,
+    /// Window count of the last `AETHER_COMPOSITOR_GLASS_PLAN` marker.
+    pub reported_windows: usize,
     /// Monotonic id source for managed toplevels.
     next_window_id: u64,
     pub mapped: bool,
@@ -196,6 +236,20 @@ pub struct AetherCompositor {
 
 impl AetherCompositor {
     pub fn new(dh: &DisplayHandle) -> Self {
+        // P3-T05: the effect tier is selectable; the default is Full, matching
+        // the design doc. Unknown values fall back to Full instead of failing so
+        // a typo cannot leave the desktop without a blur policy.
+        let tier = std::env::var("AETHER_COMPOSITOR_EFFECT_TIER")
+            .ok()
+            .and_then(|value| GlassTier::parse(&value))
+            .unwrap_or(GlassTier::Full);
+        let target_fps = std::env::var("AETHER_COMPOSITOR_TARGET_FPS")
+            .ok()
+            .and_then(|value| value.parse::<u32>().ok())
+            .filter(|fps| *fps > 0)
+            .unwrap_or(glass::DEFAULT_TARGET_FPS);
+        let effects = GlassPipeline::new(tier);
+
         let mut state = Self {
             compositor: CompositorState::new::<Self>(dh),
             shm: ShmState::new::<Self>(dh, vec![]),
@@ -223,6 +277,13 @@ impl AetherCompositor {
             // Replaced with the primary output's logical size once outputs are
             // added below.
             wm: WorkspaceManager::new(0, 0),
+            effects,
+            tier_policy: TierPolicy::new(target_fps),
+            frames: FrameScheduler::new(target_fps),
+            started: Instant::now(),
+            frame_callbacks_sent: 0,
+            tier_switches: 0,
+            reported_windows: 0,
             next_window_id: 0,
             mapped: false,
             shutdown_at: None,
@@ -243,7 +304,243 @@ impl AetherCompositor {
             .unwrap_or((1920, 1080));
         state.wm = WorkspaceManager::new(ow, oh);
         println!("AETHER_COMPOSITOR_OUTPUT_COUNT: {}", state.outputs.len());
+        println!("AETHER_COMPOSITOR_FRAME_RATE: {target_fps}");
+        println!(
+            "AETHER_COMPOSITOR_EFFECT_TIER: {}",
+            state.effects.tier().name()
+        );
+        println!(
+            "AETHER_COMPOSITOR_EFFECT_PIPELINE: {}",
+            state.effects.material().describe()
+        );
+        println!(
+            "AETHER_COMPOSITOR_GLASS_GPU_PROFILE: {}",
+            state.effects.profile().describe()
+        );
+        state.report_glass_plan(&[]);
         state
+    }
+
+    /// P3-T05: switch the glass effect tier at runtime and report the change.
+    pub fn set_effect_tier(&mut self, tier: GlassTier, reason: &str) {
+        let from = self.effects.tier();
+        if from == tier {
+            return;
+        }
+        self.effects.set_tier(tier);
+        self.tier_switches += 1;
+        println!(
+            "AETHER_COMPOSITOR_EFFECT_TIER_SWITCH: from={} to={} reason={reason}",
+            from.name(),
+            tier.name()
+        );
+        println!(
+            "AETHER_COMPOSITOR_EFFECT_PIPELINE: {}",
+            self.effects.material().describe()
+        );
+        self.report_glass_plan(&[]);
+    }
+
+    /// Glass surfaces of the windows visible on the active workspace.
+    fn visible_glass_surfaces(&self) -> Vec<GlassSurface> {
+        let material = self.effects.material();
+        let mut ids: Vec<WindowId> = self.wm.visible_on(self.wm.active);
+        ids.sort_by_key(|id| id.0);
+        ids.into_iter()
+            .filter_map(|id| {
+                self.wm.windows.get(&id).map(|window| GlassSurface {
+                    id: id.0,
+                    rect: window.rect,
+                    corner_radius: material.corner_radius,
+                    opacity: 1.0,
+                })
+            })
+            .collect()
+    }
+
+    /// Print the resolved glass plan and modelled frame cost for the visible
+    /// windows at the current tier (`AETHER_COMPOSITOR_GLASS_PLAN`). An empty
+    /// `damage` slice means a full repaint, i.e. the worst-case frame.
+    pub fn report_glass_plan(&mut self, damage: &[Rect]) {
+        let pairs: Vec<(GlassSurface, Vec<Rect>)> = self
+            .visible_glass_surfaces()
+            .into_iter()
+            .map(|surface| (surface, damage.to_vec()))
+            .collect();
+        let cost = self.effects.frame_cost(&pairs);
+        let material = self.effects.material();
+        self.reported_windows = pairs.len();
+        println!(
+            "AETHER_COMPOSITOR_GLASS_PLAN: {} windows={} passes={} damage_rects={} damaged_px={} covered_px={} est_ms={:.3} budget_ms={:.2} share={:.3} within_budget={}",
+            material.describe(),
+            cost.windows,
+            material.passes().len(),
+            damage.len(),
+            cost.damaged_pixels,
+            cost.covered_pixels,
+            cost.estimated_ms,
+            cost.budget_ms,
+            cost.share(),
+            cost.within_budget()
+        );
+    }
+
+    /// P3-T06: one frame-scheduler tick, driven from the event loop. Presents
+    /// a frame when there is damage and the frame interval elapsed, answers the
+    /// `wl_surface.frame` callbacks for that frame, and lets the tier policy
+    /// react to the modelled frame cost.
+    pub fn frame_tick(&mut self) {
+        let now = Instant::now();
+        if !self.frames.due(now) {
+            self.frames.note_idle(now);
+            if self.frames.take_idle_report(now) {
+                println!(
+                    "AETHER_COMPOSITOR_IDLE: idle_ms={} idle_pct={:.1} frames={}",
+                    self.frames.idle_time(now).as_millis(),
+                    self.frames.estimated_gpu_idle_percent(now),
+                    self.frames.frames
+                );
+            }
+            return;
+        }
+
+        let Some(frame) = self.frames.present(now) else {
+            return;
+        };
+
+        let pairs: Vec<(GlassSurface, Vec<Rect>)> = self
+            .visible_glass_surfaces()
+            .into_iter()
+            .map(|surface| (surface, frame.damage.clone()))
+            .collect();
+        let cost = self.effects.frame_cost(&pairs);
+        if frame.index <= 5 || frame.index % 120 == 0 {
+            println!(
+                "AETHER_COMPOSITOR_FRAME: n={} time_ms={} damage_rects={} damage_px={} windows={} tier={} est_ms={:.3}",
+                frame.index,
+                frame.time_ms,
+                frame.damage.len(),
+                frame.damage_pixels,
+                cost.windows,
+                self.effects.tier().name(),
+                cost.estimated_ms
+            );
+        }
+
+        if pairs.len() != self.reported_windows {
+            // Worst-case cost for the new window set: every visible window
+            // fully repainted at the current tier.
+            self.report_glass_plan(&[]);
+        }
+
+        let callbacks = self.send_frame_callbacks(frame.time_ms);
+        if callbacks > 0 && (frame.index <= 5 || frame.index % 120 == 0) {
+            println!(
+                "AETHER_COMPOSITOR_FRAME_CALLBACKS: n={callbacks} time_ms={}",
+                frame.time_ms
+            );
+        }
+
+        if let Some(next) = self
+            .tier_policy
+            .observe(self.effects.tier(), cost.estimated_ms)
+        {
+            self.set_effect_tier(next, "frame-budget");
+        }
+    }
+
+    /// Answer the `wl_surface.frame` callbacks of the mapped surfaces with the
+    /// frame's presentation timestamp. Returns the number of callbacks sent.
+    fn send_frame_callbacks(&mut self, time_ms: u32) -> u64 {
+        let mut surfaces: Vec<WlSurface> = Vec::new();
+        for (index, toplevel) in self.toplevels.iter().enumerate() {
+            let visible = self
+                .wm
+                .windows
+                .get(&WindowId(index as u64))
+                .map(|window| window.workspace == self.wm.active)
+                .unwrap_or(true);
+            if visible {
+                surfaces.push(toplevel.wl_surface().clone());
+            }
+        }
+        for entry in &self.layer_surfaces {
+            surfaces.push(entry.surface.wl_surface().clone());
+        }
+
+        let mut sent = 0u64;
+        for surface in surfaces {
+            let callbacks = with_states(&surface, |states| {
+                let mut attrs = states.cached_state.get::<SurfaceAttributes>();
+                std::mem::take(&mut attrs.current().frame_callbacks)
+            });
+            for callback in callbacks {
+                callback.done(time_ms);
+                sent += 1;
+            }
+        }
+        self.frame_callbacks_sent += sent;
+        sent
+    }
+
+    /// Record the damage of one committed surface in output coordinates.
+    fn record_surface_damage(&mut self, surface: &WlSurface, damage: &[Rect]) {
+        let window = self
+            .toplevels
+            .iter()
+            .position(|toplevel| toplevel.wl_surface() == surface)
+            .and_then(|index| self.wm.windows.get(&WindowId(index as u64)).cloned());
+        match window {
+            Some(window) if window.workspace == self.wm.active => {
+                for rect in damage {
+                    self.frames.add_damage(Rect {
+                        x: window.rect.x + rect.x,
+                        y: window.rect.y + rect.y,
+                        w: rect.w.min(window.rect.w),
+                        h: rect.h.min(window.rect.h),
+                    });
+                }
+            }
+            Some(_) => {}
+            // Layer surfaces (panel, dock, wallpaper) have no window geometry
+            // yet; their damage is recorded in output space from the surface
+            // origin, which is the top-left corner for anchored shell chrome.
+            None => {
+                for rect in damage {
+                    self.frames.add_damage(*rect);
+                }
+            }
+        }
+    }
+
+    /// Damage a surface's whole area (first map, buffer swap without an
+    /// explicit damage request).
+    fn damage_whole_surface(&mut self, surface: &WlSurface) {
+        let window = self
+            .toplevels
+            .iter()
+            .position(|toplevel| toplevel.wl_surface() == surface)
+            .and_then(|index| self.wm.windows.get(&WindowId(index as u64)).cloned());
+        match window {
+            Some(window) => {
+                if window.workspace == self.wm.active {
+                    self.frames.add_damage(window.rect);
+                }
+            }
+            None => {
+                // Layer surface without managed geometry: damage the primary
+                // output's full logical area.
+                if let Some(output) = self.outputs.first() {
+                    let size = self.logical_size(output);
+                    self.frames.add_damage(Rect {
+                        x: 0,
+                        y: 0,
+                        w: size.w,
+                        h: size.h,
+                    });
+                }
+            }
+        }
     }
 
     /// Create one headless monitor: advertise the `wl_output` global and
@@ -387,6 +684,7 @@ impl AetherCompositor {
             "AETHER_COMPOSITOR_WM_SNAP: id={index} edge={edge:?} rect={},{},{}x{}",
             rect.x, rect.y, rect.w, rect.h
         );
+        self.frames.add_damage(rect);
         self.configure_toplevel(index, rect);
     }
 
@@ -398,6 +696,10 @@ impl AetherCompositor {
                 "AETHER_COMPOSITOR_WM_MOVE: id={index} workspace={}",
                 workspace.0
             );
+            // Both the vacated and the new workspace must repaint.
+            if let Some(window) = self.wm.windows.get(&id).cloned() {
+                self.frames.add_damage(window.rect);
+            }
         }
     }
 
@@ -421,6 +723,7 @@ impl AetherCompositor {
                 "AETHER_COMPOSITOR_WM_TILE: id={index} rect={},{},{}x{}",
                 rect.x, rect.y, rect.w, rect.h
             );
+            self.frames.add_damage(rect);
             self.configure_toplevel(index, rect);
         }
     }
@@ -500,13 +803,34 @@ impl CompositorHandler for AetherCompositor {
     }
 
     fn commit(&mut self, surface: &WlSurface) {
-        let (buffer_scale, has_buffer) = with_states(surface, |states| {
+        let (buffer_scale, has_buffer, damage) = with_states(surface, |states| {
             let mut attrs = states.cached_state.get::<SurfaceAttributes>();
             let current = attrs.current();
-            (
-                current.buffer_scale,
-                matches!(&current.buffer, Some(BufferAssignment::NewBuffer(_))),
-            )
+            let buffer_scale = current.buffer_scale;
+            let has_buffer = matches!(&current.buffer, Some(BufferAssignment::NewBuffer(_)));
+            // P3-T06: drain the client's damage so it is accounted once.
+            let mut damage = Vec::new();
+            for region in std::mem::take(&mut current.damage) {
+                let rect = match region {
+                    Damage::Surface(rect) => Rect {
+                        x: rect.loc.x,
+                        y: rect.loc.y,
+                        w: rect.size.w,
+                        h: rect.size.h,
+                    },
+                    Damage::Buffer(rect) => {
+                        let scale = buffer_scale.max(1);
+                        Rect {
+                            x: rect.loc.x / scale,
+                            y: rect.loc.y / scale,
+                            w: rect.size.w / scale,
+                            h: rect.size.h / scale,
+                        }
+                    }
+                };
+                damage.push(rect);
+            }
+            (buffer_scale, has_buffer, damage)
         });
 
         // HiDPI evidence: a client drawing for a scaled output.
@@ -517,6 +841,14 @@ impl CompositorHandler for AetherCompositor {
         if !self.mapped && has_buffer {
             self.mapped = true;
             println!("AETHER_COMPOSITOR_CLIENT_MAPPED");
+        }
+
+        if !damage.is_empty() {
+            self.record_surface_damage(surface, &damage);
+        } else if has_buffer {
+            // Attaching a buffer without a damage request damages the whole
+            // surface (first map, resize, full redraw).
+            self.damage_whole_surface(surface);
         }
 
         self.configure_layer_surface(surface);
@@ -898,6 +1230,10 @@ pub fn run() -> Result<(), String> {
             let _ = display.dispatch_clients(state);
             let _ = display.flush_clients();
 
+            // P3-T06: damage-based frame scheduling. No damage means no frame,
+            // so an idle desktop submits no composite/blur work at all.
+            state.frame_tick();
+
             if state.mapped && state.shutdown_at.is_none() {
                 state.shutdown_at = Some(Instant::now() + grace_for_closure);
             }
@@ -925,9 +1261,23 @@ pub fn run() -> Result<(), String> {
     let _ = result;
     // We need to propagate timed_out. We added field? Let's add field `timed_out: bool` to AetherCompositor.
     if state.timed_out {
+        println!(
+            "AETHER_COMPOSITOR_FRAME_STATS: {}",
+            state.frames.stats_line(Instant::now())
+        );
         return Err("compositor timed out waiting for a client surface to commit a buffer".to_string());
     }
 
+    println!(
+        "AETHER_COMPOSITOR_FRAME_STATS: {}",
+        state.frames.stats_line(Instant::now())
+    );
+    println!(
+        "AETHER_COMPOSITOR_EFFECT_SUMMARY: tier={} tier_switches={} frame_callbacks={}",
+        state.effects.tier().name(),
+        state.tier_switches,
+        state.frame_callbacks_sent
+    );
     println!("AETHER_COMPOSITOR_DONE");
     Ok(())
 }
