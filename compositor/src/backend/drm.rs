@@ -36,7 +36,10 @@
 //! panel, no backdrop sample). The chain and its frost element cover only the
 //! surface's **damage-scoped region** (frame damage clipped to the surface plus
 //! a blur halo), so a strip repaint costs a strip-sized blur and the KMS
-//! buffer-age damage keeps the rest of the swapchain slot intact.
+//! buffer-age damage keeps the rest of the swapchain slot intact. The backdrop
+//! capture is scoped the same way: only those strips are cleared and drawn from
+//! the background/bottom layer surfaces, not the whole union of the glass
+//! surfaces.
 //!
 //! Env: `AETHER_COMPOSITOR_RUN_SECS` bounds a run (default 12 h) so the exit
 //! markers are printed; `scripts/kms-checklist.sh` uses it on the Dell.
@@ -633,6 +636,7 @@ impl DrmBackend {
     /// changed (the compositor reported an empty frame).
     fn present(&mut self, state: &mut AetherCompositor, frame: &Frame) -> Result<bool, String> {
         let output_size = self.logical_size();
+        let physical_size = self.physical_size();
         let scale = self.output.current_scale().fractional_scale();
         let tier = state.effects.tier();
 
@@ -640,8 +644,15 @@ impl DrmBackend {
         // scanned out from the client buffer; no glass passes are planned.
         let direct = state.scanout.is_direct();
 
-        // P3-T05: capture the backdrop once per frame, over the union of the
-        // glass surfaces. The Minimal tier needs no backdrop (fill mode).
+        // The frame counters cover the backdrop capture below as well as the
+        // frost chain, so reset them before the capture.
+        if let Some(glass) = self.glass.as_mut() {
+            glass.start_frame();
+        }
+
+        // P3-T05/P3-T06: capture the backdrop once per frame, over the
+        // damage-scoped strips of the glass surfaces (not their whole union).
+        // The Minimal tier needs no backdrop (fill mode).
         let backdrop = if direct || !glass_shader::tier_blurs(tier) {
             None
         } else {
@@ -653,21 +664,21 @@ impl DrmBackend {
                 BACKDROP_LAYERS,
             );
             let surfaces = glass_surfaces(state, output_size);
+            let material = state.effects.material();
             match self.glass.as_mut() {
                 Some(glass) => glass.backdrop(
                     &mut self.renderer,
                     &background,
                     &surfaces,
+                    &frame.damage,
+                    &material,
                     scale,
-                    output_size,
+                    physical_size,
                 ),
                 None => None,
             }
         };
 
-        if let Some(glass) = self.glass.as_mut() {
-            glass.start_frame();
-        }
         let elements = collect_elements(
             &mut self.renderer,
             self.glass.as_mut(),
@@ -689,7 +700,7 @@ impl DrmBackend {
                 .count();
             if let Some(glass) = self.glass.as_ref() {
                 println!(
-                    "AETHER_COMPOSITOR_GLASS_SHADER: tier={} blur={} frosted={} frosted_total={} damage_px={} frost_px={} surface_px={} backdrop={}",
+                    "AETHER_COMPOSITOR_GLASS_SHADER: tier={} blur={} frosted={} frosted_total={} damage_px={} frost_px={} surface_px={} backdrop={} backdrop_px={} backdrop_union_px={}",
                     tier.name(),
                     if glass_shader::tier_blurs(tier) {
                         "dual-kawase"
@@ -708,6 +719,8 @@ impl DrmBackend {
                             backdrop.region.size.w, backdrop.region.size.h
                         ))
                         .unwrap_or_else(|| "none".to_string()),
+                    glass.frame_backdrop_px,
+                    glass.frame_backdrop_union_px,
                 );
             }
         }
@@ -757,6 +770,15 @@ impl DrmBackend {
             (w as f64 / scale).round() as i32,
             (h as f64 / scale).round() as i32,
         )
+    }
+
+    /// Physical (buffer) size of the output, i.e. the coordinate space the
+    /// renderer and the backdrop capture work in.
+    fn physical_size(&self) -> (i32, i32) {
+        self.output
+            .current_mode()
+            .map(|mode| (mode.size.w, mode.size.h))
+            .unwrap_or((self.mode.size.w, self.mode.size.h))
     }
 }
 

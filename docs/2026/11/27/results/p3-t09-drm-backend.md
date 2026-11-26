@@ -119,5 +119,6 @@ display.
 The graded version of that run is `compositor/scripts/kms-checklist.sh`: it sets
 `AETHER_COMPOSITOR_BACKEND=drm` and `AETHER_COMPOSITOR_RUN_SECS`, captures every
 marker into a log and scores EGL/GLES context, modeset, page flips, input, seat,
-glass programs, tier/blur, `failures=0` and damage-scoped frost. See the
-damage-scope section of `docs/2026/11/27/results/p3-t05-gles-glass-passes.md`.
+glass programs, tier/blur, `failures=0`, damage-scoped frost and damage-scoped
+backdrop capture. See the damage-scope sections of
+`docs/2026/11/27/results/p3-t05-gles-glass-passes.md`.

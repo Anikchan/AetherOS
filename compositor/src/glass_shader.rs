@@ -291,6 +291,98 @@ pub fn frost_region_scaled(surface: Rect, damage: &[Rect], scale: f64, halo: i32
     frost_region(physical_surface, &[physical], halo)
 }
 
+/// Logical rect -> physical output rect.
+///
+/// The capture region and the frost region must round identically or the chain
+/// would sample texels the capture never wrote, so both go through here (the
+/// DRM renderer's placement uses the same rounding).
+pub fn physical_rect(rect: Rect, scale: f64) -> Rect {
+    Rect {
+        x: (rect.x as f64 * scale).round() as i32,
+        y: (rect.y as f64 * scale).round() as i32,
+        w: (rect.w as f64 * scale).round().max(0.0) as i32,
+        h: (rect.h as f64 * scale).round().max(0.0) as i32,
+    }
+}
+
+/// Intersection of two rects, `None` when they do not overlap.
+pub fn intersect_rects(a: Rect, b: Rect) -> Option<Rect> {
+    let x0 = a.x.max(b.x);
+    let y0 = a.y.max(b.y);
+    let x1 = (a.x + a.w).min(b.x + b.w);
+    let y1 = (a.y + a.h).min(b.y + b.h);
+    if x1 <= x0 || y1 <= y0 {
+        return None;
+    }
+    Some(Rect {
+        x: x0,
+        y: y0,
+        w: x1 - x0,
+        h: y1 - y0,
+    })
+}
+
+/// Bounding box of `rects`, `None` when the list is empty.
+pub fn union_rects(rects: &[Rect]) -> Option<Rect> {
+    let mut union: Option<Rect> = None;
+    for rect in rects {
+        union = Some(match union {
+            None => *rect,
+            Some(current) => {
+                let x0 = current.x.min(rect.x);
+                let y0 = current.y.min(rect.y);
+                let x1 = (current.x + current.w).max(rect.x + rect.w);
+                let y1 = (current.y + current.h).max(rect.y + rect.h);
+                Rect {
+                    x: x0,
+                    y: y0,
+                    w: x1 - x0,
+                    h: y1 - y0,
+                }
+            }
+        });
+    }
+    union
+}
+
+/// Output-space regions the backdrop has to be (re)captured for this frame.
+///
+/// One region per glass surface: exactly the [frost region](frost_region_scaled)
+/// the chain samples this frame, moved to output pixel coordinates and clipped
+/// to the output. Capturing only these instead of the whole union of the glass
+/// surfaces keeps the wallpaper pass proportional to the damage. Empty `damage`
+/// means a full repaint, so every surface contributes its whole rect.
+pub fn backdrop_regions(
+    surfaces: &[Rect],
+    damage: &[Rect],
+    scale: f64,
+    halo: i32,
+    output_size: (i32, i32),
+) -> Vec<Rect> {
+    let output = Rect {
+        x: 0,
+        y: 0,
+        w: output_size.0.max(0),
+        h: output_size.1.max(0),
+    };
+    surfaces
+        .iter()
+        .filter_map(|surface| {
+            let local = frost_region_scaled(*surface, damage, scale, halo)?;
+            let origin = physical_rect(*surface, scale);
+            intersect_rects(
+                Rect {
+                    x: origin.x + local.x,
+                    y: origin.y + local.y,
+                    w: local.w,
+                    h: local.h,
+                },
+                output,
+            )
+        })
+        .collect()
+}
+
 /// Scale the pixel-valued material fields for an output scale.
 ///
 /// The shader works in physical pixels, so the 1 px rim and the design corner
@@ -594,6 +686,187 @@ mod tests {
         // The logical surface doubles, so the physical strip does too.
         assert_eq!(at_1x, Rect { x: 52, y: 152, w: 416, h: 196 });
         assert_eq!(at_2x, Rect { x: 152, y: 352, w: 736, h: 296 });
+    }
+
+    #[test]
+    fn backdrop_regions_follow_the_damage_not_the_surfaces() {
+        let left = Rect {
+            x: 0,
+            y: 0,
+            w: 1152,
+            h: 648,
+        };
+        let right = Rect {
+            x: 1152,
+            y: 0,
+            w: 1152,
+            h: 648,
+        };
+        let strip = Rect {
+            x: 100,
+            y: 200,
+            w: 320,
+            h: 100,
+        };
+        // Damage only inside the left surface: the right one needs no backdrop.
+        assert_eq!(
+            backdrop_regions(&[left, right], &[strip], 1.0, 48, (2304, 648)),
+            vec![Rect {
+                x: 52,
+                y: 152,
+                w: 416,
+                h: 196
+            }]
+        );
+        // Damage reaching both surfaces → one strip each.
+        let regions = backdrop_regions(
+            &[left, right],
+            &[
+                strip,
+                Rect {
+                    x: 1252,
+                    y: 200,
+                    w: 320,
+                    h: 100,
+                },
+            ],
+            1.0,
+            48,
+            (2304, 648),
+        );
+        assert_eq!(regions.len(), 2);
+        assert_eq!(
+            regions[1],
+            Rect {
+                x: 1204,
+                y: 152,
+                w: 416,
+                h: 196
+            }
+        );
+        // The bbox of both strips is still far smaller than the two surfaces.
+        let union = union_rects(&regions).unwrap();
+        assert!(union.w * union.h < 1152 * 648);
+    }
+
+    #[test]
+    fn backdrop_regions_cover_whole_surfaces_without_damage() {
+        let surface = surface();
+        assert_eq!(
+            backdrop_regions(&[surface], &[], 1.0, 48, (1152, 648)),
+            vec![surface]
+        );
+        // And are clipped to the output.
+        assert_eq!(
+            backdrop_regions(
+                &[Rect {
+                    x: 1000,
+                    y: 0,
+                    w: 500,
+                    h: 648,
+                }],
+                &[],
+                1.0,
+                48,
+                (1152, 648)
+            ),
+            vec![Rect {
+                x: 1000,
+                y: 0,
+                w: 152,
+                h: 648
+            }]
+        );
+        // Nothing visible → nothing to capture.
+        assert!(backdrop_regions(
+            &[Rect {
+                x: 5000,
+                y: 5000,
+                w: 10,
+                h: 10
+            }],
+            &[],
+            1.0,
+            48,
+            (1152, 648)
+        )
+        .is_empty());
+    }
+
+    #[test]
+    fn backdrop_regions_contain_the_frost_region_they_serve() {
+        // The chain samples the frost region out of the captured backdrop, so
+        // every frost region must be inside a capture region at any scale.
+        let surface = Rect {
+            x: 120,
+            y: 64,
+            w: 1152,
+            h: 648,
+        };
+        let strip = Rect {
+            x: 220,
+            y: 264,
+            w: 320,
+            h: 100,
+        };
+        for scale in [1.0, 1.5, 2.0] {
+            let halo = 48;
+            let output = (4000, 3000);
+            let captured = backdrop_regions(&[surface], &[strip], scale, halo, output);
+            let local = frost_region_scaled(surface, &[strip], scale, halo).unwrap();
+            let origin = physical_rect(surface, scale);
+            let frost = Rect {
+                x: origin.x + local.x,
+                y: origin.y + local.y,
+                w: local.w,
+                h: local.h,
+            };
+            assert!(
+                captured
+                    .iter()
+                    .any(|region| intersect_rects(*region, frost) == Some(frost)),
+                "capture {captured:?} must contain the frost region {frost:?} at {scale}x"
+            );
+        }
+    }
+
+    #[test]
+    fn physical_rect_scales_and_rounds_like_the_output_placement() {
+        let rect = Rect {
+            x: 10,
+            y: 20,
+            w: 100,
+            h: 50,
+        };
+        assert_eq!(physical_rect(rect, 1.0), rect);
+        // 1.5x: same rounding the DRM renderer uses for element placement.
+        assert_eq!(
+            physical_rect(rect, 1.5),
+            Rect {
+                x: 15,
+                y: 30,
+                w: 150,
+                h: 75
+            }
+        );
+        // Negative sizes never go negative.
+        assert_eq!(
+            physical_rect(
+                Rect {
+                    x: 0,
+                    y: 0,
+                    w: -4,
+                    h: -4
+                },
+                2.0
+            ),
+            Rect {
+                x: 0,
+                y: 0,
+                w: 0,
+                h: 0
+            }
+        );
     }
 
     #[test]

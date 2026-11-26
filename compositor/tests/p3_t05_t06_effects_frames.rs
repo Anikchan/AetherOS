@@ -254,6 +254,31 @@ fn effect_tiers_and_damage_based_frames() {
         minimal_damage * 3,
         "minimal tier frost must be the three damaged strips: {minimal_frame}"
     );
+
+    // --- P3-T06 follow-up: the backdrop capture is scoped to the damage -----
+    // The wallpaper pass used to rasterise the union of the glass surfaces
+    // every frame; it now rasterises only the strips the chain samples.
+    let backdrop_px: u64 = value_usize(frame, "backdrop_px=") as u64;
+    let backdrop_union_px: u64 = value_usize(frame, "backdrop_union_px=") as u64;
+    assert!(
+        backdrop_px >= frost_px,
+        "the capture ({backdrop_px}) must cover the frost strip ({frost_px}): {frame}"
+    );
+    assert!(
+        backdrop_union_px > 0 && backdrop_px <= backdrop_union_px,
+        "the capture ({backdrop_px}) must stay inside the union ({backdrop_union_px}): {frame}"
+    );
+    assert!(
+        backdrop_px * 2 < backdrop_union_px,
+        "the damage-scoped capture ({backdrop_px}) must stay far below the union ({backdrop_union_px}): {frame}"
+    );
+    // At the Minimal tier the chain samples no backdrop at all, so nothing is
+    // captured — the wallpaper pass is gone entirely.
+    assert_eq!(
+        value_usize(minimal_frame, "backdrop_px="),
+        0,
+        "minimal tier must not capture a backdrop: {minimal_frame}"
+    );
 }
 
 /// Run the compositor at `tier`, map three toplevels with damage and frame

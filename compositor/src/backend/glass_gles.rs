@@ -9,7 +9,8 @@
 //!
 //! 1. **Backdrop capture** — the background/bottom layer surfaces (wallpaper)
 //!    plus the clear colour are rendered into an offscreen texture covering the
-//!    union of the glass surfaces.
+//!    union of the glass surfaces, but only the **damage-scoped strips** of that
+//!    union are rasterised each frame (see below).
 //! 2. **Dual-Kawase blur** — for every glass surface the backdrop patch under
 //!    it is downsampled through N levels and reconstructed through N upsample
 //!    passes at the sizes [`crate::glass_shader::shader_stages`] computed
@@ -25,15 +26,24 @@
 //! `glass_shader`'s tests, and `compositor/scripts/check-linux-target.sh`
 //! type-checks the GL code for the device target.
 //!
-//! **Damage scope:** the chain only rewrites the strip the frame damaged. The
-//! frost element covers the same [region](crate::glass_shader::frost_region),
-//! i.e. the damage plus a halo that keeps the blur away from clamped strip
-//! edges, because each frame lands in a different KMS swapchain slot: a
-//! whole-surface element would repaint the entire window every frame, while a
-//! strip-sized element only repaints the strip the damaged content actually
-//! changed. `DrmCompositor::render_frame` adds the frame's element damage to
-//! the buffer-age damage of the slot it draws into, so the rest of the slot
-//! keeps the strip written into it the last time that slot was used.
+//! **Damage scope:** the chain only rewrites the strip the frame damaged, and
+//! so does the backdrop capture. The frost element covers the strip's
+//! [region](crate::glass_shader::frost_region), i.e. the damage plus a halo that
+//! keeps the blur away from clamped strip edges, because each frame lands in a
+//! different KMS swapchain slot: a whole-surface element would repaint the
+//! entire window every frame, while a strip-sized element only repaints the
+//! strip the damaged content actually changed. `DrmCompositor::render_frame`
+//! adds the frame's element damage to the buffer-age damage of the slot it
+//! draws into, so the rest of the slot keeps the strip written into it the last
+//! time that slot was used.
+//!
+//! The wallpaper pass is scoped the same way: [`GlassPasses::backdrop`] captures
+//! exactly the regions [`crate::glass_shader::backdrop_regions`] resolves (one
+//! per frosted surface, the same rects the chain samples), so a 320×100 window
+//! strip costs a strip-sized clear and wallpaper draw instead of the whole union
+//! of the glass surfaces. The texture keeps the union extent between frames, so
+//! a capture never reallocates it and the untouched texels — which nothing
+//! samples — can stay stale.
 //!
 //! Failure policy: any GL error in the chain is logged, counted in
 //! [`GlassPasses::failures`] and the surface falls back to plain composition
@@ -71,8 +81,18 @@ smithay::backend::renderer::element::render_elements! {
 #[derive(Debug, Clone)]
 pub struct Backdrop {
     pub texture: GlesTexture,
-    /// Region of the output (physical px) the texture covers.
+    /// Region of the output (physical px) the texture covers. The texture keeps
+    /// this extent between frames so steady-state frames never reallocate it;
+    /// only the sub-regions in `captured` hold this frame's wallpaper.
     pub region: Rectangle<i32, Physical>,
+    /// Sub-regions of `region` (texture space) rewritten this frame: the
+    /// damage-scoped region of every frosted surface. Nothing outside them is
+    /// sampled by the frost chain.
+    pub captured: Vec<Rectangle<i32, Physical>>,
+    /// Area of `captured`, i.e. the wallpaper pixels this frame rasterised.
+    pub captured_px: u64,
+    /// Area of `region`: what a whole-union capture would have rasterised.
+    pub union_px: u64,
 }
 
 /// A frosted glass texture ready to be drawn as a render element.
@@ -138,9 +158,15 @@ pub struct GlassPasses {
     pub frosted_px: u64,
     /// Physical px a whole-surface frost would have rewritten since start-up.
     pub surface_px: u64,
+    /// Physical px rasterised into the backdrop since start-up.
+    pub backdrop_px: u64,
+    /// Physical px a whole-union backdrop capture would have rasterised.
+    pub backdrop_union_px: u64,
     /// Same counters for the frame being built (`start_frame` resets them).
     pub frame_frosted_px: u64,
     pub frame_surface_px: u64,
+    pub frame_backdrop_px: u64,
+    pub frame_backdrop_union_px: u64,
 }
 
 impl std::fmt::Debug for GlassPasses {
@@ -152,6 +178,8 @@ impl std::fmt::Debug for GlassPasses {
             .field("failures", &self.failures)
             .field("frosted_px", &self.frosted_px)
             .field("surface_px", &self.surface_px)
+            .field("backdrop_px", &self.backdrop_px)
+            .field("backdrop_union_px", &self.backdrop_union_px)
             .finish()
     }
 }
@@ -174,8 +202,12 @@ impl GlassPasses {
             failures: 0,
             frosted_px: 0,
             surface_px: 0,
+            backdrop_px: 0,
+            backdrop_union_px: 0,
             frame_frosted_px: 0,
             frame_surface_px: 0,
+            frame_backdrop_px: 0,
+            frame_backdrop_union_px: 0,
         })
     }
 
@@ -184,6 +216,8 @@ impl GlassPasses {
     pub fn start_frame(&mut self) {
         self.frame_frosted_px = 0;
         self.frame_surface_px = 0;
+        self.frame_backdrop_px = 0;
+        self.frame_backdrop_union_px = 0;
         for (size, texture) in std::mem::take(&mut self.pending) {
             self.scratch.entry(size).or_default().push(texture);
         }
@@ -216,19 +250,55 @@ impl GlassPasses {
     ///
     /// `background` is the back-to-front element list of the Background/Bottom
     /// layer surfaces; `surfaces` are the logical rects that will be frosted.
-    /// Returns `None` when nothing needs frosting or the surfaces are off
-    /// screen.
+    /// Only the `damage`-scoped region of each surface is rasterised (the same
+    /// regions [`Self::frost`] samples from), so an idle frame does not repaint
+    /// the whole union of the glass surfaces. An empty `damage` slice means a
+    /// full repaint of that union. Returns `None` when nothing needs frosting or
+    /// the surfaces are off screen.
     pub fn backdrop(
         &mut self,
         renderer: &mut GlesRenderer,
         background: &[WaylandSurfaceRenderElement<GlesRenderer>],
         surfaces: &[Rect],
+        damage: &[Rect],
+        material: &GlassMaterial,
         scale: f64,
         output_size: (i32, i32),
     ) -> Option<Backdrop> {
         let region = union_region(surfaces, scale, output_size)?;
-        match self.capture(renderer, background, region) {
-            Ok(texture) => Some(Backdrop { texture, region }),
+        let halo = glass_shader::halo_px(&glass_shader::physical_material(material, scale));
+        let scoped = glass_shader::backdrop_regions(surfaces, damage, scale, halo, output_size);
+        // Texture space: capture sub-regions are output coordinates shifted to
+        // the texture origin, and can never exceed the union the texture covers.
+        let captured: Vec<Rectangle<i32, Physical>> = scoped
+            .iter()
+            .filter_map(|rect| {
+                Rectangle::<i32, Physical>::new(
+                    Point::from((rect.x - region.loc.x, rect.y - region.loc.y)),
+                    Size::from((rect.w, rect.h)),
+                )
+                .intersection(Rectangle::from_size(region.size))
+            })
+            .collect();
+        let captured_px: u64 = captured
+            .iter()
+            .map(|rect| rect.size.w.max(0) as u64 * rect.size.h.max(0) as u64)
+            .sum();
+        let union_px = region.size.w.max(0) as u64 * region.size.h.max(0) as u64;
+        match self.capture(renderer, background, region, &captured) {
+            Ok(texture) => {
+                self.backdrop_px += captured_px;
+                self.backdrop_union_px += union_px;
+                self.frame_backdrop_px += captured_px;
+                self.frame_backdrop_union_px += union_px;
+                Some(Backdrop {
+                    texture,
+                    region,
+                    captured,
+                    captured_px,
+                    union_px,
+                })
+            }
             Err(err) => {
                 self.failures += 1;
                 eprintln!("aether-compositor: glass backdrop: {err:?}");
@@ -288,6 +358,16 @@ impl GlassPasses {
         );
         if let Some(backdrop) = backdrop {
             region = region.intersection(backdrop.region)?;
+            // The backdrop only holds the strips captured this frame; the same
+            // `backdrop_regions` call produced both, so the strip must be one of
+            // them (a mismatch would blur stale or unwritten texels).
+            debug_assert!(
+                backdrop
+                    .captured
+                    .iter()
+                    .any(|strip| strip.intersection(region) == Some(region)),
+                "frost region {region:?} is not inside a captured backdrop strip"
+            );
         }
         // Stage sizes, uniforms and the composite's region are surface-local.
         let shader_region = Rect {
@@ -389,8 +469,15 @@ impl GlassPasses {
     /// One-line marker with the counters, for `AETHER_COMPOSITOR_GLASS_SHADER`.
     pub fn stats_line(&self) -> String {
         format!(
-            "surfaces={} passes={} textures={} failures={} frosted_px={} surface_px={}",
-            self.surfaces, self.passes, self.textures, self.failures, self.frosted_px, self.surface_px
+            "surfaces={} passes={} textures={} failures={} frosted_px={} surface_px={} backdrop_px={} backdrop_union_px={}",
+            self.surfaces,
+            self.passes,
+            self.textures,
+            self.failures,
+            self.frosted_px,
+            self.surface_px,
+            self.backdrop_px,
+            self.backdrop_union_px
         )
     }
 
@@ -402,11 +489,22 @@ impl GlassPasses {
         }
     }
 
+    /// Rasterise the backdrop for `captured` (texture space) into `region`.
+    ///
+    /// Only the given sub-regions are cleared and drawn, so the wallpaper pass
+    /// costs the damage, not the union of the glass surfaces. The texture itself
+    /// keeps the union extent between frames: leaving the other texels alone is
+    /// safe because the chain only samples inside `captured`, and it avoids
+    /// reallocating the backdrop whenever a window moves. The very first frame
+    /// (and every frame after a VT switch or `reset_buffers`) damages the whole
+    /// output, so a new texture is always written in full before anything can
+    /// sample it.
     fn capture(
         &mut self,
         renderer: &mut GlesRenderer,
         background: &[WaylandSurfaceRenderElement<GlesRenderer>],
         region: Rectangle<i32, Physical>,
+        captured: &[Rectangle<i32, Physical>],
     ) -> Result<GlesTexture, GlesError> {
         let size = region.size;
         let buffer_size = Size::<i32, Buffer>::from((size.w, size.h));
@@ -418,24 +516,28 @@ impl GlassPasses {
                 renderer.create_buffer(Fourcc::Argb8888, buffer_size)?
             }
         };
-        {
+        if !captured.is_empty() {
+            let damage = captured;
             let mut target = renderer.bind(&mut texture)?;
             let mut frame = renderer.render(&mut target, target_size, Transform::Normal)?;
-            let damage = [Rectangle::from_size(target_size)];
             // The clear colour matches the compositor's own clear so an area
             // without wallpaper blurs to the same colour it composites on.
-            frame.clear([0.0f32, 0.0, 0.0, 1.0].into(), &damage)?;
+            frame.clear([0.0f32, 0.0, 0.0, 1.0].into(), damage)?;
             for element in background {
                 let geometry = element.geometry(Scale::from(1.0f64));
                 if geometry.size.w <= 0 || geometry.size.h <= 0 {
                     continue;
                 }
-                // Only elements that overlap the captured region contribute.
-                if geometry.intersection(region).is_none() {
+                // Only the captured strips of elements that reach them.
+                let dst = Rectangle::new(geometry.loc - region.loc, geometry.size);
+                let visible: Vec<Rectangle<i32, Physical>> = damage
+                    .iter()
+                    .filter_map(|strip| strip.intersection(dst))
+                    .collect();
+                if visible.is_empty() {
                     continue;
                 }
-                let dst = Rectangle::new(geometry.loc - region.loc, geometry.size);
-                element.draw(&mut frame, element.src(), dst, &damage, &[])?;
+                element.draw(&mut frame, element.src(), dst, &visible, &[])?;
             }
             let _ = frame.finish()?;
         }

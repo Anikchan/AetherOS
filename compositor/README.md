@@ -112,7 +112,8 @@ Shader sources (`src/shaders/`, compiled by `GlesRenderer::compile_custom_textur
 Per frame the backend:
 
 1. renders the Background/Bottom layer surfaces (wallpaper) into one offscreen
-   backdrop texture covering the union of the glass surfaces;
+   backdrop texture covering the union of the glass surfaces, but rasterises
+   only the **damage-scoped strips** of that union (see below), not all of it;
 2. runs the blur chain per surface over that surface's **damage-scoped region**
    (the frame damage clipped to the surface, grown by a blur halo), not the
    whole surface;
@@ -139,13 +140,24 @@ repainted in one pass, which is cheaper than scoping it. The frost element keeps
 one stable `Id` per `wl_surface` so the tracker diffs instances between frames
 instead of treating every frost as a brand-new element.
 
-Evidence: `AETHER_COMPOSITOR_FRAME: … damage_px=… frost_px=…` (both backends)
-and `AETHER_COMPOSITOR_GLASS_SHADER: … frost_px=… surface_px=…` (DRM) report the
-rewritten area; `AETHER_COMPOSITOR_GLASS_STATS` accumulates `frosted_px` against
-`surface_px`. Headless acceptance: `tests/p3_t05_t06_effects_frames.rs` (three
-1152×648 windows with a 320×100 damage strip each → `frost_px` ≈ 7 % of
-`covered_px`, and exactly `damage_px × 3` at the Minimal tier, which has no
-halo).
+The **backdrop capture is scoped the same way** (`backdrop_regions`): one region
+per frosted surface — the exact rect the chain samples, moved to output pixels —
+so a 320×100 strip costs a strip-sized clear plus wallpaper draw instead of the
+whole union of the glass surfaces (746 496 px for one 1152×648 window at Full
+tier). Nothing outside those strips is sampled, so the texture can keep the
+union extent between frames and never be reallocated when a window moves; the
+untouched texels simply hold an older wallpaper frame. An empty damage list
+(first map, VT switch, resize) still captures the whole union.
+
+Evidence: `AETHER_COMPOSITOR_FRAME: … damage_px=… frost_px=… backdrop_px=…
+backdrop_union_px=…` (both backends), `AETHER_COMPOSITOR_GLASS_SHADER: …
+frost_px=… surface_px=… backdrop_px=… backdrop_union_px=…` (DRM) and
+`AETHER_COMPOSITOR_GLASS_STATS` (accumulated `frosted_px`/`surface_px` and
+`backdrop_px`/`backdrop_union_px`). Headless acceptance:
+`tests/p3_t05_t06_effects_frames.rs` (three 1152×648 windows with a 320×100
+damage strip each → `frost_px` ≈ 7 % of `covered_px`, `backdrop_px` ≈ 22 % of
+`backdrop_union_px`, and exactly `damage_px × 3` at the Minimal tier, which has
+no halo and captures no backdrop at all).
 
 ### Checking the shaders without a GPU
 
@@ -169,8 +181,8 @@ AETHER_COMPOSITOR_DRM_DEVICE: path=… atomic=true cursor=64x64
 AETHER_COMPOSITOR_DRM_CONNECTOR: name=eDP-1 mode=1920x1080@60000mhz crtc=…
 AETHER_COMPOSITOR_DRM_RENDERER: backend=gles render_formats=<n>
 AETHER_COMPOSITOR_GLASS_SHADER: programs=3 backend=gles shaders=kawase-down,kawase-up,glass-composite
-AETHER_COMPOSITOR_GLASS_SHADER: tier=… blur=dual-kawase|none frosted=<n> frosted_total=<n> damage_px=<n> frost_px=<n> surface_px=<n> backdrop=<WxH>|none
-AETHER_COMPOSITOR_GLASS_STATS: surfaces=… passes=… textures=… failures=… frosted_px=… surface_px=…
+AETHER_COMPOSITOR_GLASS_SHADER: tier=… blur=dual-kawase|none frosted=<n> frosted_total=<n> damage_px=<n> frost_px=<n> surface_px=<n> backdrop=<WxH>|none backdrop_px=<n> backdrop_union_px=<n>
+AETHER_COMPOSITOR_GLASS_STATS: surfaces=… passes=… textures=… failures=… frosted_px=… surface_px=… backdrop_px=… backdrop_union_px=…
 AETHER_COMPOSITOR_DRM_OUTPUT: connector=eDP-1 mode=1920x1080 refresh_mhz=60000
 AETHER_COMPOSITOR_DRM_VBLANK: n=<frame> time_ms=<t> total=<n>
 AETHER_COMPOSITOR_DRM_SESSION_EVENT: state=paused|active
@@ -206,6 +218,11 @@ Still to be validated on the Dell:
 9. Damage-scoped frost on the real swapchain: `frosted_px` must stay well below
    `surface_px` across a run (`AETHER_COMPOSITOR_GLASS_STATS`) and no strip may
    show a stale or torn frost after a window drag.
+10. Damage-scoped backdrop capture on the real wallpaper: `backdrop_px` must stay
+    well below `backdrop_union_px` across a run, and a scrolling wallpaper or a
+    window dragged over a wallpaper animation must not show a stale strip
+    (the capture rects come from the same function as the frost rects, so this
+    is a visual check, not a marker check).
 
 ### On-device checklist (the Dell)
 
@@ -220,8 +237,9 @@ The script sets `AETHER_COMPOSITOR_BACKEND=drm`, bounds the run with
 `AETHER_COMPOSITOR_RUN_SECS` so the compositor prints its exit markers, writes
 `compositor.log`/`.err` per run, and grades: EGL/GLES context, modeset, page
 flips, libinput input, seat, glass programs, effect tier + blur, `failures=0`,
-damage-scoped frost (`frosted_px < surface_px`), frame stats and clean shutdown.
+damage-scoped frost (`frosted_px < surface_px`), damage-scoped backdrop capture
+(`backdrop_px < backdrop_union_px`), frame stats and clean shutdown.
 Exit code 0 = all checks passed (keypress-dependent input checks are warnings,
 never passes). `--grade` re-scores a captured log on any host; `--selftest`
-scores `scripts/fixtures/*.log` (one good Full, one good Minimal, one broken) so
-the grader itself is verifiable without hardware.
+scores `scripts/fixtures/*.log` (one good Full, one good Minimal, one broken, one
+whole-union capture) so the grader itself is verifiable without hardware.

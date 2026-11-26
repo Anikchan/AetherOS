@@ -69,7 +69,7 @@
 //!          `AETHER_COMPOSITOR_GLASS_PLAN: tier=… windows=… passes=… est_ms=…`,
 //!          `AETHER_COMPOSITOR_GLASS_SHADER: tier=… frosted=… …`,
 //!          `AETHER_COMPOSITOR_GLASS_STATS: surfaces=… passes=… failures=…`,
-//!          `AETHER_COMPOSITOR_FRAME: n=… damage_px=… tier=… est_ms=…`,
+//!          `AETHER_COMPOSITOR_FRAME: n=… damage_px=… frost_px=… backdrop_px=… tier=… est_ms=…`,
 //!          `AETHER_COMPOSITOR_FRAME_CALLBACKS: n=…`,
 //!          `AETHER_COMPOSITOR_IDLE: idle_ms=… idle_pct=…`,
 //!          `AETHER_COMPOSITOR_FRAME_STATS: frames=… idle_skips=…`,
@@ -590,13 +590,47 @@ impl AetherCompositor {
                     })
                     .map(|region| region.w.max(0) as u64 * region.h.max(0) as u64)
                     .sum();
+                // Same damage scope for the backdrop capture: the strips the DRM
+                // path rasterises versus the whole union it used to rasterise.
+                // The Minimal tier captures no backdrop at all (fill mode).
+                let output_size = self.physical_size();
+                let rects: Vec<Rect> = surfaces.iter().map(|surface| surface.rect).collect();
+                let (backdrop_px, backdrop_union_px) =
+                    if crate::glass_shader::tier_blurs(self.effects.tier()) {
+                        let px = crate::glass_shader::backdrop_regions(
+                            &rects,
+                            &frame.damage,
+                            scale,
+                            halo,
+                            output_size,
+                        )
+                        .iter()
+                        .map(|region| region.w.max(0) as u64 * region.h.max(0) as u64)
+                        .sum();
+                        let union = crate::glass_shader::union_rects(
+                            &crate::glass_shader::backdrop_regions(
+                                &rects,
+                                &[],
+                                scale,
+                                halo,
+                                output_size,
+                            ),
+                        )
+                        .map(|union| union.w.max(0) as u64 * union.h.max(0) as u64)
+                        .unwrap_or(0);
+                        (px, union)
+                    } else {
+                        (0, 0)
+                    };
                 println!(
-                    "AETHER_COMPOSITOR_FRAME: n={} time_ms={} damage_rects={} damage_px={} frost_px={} windows={} tier={} est_ms={:.3}",
+                    "AETHER_COMPOSITOR_FRAME: n={} time_ms={} damage_rects={} damage_px={} frost_px={} backdrop_px={} backdrop_union_px={} windows={} tier={} est_ms={:.3}",
                     frame.index,
                     frame.time_ms,
                     frame.damage.len(),
                     frame.damage_pixels,
                     frost_px,
+                    backdrop_px,
+                    backdrop_union_px,
                     cost.windows,
                     self.effects.tier().name(),
                     cost.estimated_ms
@@ -952,6 +986,16 @@ impl AetherCompositor {
             (w as f64 / scale).round() as i32,
             (h as f64 / scale).round() as i32,
         ))
+    }
+
+    /// Physical (buffer) size of the primary output: the space the glass
+    /// backdrop capture and the frost chain work in.
+    fn physical_size(&self) -> (i32, i32) {
+        self.outputs
+            .first()
+            .and_then(|output| output.current_mode())
+            .map(|mode| (mode.size.w, mode.size.h))
+            .unwrap_or((0, 0))
     }
 
     fn output_by_name(&self, name: &str) -> Option<&Output> {

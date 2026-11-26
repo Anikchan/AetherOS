@@ -8,6 +8,9 @@
   consuming the existing `glass::EffectPlan` and damage region; unit-test the
   uniform/plan mapping and the tier → pass-list selection; document the shader
   files and the hardware-gated validation.
+- Follow-ups (same D6 record): damage-scoped frost (the chain covers only the
+  damaged strip) and damage-scoped backdrop capture (the wallpaper pass covers
+  only the strip the chain samples, not the union of the glass surfaces).
 
 ## What changed
 
@@ -16,8 +19,8 @@
 | `compositor/src/shaders/glass_downsample.frag` | Dual-Kawase 5-tap downsample pass (GLSL ES 1.00) |
 | `compositor/src/shaders/glass_upsample.frag` | Dual-Kawase 8-tap tent upsample pass |
 | `compositor/src/shaders/glass_composite.frag` | Fused saturation + tint + edge refraction + rim highlight + corner mask + Minimal `fill` |
-| `compositor/src/glass_shader.rs` | Pure mapping: `EffectPlan` → shader stages + uniform values; damage-region clipping; physical-pixel material scaling; **`frost_region` / `frost_region_scaled` / `halo_px`** (damage-scoped frost region). Compiled on every host, unit-tested headlessly |
-| `compositor/src/backend/glass_gles.rs` | GL execution on the `drm` feature path: program compilation, backdrop capture, per-surface blur chain over the **damage-scoped region**, stable-id frost element (`DrmRenderElement`), pixel-area counters |
+| `compositor/src/glass_shader.rs` | Pure mapping: `EffectPlan` → shader stages + uniform values; damage-region clipping; physical-pixel material scaling; **`frost_region` / `frost_region_scaled` / `halo_px`** (damage-scoped frost region) and **`backdrop_regions` / `physical_rect` / `intersect_rects` / `union_rects`** (damage-scoped backdrop capture region). Compiled on every host, unit-tested headlessly |
+| `compositor/src/backend/glass_gles.rs` | GL execution on the `drm` feature path: program compilation, **damage-scoped** backdrop capture (scissored clear + wallpaper draws), per-surface blur chain over the **damage-scoped region**, stable-id frost element (`DrmRenderElement`), pixel-area counters |
 | `compositor/src/backend/drm.rs` | Wires the chain into `present`: backdrop capture from Background/Bottom layer surfaces, frost under windows and Top/Overlay chrome over the damaged strip, `AETHER_COMPOSITOR_GLASS_SHADER` / `_GLASS_STATS` markers, `AETHER_COMPOSITOR_RUN_SECS` run bound |
 | `compositor/scripts/check-shaders.sh` | GPU-free GLSL compile/link check for the three fragment stages |
 | `compositor/scripts/kms-checklist.sh` | **New.** On-device DRM run + marker grading (EGL context, modeset, page flips, input, seat, glass programs, tier/blur, `failures=0`, damage-scoped frost); `--grade` and `--selftest` modes |
@@ -49,7 +52,7 @@ Uniform/plan mapping asserted by unit tests (`glass_shader::tests`):
 
 ```sh
 LIBRARY_PATH=/opt/homebrew/lib cargo test -p aether-compositor
-# lib: 69 passed (64 before this follow-up, +5 frost_region / halo_px tests)
+# lib: 73 passed (69 before the backdrop follow-up, +4 backdrop_regions tests)
 # integration: p3_t02 1, p3_t03 1, p3_t05_t06 1, p3_t07 1, p3_t08 1, p3_t09 9 — all ok
 
 ./compositor/scripts/check-linux-target.sh
@@ -64,6 +67,7 @@ LIBRARY_PATH=/opt/homebrew/lib cargo test -p aether-compositor
 # selftest OK   : full-tier fixture scored PASS
 # selftest OK   : minimal-tier fixture scored PASS
 # selftest OK   : broken fixture scored FAIL (failures=2, no VBlank)
+# selftest OK   : whole-union capture fixture scored FAIL
 # SELFTEST: PASSED
 ```
 
@@ -130,6 +134,54 @@ through the binary, not only by unit tests.
 | `glass_shader::tests::frost_region_scaled_converts_to_physical_pixels` | 1× vs 2× output scale |
 | `tests/p3_t05_t06_effects_frames.rs` | `frost_px` present, ≥ damage, < half the covered pixels; Minimal exactly `damage × 3` |
 
+## Damage-scoped backdrop capture (follow-up, 2026-11-27)
+
+**The last full-screen pass per frame is closed.** Until now the backdrop capture
+(step 1 of the frame) always cleared and redrew the whole union of the glass
+surfaces — 746 496 px for one 1152×648 window — even when a frame only damaged a
+320×100 strip, while the frost chain on top of it was already strip-scoped.
+
+| Piece | Change |
+|---|---|
+| `glass_shader::backdrop_regions(surfaces, damage, scale, halo, output)` | **New, pure, 4 new unit tests.** One output-space region per glass surface: exactly the `frost_region_scaled` rect the chain will sample, clipped to the output. Empty damage → the whole surface (full repaint). |
+| `glass_shader::physical_rect` / `intersect_rects` / `union_rects` | **New.** One rounding rule for capture and frost placement, so the two can never disagree. |
+| `glass_gles::GlassPasses::backdrop` | Takes the frame damage and the material, resolves the capture rects, converts them to texture space and reports `captured_px` / `union_px`. |
+| `glass_gles::GlassPasses::capture` | Clears and draws **only** those strips: `frame.clear` and every background element's `draw` are scissored to the strip. The texture keeps the union extent between frames, so a strip-scoped capture never reallocates it. |
+| `glass_gles::GlassPasses::frost` | `debug_assert`s that the frost region it is about to blit is inside one of the captured strips (the invariant that makes sampling stale texels impossible). |
+| `drm.rs::present` | Passes the damage + material to `backdrop`, resets the frame counters before the capture (they now include it), adds `backdrop_px` / `backdrop_union_px` to `AETHER_COMPOSITOR_GLASS_SHADER`, and passes the **physical** output size as the capture bound (it used to pass the logical size, which clipped the capture in half at HiDPI). |
+| `lib.rs::complete_frame` | `AETHER_COMPOSITOR_FRAME` gains `backdrop_px` / `backdrop_union_px` from the same pure function the DRM path uses (`0` at the Minimal tier, which captures nothing). |
+| `scripts/kms-checklist.sh` | New graded item: `backdrop_px < backdrop_union_px` (and `backdrop_px = 0` at the Minimal tier); `--selftest` gained a fourth case that mutates a fixture into a whole-union capture and must score FAIL. |
+| `scripts/fixtures/kms-*.log` | Carry the new fields, so the self-test scores what the real binary prints. |
+
+### Measured (headless, real binary, three 1152×648 windows, 320×100 damage each)
+
+```
+AETHER_COMPOSITOR_FRAME: n=3 … damage_px=32000 frost_px=163392 backdrop_px=163392 backdrop_union_px=746496 windows=3 tier=full est_ms=0.176
+AETHER_COMPOSITOR_FRAME: n=3 … damage_px=32000 frost_px=96000 backdrop_px=0 backdrop_union_px=0 windows=3 tier=minimal
+```
+
+| Tier | Damage | Frost (scoped) | Backdrop captured | Backdrop, whole union | Captured share |
+|---|---|---|---|---|---|
+| Full (halo 48 px) | 32 000 px | 163 392 px | **163 392 px** | 746 496 px | **21.9 %** (−78 % wallpaper px) |
+| Minimal (no blur) | 32 000 px | 96 000 px | **0 px** (fill mode) | 746 496 px | 0 % |
+
+The wallpaper rasterisation per frame therefore drops from 746 496 px to
+163 392 px on this workload at Full tier, and to zero at Minimal. The capture
+rects are the frost rects by construction, so the blur can never sample a texel
+that the capture did not write this frame; the integration test asserts
+`backdrop_px >= frost_px`, `backdrop_px < backdrop_union_px / 2` and
+`backdrop_px = 0` at Minimal.
+
+### New / updated tests
+
+| Test | Asserts |
+|---|---|
+| `glass_shader::tests::backdrop_regions_follow_the_damage_not_the_surfaces` | Only the damaged surface contributes; two strips stay far below the two surfaces |
+| `glass_shader::tests::backdrop_regions_cover_whole_surfaces_without_damage` | Empty damage → whole surface, clipped to the output; off-screen → nothing |
+| `glass_shader::tests::backdrop_regions_contain_the_frost_region_they_serve` | At 1× / 1.5× / 2×, the frost region is inside a capture region |
+| `glass_shader::tests::physical_rect_scales_and_rounds_like_the_output_placement` | Same rounding as element placement, no negative sizes |
+| `tests/p3_t05_t06_effects_frames.rs` | `backdrop_px ≥ frost_px`, `< backdrop_union_px / 2`, `= 0` at Minimal |
+
 ## Hardware-gated (NOT claimed by this task)
 
 No GPU or DRM device is available on this host, so the chain was never executed.
@@ -150,6 +202,10 @@ On the Dell image, validate:
    with real passes instead of only the modelled cost.
 6. No visible seam at a strip boundary during a window drag (the 48 px halo is
    the mitigation; it is a visual check, not asserted by any test).
+7. The damage-scoped backdrop capture on the real wallpaper: `backdrop_px` must
+   stay well below `backdrop_union_px` across a run (`AETHER_COMPOSITOR_GLASS_STATS`),
+   and a wallpaper animation or a window dragged over one must not leave a stale
+   strip (visual; the capture and the frost rects come from the same function).
 
 Run all of it with:
 
@@ -166,16 +222,13 @@ markers (WARN without a keypress), 3 glass programs, effect tier + blur,
 scores `scripts/fixtures/*.log` on any host, and a mutated fixture (failures=2,
 no VBlank) must score FAIL — so the grader itself is verified.
 
-**Residual (unchanged by this follow-up):** the backdrop capture still renders
-the whole union of glass surfaces every frame (wallpaper pass), and layer-surface
-damage is recorded from the surface origin (no placement yet). Both are noted in
-`compositor/README.md`.
+**Residual (unchanged by these follow-ups):** layer-surface damage is recorded
+from the surface origin (no placement yet), so panel/dock damage is not
+translated to the output. Noted in `compositor/README.md`.
 
 ## Next
 
 1. Dell run of `scripts/kms-checklist.sh` (hardware testing paused on
    2026-11-26) → attach the logs as D6 evidence and set `GpuProfile::measured`.
-2. Scope the backdrop capture by damage (it is the largest remaining full-screen
-   pass per frame).
-3. Place layer surfaces before recording their damage, so panel/dock damage is
+2. Place layer surfaces before recording their damage, so panel/dock damage is
    translated instead of recorded from the surface origin.

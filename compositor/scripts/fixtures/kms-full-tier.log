@@ -18,8 +18,8 @@ AETHER_COMPOSITOR_OUTPUT_COUNT: 1
 AETHER_COMPOSITOR_OUTPUT_BOUND: name=eDP-1
 AETHER_COMPOSITOR_CLIENT_MAPPED
 AETHER_COMPOSITOR_XDG_TOPLEVEL: id=0 title="foot"
-AETHER_COMPOSITOR_FRAME: n=1 time_ms=842 damage_rects=1 damage_px=32000 frost_px=54464 windows=1 tier=full est_ms=0.059
-AETHER_COMPOSITOR_GLASS_SHADER: tier=full blur=dual-kawase frosted=1 frosted_total=1 damage_px=32000 frost_px=54464 surface_px=746496 backdrop=1152x648
+AETHER_COMPOSITOR_FRAME: n=1 time_ms=842 damage_rects=1 damage_px=32000 frost_px=54464 backdrop_px=54464 backdrop_union_px=746496 windows=1 tier=full est_ms=0.059
+AETHER_COMPOSITOR_GLASS_SHADER: tier=full blur=dual-kawase frosted=1 frosted_total=1 damage_px=32000 frost_px=54464 surface_px=746496 backdrop=1152x648 backdrop_px=54464 backdrop_union_px=746496
 AETHER_COMPOSITOR_DRM_VBLANK: n=1 time_ms=842 total=1
 AETHER_COMPOSITOR_FRAME_CALLBACKS: n=1 time_ms=842
 AETHER_COMPOSITOR_INPUT_BUTTON: button=272 state=pressed
@@ -31,7 +31,7 @@ AETHER_COMPOSITOR_DRM_SESSION_EVENT: state=active
 AETHER_COMPOSITOR_DRM_VBLANK: n=240 time_ms=4042 total=240
 AETHER_COMPOSITOR_IDLE: idle_ms=1800 idle_pct=71.2 frames=240
 AETHER_COMPOSITOR_DRM_STATS: frames_queued=241 vblanks=240 direct_frames=0
-AETHER_COMPOSITOR_GLASS_STATS: surfaces=90 passes=990 textures=12 failures=0 frosted_px=4901760 surface_px=67184640
+AETHER_COMPOSITOR_GLASS_STATS: surfaces=90 passes=990 textures=12 failures=0 frosted_px=4901760 surface_px=67184640 backdrop_px=13071360 backdrop_union_px=179159040
 AETHER_COMPOSITOR_FRAME_STATS: frames=241 idle_skips=0 idle_pct=71.2 skipped=0 avg_gap_ms=16.7
 AETHER_COMPOSITOR_SCANOUT_STATS: mode=composite direct_frames=0
 AETHER_COMPOSITOR_DONE

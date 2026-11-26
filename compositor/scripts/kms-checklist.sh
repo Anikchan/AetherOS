@@ -14,7 +14,8 @@
 #   4. libinput input over the seat,
 #   5. the effect tier (full/reduced/minimal) and its glass program set,
 #   6. `failures=0` in the glass counters,
-#   7. damage-scoped frost (`frosted_px` far below `surface_px`).
+#   7. damage-scoped frost (`frosted_px` far below `surface_px`),
+#   8. damage-scoped backdrop capture (`backdrop_px` below `backdrop_union_px`).
 #
 # Usage:
 #   ./compositor/scripts/kms-checklist.sh                    # build + 15 s at Full, 6 s at Minimal
@@ -99,6 +100,17 @@ if [ "$selftest" -eq 1 ]; then
     say "selftest OK   : broken fixture scored FAIL (failures=2, no VBlank)"
   fi
   rm -f "$broken"
+  # A whole-union backdrop capture (the pre-P3-T06 behaviour) must not pass.
+  unscoped="$(mktemp)"
+  sed -e 's/[ ]backdrop_px=54464 backdrop_union_px=746496/ backdrop_px=746496 backdrop_union_px=746496/' \
+    "$script_dir/fixtures/kms-full-tier.log" >"$unscoped"
+  if "$0" --grade "$unscoped" --tier full >/dev/null 2>&1; then
+    say "selftest FAIL : a whole-union backdrop capture should score FAIL"
+    status=1
+  else
+    say "selftest OK   : whole-union capture fixture scored FAIL (backdrop_px == backdrop_union_px)"
+  fi
+  rm -f "$unscoped"
   [ "$status" -eq 0 ] && say "SELFTEST: PASSED" || say "SELFTEST: FAILED"
   exit "$status"
 fi
@@ -339,6 +351,31 @@ grade_common() {
   else
     warn "$label: no FRAME_STATS marker"
   fi
+
+  # 8. Damage-scoped backdrop capture: the wallpaper pass only rasterises the
+  #    strips the frost chain samples, not the whole union of glass surfaces.
+  local shader_frame bpx bunion
+  shader_frame="$(grep -m1 'AETHER_COMPOSITOR_GLASS_SHADER: tier=' "$log" || true)"
+  if [ -z "$shader_frame" ]; then
+    warn "$label: no per-frame GLASS_SHADER line, so the backdrop capture is unscored"
+  else
+    bpx="$(printf '%s' "$shader_frame" | sed -n 's/.*[ ]backdrop_px=\([0-9]*\).*/\1/p')"
+    bunion="$(printf '%s' "$shader_frame" | sed -n 's/.*[ ]backdrop_union_px=\([0-9]*\).*/\1/p')"
+    if [ -z "$bpx" ] || [ -z "$bunion" ]; then
+      warn "$label: no backdrop_px/backdrop_union_px counters (compositor built before the damage-scoped capture?)"
+    elif [ "$expected_blur" = "blur=none" ]; then
+      if [ "${bpx:-1}" -eq 0 ]; then
+        pass "$label: no backdrop capture at $expected_tier (fill mode, backdrop_px=0)"
+      else
+        fail "$label: $expected_tier captured $bpx backdrop px although it samples none"
+      fi
+    elif [ "${bunion:-0}" -gt 0 ] && [ "$bpx" -lt "$bunion" ]; then
+      pass "$label: damage-scoped backdrop capture (backdrop_px=$bpx < backdrop_union_px=$bunion)"
+    else
+      fail "$label: backdrop capture covers the whole union (backdrop_px=$bpx >= backdrop_union_px=$bunion)"
+    fi
+  fi
+
   contains "$log" "AETHER_COMPOSITOR_DONE" \
     && pass "$label: clean shutdown (AETHER_COMPOSITOR_DONE)" \
     || warn "$label: no AETHER_COMPOSITOR_DONE marker (killed before the deadline?)"
