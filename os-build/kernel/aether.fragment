@@ -40,7 +40,10 @@ CONFIG_CMDLINE="root=PARTUUID=9f8e7d6c-1a2b-4c3d-8e4f-5a6b7c8d9e0f rootfstype=sq
 
 # --- Graphics: kernel mode setting for Intel and AMD (P2-T02) ---
 CONFIG_DRM=y
-CONFIG_DRM_I915=y
+# i915 as a module so udev loads it after the rootfs is mounted; the DMC/GuC/HuC
+# firmware then loads from /lib/firmware and runtime power management works.
+# simpledrm (built-in) drives the display until i915 takes over.
+CONFIG_DRM_I915=m
 CONFIG_DRM_AMDGPU=y
 CONFIG_FB=y
 # Virtual terminal + framebuffer console (needed for bare-metal display output)

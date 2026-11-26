@@ -5,6 +5,14 @@
 - Tracker (`03-roadmap-plan.md` §4) is updated by **S1 only**.
 - Each session commits only its own territory; do not touch another session's files.
 
+## Session names (identifiable)
+| Session | Name |
+|---|---|
+| S1 | `session - 1 (Nov26)` |
+| S2 | `session - 2 (Nov26)` |
+| S3 | `session - 3 (Nov26)` |
+| S4 | `session - 4 (Nov26)` |
+
 ## Current baseline (verified)
 - P0 ✅, P1 ✅ (M1 achieved).
 - P2 in progress: T01/T02/T07/T08 done; bare-metal boot validated (graphics/backlight/battery/temp/input/BT adapter). Wi-Fi/webcam/touchpad/audio fixes are in the built image (`d0e57c8`) but hardware re-validation is paused.
