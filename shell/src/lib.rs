@@ -18,6 +18,8 @@
 //! * [`greeter_app`] — `GreeterController` for the standalone login surface.
 //! * [`features`] — Settings → Features page over `aether-config`'s optional
 //!   feature manager (P7-T07).
+//! * [`host`] — layer-shell host contract: request plan, size negotiation and
+//!   the `--host-check` verification of the compositor's markers (P3-T02).
 
 slint::include_modules!();
 
@@ -28,6 +30,7 @@ pub mod desktop;
 pub mod features;
 pub mod greetd;
 pub mod greeter;
+pub mod host;
 pub mod layers;
 pub mod greeter_app;
 pub mod model;
@@ -40,4 +43,5 @@ pub use auth::{default_authenticator, AuthOutcome, Authenticator};
 pub use features::FeaturesPage;
 pub use greeter_app::GreeterController;
 pub use greetd::GreetdConnection;
+pub use host::{plan as layer_plan, BindingReport};
 pub use model::{Overlay, PowerMode, ShellState};

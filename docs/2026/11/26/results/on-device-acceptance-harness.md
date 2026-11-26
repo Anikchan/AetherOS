@@ -24,19 +24,43 @@ Expected markers (from P3-T02): `AETHER_COMPOSITOR_OUTPUT_COUNT: 2`,
 ## 1. Layer-shell binding check (Task 1)
 
 ```sh
-# Shell surfaces must appear as distinct layer surfaces, not one window:
-WAYLAND_DEBUG=1 aether-shell --status
-# On the device, the compositor log must contain, for each surface:
-for ns in aether-shell-menubar aether-shell-dock aether-shell-launcher \
-          aether-shell-notifications aether-shell-control-center; do
-  journalctl -u aether-compositor | grep "namespace=$ns" || echo "MISSING $ns"
-done
-# Rendered (headless) evidence already produced by:
-cargo run -p aether-shell --bin aether-shell -- --render /tmp/aether-shell-shots
+# The shell owns the contract: the request plan the host sends, and the
+# verification of the compositor's configure markers.
+aether-shell --host-plan
+journalctl -u aether-compositor --no-pager > /tmp/compositor.log
+aether-shell --host-check /tmp/compositor.log     # exit 0 and AETHER_SHELL_LAYER_HOST_OK
+# Equivalent one-liner without the journal:
+journalctl -u aether-compositor --no-pager | aether-shell --host-check -
+```
+
+`--host-check` prints one `LAYER_SURFACE` line per surface
+(`bound=`, `configured=WxH`, `expected=WxH`, `ok=`) and then
+`AETHER_SHELL_LAYER_HOST_OK`, or `AETHER_SHELL_LAYER_HOST_PROBLEM: …` lines and
+`AETHER_SHELL_LAYER_HOST_FAILED` with exit code 1. It fails when a surface never
+bound, bound but was never configured, is on the wrong layer, or was configured
+at a size that differs from the plan (size drift between the shell and
+compositor).
+
+Expected per-surface sizes on a 1920×1080 logical output: menubar 1920×28
+(exclusive zone 28), dock 720×64, launcher 640×480, notifications 360×1080,
+control centre 340×1080. On a HiDPI output the panel stretches to the **logical**
+width (1920×28 for a 2880×1800 panel at 1.5×).
+
+Headless evidence (no device needed, runs on the development host):
+
+```sh
+cargo test -p aether-shell --test layer_host      # 5 tests, incl. the binary
+cargo run -p aether-shell -- --render /tmp/aether-shell-shots
 ls /tmp/aether-shell-shots/shell-{menubar,dock,launcher,notifications}.png
 ```
 
-Pass when all five namespaces are configured and the four PNGs are non-blank.
+Pass when `--host-check` exits 0 and the four PNGs are non-blank.
+
+> Socket-level note: the Wayland client host that creates the surfaces needs
+> `libwayland-client`; it runs on the image, not on the macOS development host.
+> The compositor's own `p3_t02_headless` test covers the server half, and
+> `--host-check` covers the client half at marker level
+> (`docs/2026/11/26/results/p3-t02-layer-host-wiring.md`).
 
 ## 2. F1 (Desktop Shell) checklist
 
@@ -74,7 +98,14 @@ Pass when all five namespaces are configured and the four PNGs are non-blank.
 ## 4. Features page (P7-T07) on device
 
 ```sh
-# Install/remove a pack and confirm persistence + aetherctl agreement:
+# Headless proof that the page is a faithful projection of aether-config's
+# FeatureManager (catalog, install/remove/enable, budget refusal, persistence):
+cargo test -p aether-shell --lib features        # 9 tests
+cargo test -p aether-shell --test features       # drives the real surface
+cargo test -p aether-config --lib                # the manager itself
+
+# On the device: install/remove a pack and confirm persistence + aetherctl
+# agreement:
 aether-shell # open Settings -> Features
 # Click Install on "Advanced monitoring" (D), then:
 cat ~/.config/aether/features/features.toml
@@ -82,7 +113,9 @@ aetherctl features list 2>/dev/null || true
 ```
 
 Pass when the row flips to "Installed", the file contains `D`, and removing it
-clears the entry.
+clears the entry. The page and `aetherctl` share
+`~/.config/aether/features/features.toml`; a fresh `FeaturesPage::load` of that
+file must show the same rows (covered by `a_fresh_page_sees_the_persisted_install_state`).
 
 ## 5. Evidence to record
 
@@ -92,6 +125,19 @@ For each passing criterion, append a line to
 and the command output, and drop screenshots under
 `docs/2026/11/26/results/screenshots/`.
 
+Automated evidence already recorded (development host, 2026-11-26):
+
+- Layer host: `cargo test -p aether-shell --test layer_host` (5 tests) and
+  `aether-shell --host-check` against complete/broken/HiDPI logs —
+  `docs/2026/11/26/results/p3-t02-layer-host-wiring.md`.
+- Player transport: `cargo test -p aether-player` (19 lib, 1 `codec`, 1
+  `transport_edges`, 1 `ui`) — pause/resume position, seek-while-paused,
+  duration clamping, empty-URI rejection —
+  `docs/2026/11/26/results/p4-t14-player.md`.
+- Features page: `cargo test -p aether-shell --lib features` (9 tests) and
+  `--test features` —
+  `docs/2026/11/26/results/p7-t07-features-ui.md`.
+
 ## 6. Known blockers
 
 - Audio (DA-AC-06) needs GStreamer in the image; restricted-codec bundle is
@@ -99,3 +145,5 @@ and the command output, and drop screenshots under
 - PDF (DA-AC-05) needs `pdftotext`/`pdftoppm` in the image.
 - Browser media (DA-AC-11/12) needs WebKitGTK and the graphics session (P3).
 - Cold-launch/idle timings (DA-AC-09/10/12) need the real device.
+- The interactive layer-shell host (§1) needs `libwayland-client` on the image;
+  the development host can neither link nor run the compositor.

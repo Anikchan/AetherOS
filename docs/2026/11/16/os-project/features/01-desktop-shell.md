@@ -63,7 +63,7 @@ Priority key: MVP (needed for the first daily-driver build), v1 (needed for rele
 | SHL-AC-07 | Glass tiers switch without restart; Minimal tier used when reduce transparency is on | Partially verified — tier selection and the reduce-transparency override are unit-tested; live switching needs the effect pipeline (P3-T05) |
 | SHL-AC-08 | Lock screen rejects a wrong password and accepts the right one | Implemented, headless-verified (2026-11-26) — the screen is modal (scrim, Escape and shortcuts cannot dismiss it), five wrong attempts rate-limit the surface, and authentication goes through an `Authenticator` backend: greetd + PAM for login, `libpam` (`aether-lock` service) for the in-session lock, with the salted-digest prototype as the development fallback. PAM FFI is type-checked (`cargo check --features pam`); on-device PAM confirmation pending the image build |
 | SHL-AC-09 | Every settings category opens and every change is written to the config file | Implemented, headless-verified — categories switch the page (clicked in the test), rows are generated from the F4 schema, each shows file+key, and writes are atomic and read back from disk |
-| SHL-AC-10 | Two monitors with different scales work without restart | Not tested — compositor work (P3-T02) |
+| SHL-AC-10 | Two monitors with different scales work without restart | Partially verified (headless, 2026-11-26) — the compositor's `p3_t02_headless` test asserts two outputs at 1× and 1.5× including the logical layout, and the shell verifies the configure size per output with `aether-shell --host-check` (menubar 1920×28 on a 1.5×/1920-logical panel). Live re-scale on a real second monitor pending the on-device run |
 | SHL-AC-11 | Screen reader announces menu bar items and launcher results | Partially verified — every interactive element sets an accessible role/label (asserted by the headless tests); AT-SPI session pending |
 
 Evidence: `docs/2026/11/23/results/p4-shell-and-apps.md` and
@@ -138,3 +138,29 @@ Behaviour and evidence:
   backend selection.
 - Remaining on-device step: build the image with `--features pam`, install the
   three files and confirm SHL-AC-08 against the real account.
+
+## 9. Layer-shell host contract (P3-T02 → P4, 2026-11-26)
+
+The shell's chrome (menu bar, dock, launcher, notifications, control centre) is
+described once, in `shell/src/layers.rs`. `shell/src/host.rs` is the shell-side
+half of the contract with the compositor:
+
+- `plan()` turns each descriptor into the exact `zwlr_layer_surface_v1` request
+  (namespace, layer enum, anchor bitfield, requested size, exclusive zone,
+  keyboard interactivity), so the device host has nothing to decide.
+- `negotiate()` mirrors the compositor's size rules, so the shell draws a
+  surface at the size it will be configured to.
+- `BindingReport::scan()` reads the compositor's markers
+  (`AETHER_COMPOSITOR_OUTPUT`, `..._LAYER_SURFACE`, `..._LAYER_CONFIGURE`) and
+  fails when a surface never bound, bound without a configure, moved layer or
+  was configured at a different size.
+
+```sh
+aether-shell --host-plan                      # requests the host sends
+aether-shell --host-check /tmp/compositor.log # exit 0 only when all bind+configure
+cargo test -p aether-shell --test layer_host  # 5 tests, drives the real binary
+```
+
+Status: headless-verified on the development host; the socket-level bind runs on
+the image because the development host has no `libwayland-client`. Evidence:
+`docs/2026/11/26/results/p3-t02-layer-host-wiring.md`.

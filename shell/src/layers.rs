@@ -1,15 +1,19 @@
 //! Layer-shell surface descriptors for the on-device host (P3-T02, S3).
 //!
-//! The compositor (S2) now advertises `zwlr_layer_shell_v1`; the shell surfaces
+//! The compositor (S2) advertises `zwlr_layer_shell_v1`; the shell surfaces
 //! that were previously composed into one full-screen window (menu bar, dock,
 //! launcher, notifications, control centre) are split out into anchored layer
 //! surfaces on the device. This module is the single source of truth for their
 //! namespace, layer, anchors, requested size and exclusive zone, so the host
 //! that creates them and the Slint render sizes cannot drift apart.
 //!
-//! The host itself (a Wayland client over the software renderer) lands with
-//! the on-device image; until then these descriptors drive the headless
-//! `render_all` sizes and the acceptance harness.
+//! [`crate::host`] turns these descriptors into the exact protocol requests and
+//! verifies the compositor's configure markers (`aether-shell --host-check`);
+//! this module stays data-only so both sides read the same table.
+//!
+//! The host itself (a Wayland client over the software renderer, proven by
+//! spike S1) lands with the on-device image; until then these descriptors drive
+//! [`crate::host`] and the acceptance harness.
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Layer {
@@ -117,13 +121,14 @@ pub fn specs() -> Vec<LayerSurfaceSpec> {
     ]
 }
 
-/// The four surfaces the acceptance harness must see bound.
+/// The shell surfaces the acceptance harness must see bound and configured.
 pub fn required_namespaces() -> &'static [&'static str] {
     &[
         "aether-shell-menubar",
         "aether-shell-dock",
         "aether-shell-launcher",
         "aether-shell-notifications",
+        "aether-shell-control-center",
     ]
 }
 
