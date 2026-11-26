@@ -26,6 +26,10 @@
 //! region, and the modelled frame cost is checked against the 60 Hz budget.
 //! Phase P3-T06 adds [`scheduling`]: damage tracking, frame pacing, frame
 //! callbacks and idle measurement.
+//! Phase P3-T07 adds [`scanout`]: a single full-screen opaque toplevel with no
+//! shell overlay bypasses composition (direct scanout).
+//! Phase P3-T08 adds [`hang`]: Wayland ping/pong responsiveness, "Not
+//! responding" detection, the shell watchdog and the frame-gap logger.
 //!
 //! Run: `cargo run -p aether-compositor` (or `aether-compositor` binary).
 //! Markers: `AETHER_COMPOSITOR_SOCKET_READY: wayland-0`,
@@ -48,6 +52,15 @@
 //!          `AETHER_COMPOSITOR_IDLE: idle_ms=… idle_pct=…`,
 //!          `AETHER_COMPOSITOR_FRAME_STATS: frames=… idle_skips=…`,
 //!          `AETHER_COMPOSITOR_EFFECT_SUMMARY: tier=… tier_switches=…`,
+//!          `AETHER_COMPOSITOR_SCANOUT: mode=direct|composite …`,
+//!          `AETHER_COMPOSITOR_SCANOUT_FRAME: n=… window=… damage_px=…`,
+//!          `AETHER_COMPOSITOR_SCANOUT_STATS: mode=… direct_frames=…`,
+//!          `AETHER_COMPOSITOR_PING: client=… serial=…`,
+//!          `AETHER_COMPOSITOR_PONG: client=… serial=… rtt_ms=… recovered=…`,
+//!          `AETHER_COMPOSITOR_APP_STATE: client=… state=not_responding after_ms=…`,
+//!          `AETHER_COMPOSITOR_FRAME_GAP: ms=… threshold_ms=…`,
+//!          `AETHER_COMPOSITOR_SHELL_WATCHDOG: state=timeout|ok …`,
+//!          `AETHER_COMPOSITOR_NO_HANG_SUMMARY: …`,
 //!          `AETHER_COMPOSITOR_DONE`.
 //!
 //! Env: `AETHER_COMPOSITOR_GRACE_MS` (default 3000) — how long the compositor
@@ -57,6 +70,11 @@
 //! `AETHER_COMPOSITOR_EFFECT_TIER` (`full` | `reduced` | `minimal`, default
 //! `full`) selects the glass tier; `AETHER_COMPOSITOR_TARGET_FPS` (default 60)
 //! sets the frame pacing/budget target.
+//! `AETHER_COMPOSITOR_PING_INTERVAL_MS` (default 2000) and
+//! `AETHER_COMPOSITOR_PING_TIMEOUT_MS` (default 5000, the NH-02 limit) drive the
+//! Wayland ping watchdog; `AETHER_COMPOSITOR_FRAME_GAP_MS` (default 1000) is the
+//! frame-gap logging threshold; `AETHER_COMPOSITOR_SHELL_WATCHDOG_MS` (default
+//! 5000) is the layer-shell commit-freshness timeout.
 //!
 //! The Rust module and the wire protocol share the word "compositor"; see
 //! [`AetherCompositor`] (state) vs. `wayland::compositor` (protocol).
@@ -81,6 +99,7 @@ use smithay::reexports::wayland_server::backend::{
 use smithay::reexports::wayland_server::protocol::wl_buffer::WlBuffer;
 use smithay::reexports::wayland_server::protocol::wl_output::WlOutput;
 use smithay::reexports::wayland_server::protocol::wl_seat::WlSeat;
+use smithay::reexports::wayland_server::protocol::wl_shm;
 use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
 use smithay::reexports::wayland_server::{
     Client, Display, DisplayHandle, Resource,
@@ -89,7 +108,7 @@ use smithay::utils::{Logical, Serial, Size, Transform};
 use smithay::wayland::buffer::BufferHandler;
 use smithay::wayland::compositor::{
     with_states, BufferAssignment, CompositorClientState, CompositorHandler, CompositorState,
-    Damage, SurfaceAttributes,
+    Damage, RectangleKind, RegionAttributes, SurfaceAttributes,
 };
 use smithay::wayland::fractional_scale::{
     with_fractional_scale, FractionalScaleHandler, FractionalScaleManagerState,
@@ -108,14 +127,18 @@ use smithay::wayland::shell::wlr_layer::{
     Anchor, Layer, LayerSurface, LayerSurfaceCachedState, WlrLayerShellHandler, WlrLayerShellState,
 };
 use smithay::wayland::shell::xdg::{
-    PopupSurface, PositionerState, ToplevelSurface, XdgShellHandler, XdgShellState,
+    PopupSurface, PositionerState, ShellClient, ToplevelSurface, XdgShellHandler, XdgShellState,
 };
 use smithay::wayland::shm::{ShmHandler, ShmState};
 
 mod glass;
+mod hang;
+mod scanout;
 mod scheduling;
 mod wm;
 pub use glass::*;
+pub use hang::*;
+pub use scanout::*;
 pub use scheduling::*;
 pub use wm::*;
 
@@ -218,6 +241,23 @@ pub struct AetherCompositor {
     pub tier_policy: TierPolicy,
     /// P3-T06 damage tracking and frame pacing.
     pub frames: FrameScheduler,
+    /// P3-T07 direct scanout decision (single full-screen opaque window).
+    pub scanout: DirectScanout,
+    /// P3-T08 per-client Wayland ping/pong responsiveness.
+    pub hang: HangDetector,
+    /// P3-T08 frame-gap logger (damage wait before presentation).
+    pub frame_gaps: FrameGapLogger,
+    /// P3-T08 shell commit-freshness watchdog.
+    pub shell_watchdog: ShellWatchdog,
+    /// xdg-shell clients under ping monitoring, in registration order. The
+    /// `client=` marker value is the index in this vector.
+    pub watched_clients: Vec<ShellClient>,
+    /// Ping interval for the responsiveness watchdog.
+    pub ping_interval: Duration,
+    /// Next instant at which the health tick queues pings.
+    next_ping_at: Option<Instant>,
+    /// Serial source for pings (must stay non-zero).
+    next_ping_serial: u32,
     /// Start instant, used for `wl_callback.done` timestamps.
     pub started: Instant,
     /// `wl_surface.frame` callbacks answered so far.
@@ -249,6 +289,12 @@ impl AetherCompositor {
             .filter(|fps| *fps > 0)
             .unwrap_or(glass::DEFAULT_TARGET_FPS);
         let effects = GlassPipeline::new(tier);
+        // P3-T08 thresholds; every one of them is overridable so the headless
+        // acceptance tests can run the whole state machine in a second.
+        let ping_interval = env_millis("AETHER_COMPOSITOR_PING_INTERVAL_MS", 2_000);
+        let ping_timeout = env_millis("AETHER_COMPOSITOR_PING_TIMEOUT_MS", 5_000);
+        let frame_gap = env_millis("AETHER_COMPOSITOR_FRAME_GAP_MS", 1_000);
+        let shell_watchdog = env_millis("AETHER_COMPOSITOR_SHELL_WATCHDOG_MS", 5_000);
 
         let mut state = Self {
             compositor: CompositorState::new::<Self>(dh),
@@ -280,6 +326,14 @@ impl AetherCompositor {
             effects,
             tier_policy: TierPolicy::new(target_fps),
             frames: FrameScheduler::new(target_fps),
+            scanout: DirectScanout::new(),
+            hang: HangDetector::new(ping_timeout),
+            frame_gaps: FrameGapLogger::new(frame_gap),
+            shell_watchdog: ShellWatchdog::new(shell_watchdog),
+            watched_clients: Vec::new(),
+            ping_interval,
+            next_ping_at: None,
+            next_ping_serial: 1,
             started: Instant::now(),
             frame_callbacks_sent: 0,
             tier_switches: 0,
@@ -318,6 +372,14 @@ impl AetherCompositor {
             state.effects.profile().describe()
         );
         state.report_glass_plan(&[]);
+        println!(
+            "AETHER_COMPOSITOR_NO_HANG_CONFIG: ping_interval_ms={} ping_timeout_ms={} frame_gap_ms={} shell_watchdog_ms={}",
+            state.ping_interval.as_millis(),
+            state.hang.timeout().as_millis(),
+            state.frame_gaps.threshold().as_millis(),
+            state.shell_watchdog.timeout().as_millis()
+        );
+        state.update_scanout();
         state
     }
 
@@ -408,29 +470,56 @@ impl AetherCompositor {
             return;
         };
 
-        let pairs: Vec<(GlassSurface, Vec<Rect>)> = self
-            .visible_glass_surfaces()
-            .into_iter()
-            .map(|surface| (surface, frame.damage.clone()))
-            .collect();
-        let cost = self.effects.frame_cost(&pairs);
-        if frame.index <= 5 || frame.index % 120 == 0 {
-            println!(
-                "AETHER_COMPOSITOR_FRAME: n={} time_ms={} damage_rects={} damage_px={} windows={} tier={} est_ms={:.3}",
-                frame.index,
-                frame.time_ms,
-                frame.damage.len(),
-                frame.damage_pixels,
-                cost.windows,
-                self.effects.tier().name(),
-                cost.estimated_ms
-            );
+        let direct = self.scanout.is_direct();
+        if direct {
+            // P3-T07: the client buffer goes straight to the output, so no
+            // glass passes, blur or shadow work is planned for this frame.
+            let window = self.scanout.direct_window().unwrap_or(0);
+            self.scanout.direct_frames += 1;
+            if frame.index <= 5 || frame.index % 120 == 0 {
+                println!(
+                    "AETHER_COMPOSITOR_SCANOUT_FRAME: n={} window={} damage_px={} passes=0",
+                    frame.index, window, frame.damage_pixels
+                );
+            }
+        } else {
+            let pairs: Vec<(GlassSurface, Vec<Rect>)> = self
+                .visible_glass_surfaces()
+                .into_iter()
+                .map(|surface| (surface, frame.damage.clone()))
+                .collect();
+            let cost = self.effects.frame_cost(&pairs);
+            if frame.index <= 5 || frame.index % 120 == 0 {
+                println!(
+                    "AETHER_COMPOSITOR_FRAME: n={} time_ms={} damage_rects={} damage_px={} windows={} tier={} est_ms={:.3}",
+                    frame.index,
+                    frame.time_ms,
+                    frame.damage.len(),
+                    frame.damage_pixels,
+                    cost.windows,
+                    self.effects.tier().name(),
+                    cost.estimated_ms
+                );
+            }
+
+            if pairs.len() != self.reported_windows {
+                // Worst-case cost for the new window set: every visible window
+                // fully repainted at the current tier.
+                self.report_glass_plan(&[]);
+            }
+
+            if let Some(next) = self
+                .tier_policy
+                .observe(self.effects.tier(), cost.estimated_ms)
+            {
+                self.set_effect_tier(next, "frame-budget");
+            }
         }
 
-        if pairs.len() != self.reported_windows {
-            // Worst-case cost for the new window set: every visible window
-            // fully repainted at the current tier.
-            self.report_glass_plan(&[]);
+        // P3-T08: a damaged frame that waited too long is a logged gap.
+        let damage_wait = Duration::from_secs_f64(frame.damage_wait_ms / 1_000.0);
+        if let Some(gap) = self.frame_gaps.observe(Some(damage_wait)) {
+            println!("{}", self.frame_gaps.marker_line(gap));
         }
 
         let callbacks = self.send_frame_callbacks(frame.time_ms);
@@ -440,12 +529,124 @@ impl AetherCompositor {
                 frame.time_ms
             );
         }
+    }
 
-        if let Some(next) = self
-            .tier_policy
-            .observe(self.effects.tier(), cost.estimated_ms)
-        {
-            self.set_effect_tier(next, "frame-budget");
+    /// P3-T07: recompute the direct-scanout decision and print the marker when
+    /// it changes. Called on every commit, when a shell overlay appears, and on
+    /// fullscreen transitions.
+    pub fn update_scanout(&mut self) {
+        let (output_name, output_rect) = match self.outputs.first() {
+            Some(output) => {
+                let size = self.logical_size(output);
+                (
+                    output.name(),
+                    Rect {
+                        x: 0,
+                        y: 0,
+                        w: size.w,
+                        h: size.h,
+                    },
+                )
+            }
+            None => ("none".to_string(), Rect { x: 0, y: 0, w: 0, h: 0 }),
+        };
+
+        let mut surfaces = Vec::new();
+        for (index, toplevel) in self.toplevels.iter().enumerate() {
+            let Some(window) = self.wm.windows.get(&WindowId(index as u64)) else {
+                continue;
+            };
+            let visible = window.workspace == self.wm.active && toplevel.alive();
+            let opaque = visible && self.toplevel_is_opaque(index, window.rect);
+            surfaces.push(ScanoutSurface {
+                id: index as u64,
+                rect: window.rect,
+                opaque,
+                visible,
+            });
+        }
+        // A panel, dock, notification or lock overlay sits above the window and
+        // forces composition even when the window itself is full-screen.
+        let overlays = self
+            .layer_surfaces
+            .iter()
+            .filter(|entry| matches!(entry.layer, Layer::Top | Layer::Overlay))
+            .count();
+        let decision = decide_scanout(&surfaces, output_rect, overlays);
+        if self.scanout.update(decision).is_some() {
+            println!("{}", self.scanout.marker_line(&output_name, output_rect));
+        }
+    }
+
+    /// Whether a toplevel's committed buffer is fully opaque, so it can be
+    /// scanned out without blending: either the client set an opaque region
+    /// covering the whole window, or the buffer format has no alpha channel
+    /// (XRGB/RGB). DMA-BUF formats that we cannot inspect fall back to the
+    /// opaque-region check.
+    fn toplevel_is_opaque(&self, index: usize, rect: Rect) -> bool {
+        let Some(toplevel) = self.toplevels.get(index) else {
+            return false;
+        };
+        let surface = toplevel.wl_surface();
+        with_states(surface, |states| {
+            let mut cached = states.cached_state.get::<SurfaceAttributes>();
+            let attrs = cached.current();
+            if let Some(region) = attrs.opaque_region.as_ref() {
+                if opaque_region_covers(region, rect) {
+                    return true;
+                }
+            }
+            let Some(BufferAssignment::NewBuffer(buffer)) = attrs.buffer.as_ref() else {
+                return false;
+            };
+            let scale = attrs.buffer_scale.max(1);
+            smithay::wayland::shm::with_buffer_contents(buffer, |_, _, data| {
+                !matches!(
+                    data.format,
+                    wl_shm::Format::Argb8888
+                        | wl_shm::Format::Abgr8888
+                        | wl_shm::Format::Argb2101010
+                        | wl_shm::Format::Abgr2101010
+                ) && data.width >= rect.w * scale
+                    && data.height >= rect.h * scale
+            })
+            .unwrap_or(false)
+        })
+    }
+
+    /// P3-T08: one health tick from the event loop. Pings are queued, never
+    /// awaited; a timeout only changes the app state and prints a marker.
+    pub fn health_tick(&mut self, now: Instant) {
+        // 1. Move clients whose ping was not answered to "Not responding".
+        for transition in self.hang.tick(now) {
+            println!(
+                "AETHER_COMPOSITOR_APP_STATE: client={} state={} after_ms={}",
+                transition.client,
+                transition.to.as_str(),
+                transition.after.as_millis()
+            );
+        }
+
+        // 2. Queue pings on the interval (async: nothing blocks on the reply).
+        let ping_due = self.next_ping_at.map(|at| now >= at).unwrap_or(true);
+        if ping_due {
+            self.next_ping_at = Some(now + self.ping_interval);
+            for id in self.hang.clients_to_ping(now, self.ping_interval) {
+                let serial = self.next_ping_serial;
+                self.next_ping_serial = self.next_ping_serial.wrapping_add(1).max(1);
+                let sent = self
+                    .watched_clients
+                    .get(id as usize)
+                    .map(|client| client.send_ping(Serial::from(serial)));
+                if matches!(sent, Some(Ok(()))) && self.hang.begin_ping(id, serial, now) {
+                    println!("AETHER_COMPOSITOR_PING: client={id} serial={serial}");
+                }
+            }
+        }
+
+        // 3. Shell watchdog: the shell's layer surfaces must keep committing.
+        if let Some(idle) = self.shell_watchdog.check(now) {
+            println!("{}", self.shell_watchdog.marker_line(idle));
         }
     }
 
@@ -741,6 +942,29 @@ impl AetherCompositor {
     }
 }
 
+/// True when an opaque region has an `Add` rect covering the whole window in
+/// surface-local coordinates.
+fn opaque_region_covers(region: &RegionAttributes, rect: Rect) -> bool {
+    region.rects.iter().any(|(kind, region_rect)| {
+        matches!(kind, RectangleKind::Add)
+            && region_rect.loc.x <= 0
+            && region_rect.loc.y <= 0
+            && region_rect.loc.x + region_rect.size.w >= rect.w
+            && region_rect.loc.y + region_rect.size.h >= rect.h
+    })
+}
+
+/// Read a millisecond duration from the environment, falling back to the
+/// default on a missing or unparsable value.
+fn env_millis(key: &str, default: u64) -> Duration {
+    Duration::from_millis(
+        std::env::var(key)
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(default),
+    )
+}
+
 /// Layer-shell size negotiation (the subset the shell needs): anchored edges
 /// stretch to the output, an explicit non-zero size wins, otherwise the
 /// surface fills the output along that axis. Margins are subtracted.
@@ -852,6 +1076,21 @@ impl CompositorHandler for AetherCompositor {
         }
 
         self.configure_layer_surface(surface);
+
+        // P3-T08: shell chrome commits feed the commit-freshness watchdog.
+        let is_shell_surface = self
+            .layer_surfaces
+            .iter()
+            .any(|entry| entry.surface.wl_surface() == surface);
+        if is_shell_surface && self.shell_watchdog.note_activity(Instant::now()) {
+            println!(
+                "AETHER_COMPOSITOR_SHELL_WATCHDOG: state=ok recovered=true timeouts={}",
+                self.shell_watchdog.timeouts
+            );
+        }
+
+        // P3-T07: geometry, opacity or the window set can change on any commit.
+        self.update_scanout();
     }
 }
 
@@ -887,6 +1126,84 @@ impl FractionalScaleHandler for AetherCompositor {
 impl XdgShellHandler for AetherCompositor {
     fn xdg_shell_state(&mut self) -> &mut XdgShellState {
         &mut self.xdg_shell
+    }
+
+    /// P3-T08: track each xdg shell client for the ping/pong watchdog.
+    fn new_client(&mut self, client: ShellClient) {
+        let id = self.watched_clients.len() as u64;
+        self.watched_clients.push(client);
+        self.hang.register(id);
+    }
+
+    /// P3-T08: a pong answered a pending ping (smithay already matched the
+    /// serial). This never touches the render path.
+    fn client_pong(&mut self, client: ShellClient) {
+        let Some(index) = self.watched_clients.iter().position(|known| known == &client) else {
+            return;
+        };
+        let id = index as u64;
+        if let Some(pong) = self.hang.pong(id, Instant::now()) {
+            println!(
+                "AETHER_COMPOSITOR_PONG: client={id} serial={} rtt_ms={} recovered={}",
+                pong.serial,
+                pong.rtt.as_millis(),
+                pong.recovered
+            );
+            if pong.recovered {
+                println!(
+                    "AETHER_COMPOSITOR_APP_STATE: client={id} state=responsive recovered=true"
+                );
+            }
+        }
+    }
+
+    /// P3-T07: a fullscreen request makes the window cover its output, which is
+    /// the prerequisite for direct scanout.
+    fn fullscreen_request(
+        &mut self,
+        surface: ToplevelSurface,
+        _output: Option<WlOutput>,
+    ) {
+        let Some(index) = self.toplevels.iter().position(|t| t == &surface) else {
+            return;
+        };
+        let id = WindowId(index as u64);
+        self.wm.set_mode(id, WindowMode::Fullscreen);
+        let Some(rect) = self.wm.windows.get(&id).map(|window| window.rect) else {
+            return;
+        };
+        println!(
+            "AETHER_COMPOSITOR_WM_FULLSCREEN: id={index} rect={},{},{}x{}",
+            rect.x, rect.y, rect.w, rect.h
+        );
+        self.frames.add_damage(rect);
+        self.configure_toplevel(index, rect);
+        self.update_scanout();
+    }
+
+    fn unfullscreen_request(&mut self, surface: ToplevelSurface) {
+        let Some(index) = self.toplevels.iter().position(|t| t == &surface) else {
+            return;
+        };
+        let id = WindowId(index as u64);
+        self.wm.set_mode(id, WindowMode::Floating);
+        let (ow, oh) = self.wm.output_size;
+        let rect = Rect {
+            x: (ow - (ow * 3 / 5).max(1)) / 2,
+            y: (oh - (oh * 3 / 5).max(1)) / 2,
+            w: (ow * 3 / 5).max(1),
+            h: (oh * 3 / 5).max(1),
+        };
+        if let Some(window) = self.wm.windows.get_mut(&id) {
+            window.rect = rect;
+        }
+        println!(
+            "AETHER_COMPOSITOR_WM_FULLSCREEN: id={index} rect={},{},{}x{} exited=true",
+            rect.x, rect.y, rect.w, rect.h
+        );
+        self.frames.add_damage(rect);
+        self.configure_toplevel(index, rect);
+        self.update_scanout();
     }
 
     fn new_toplevel(&mut self, surface: ToplevelSurface) {
@@ -934,6 +1251,7 @@ impl XdgShellHandler for AetherCompositor {
             id.0, self.wm.active.0, output_name, rect.x, rect.y, rect.w, rect.h
         );
         self.configure_toplevel(index, rect);
+        self.update_scanout();
     }
 
     fn new_popup(&mut self, _surface: PopupSurface, _positioner: PositionerState) {}
@@ -994,6 +1312,10 @@ impl WlrLayerShellHandler for AetherCompositor {
         // Immediate initial configure; a sized configure follows on the first
         // commit once anchors and the requested size are known.
         let _ = surface.send_configure();
+        // P3-T08: the first shell surface arms the commit-freshness watchdog.
+        self.shell_watchdog.arm(Instant::now());
+        // P3-T07: a Top/Overlay surface blocks direct scanout from now on.
+        self.update_scanout();
     }
 }
 
@@ -1234,6 +1556,9 @@ pub fn run() -> Result<(), String> {
             // so an idle desktop submits no composite/blur work at all.
             state.frame_tick();
 
+            // P3-T08: asynchronous responsiveness pings and the shell watchdog.
+            state.health_tick(Instant::now());
+
             if state.mapped && state.shutdown_at.is_none() {
                 state.shutdown_at = Some(Instant::now() + grace_for_closure);
             }
@@ -1277,6 +1602,18 @@ pub fn run() -> Result<(), String> {
         state.effects.tier().name(),
         state.tier_switches,
         state.frame_callbacks_sent
+    );
+    println!(
+        "AETHER_COMPOSITOR_SCANOUT_STATS: {}",
+        state.scanout.stats_line()
+    );
+    println!(
+        "AETHER_COMPOSITOR_FRAME_GAP_SUMMARY: {}",
+        state.frame_gaps.summary_line()
+    );
+    println!(
+        "AETHER_COMPOSITOR_NO_HANG_SUMMARY: {}",
+        state.hang.summary_line()
     );
     println!("AETHER_COMPOSITOR_DONE");
     Ok(())

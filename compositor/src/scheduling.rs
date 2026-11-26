@@ -145,6 +145,10 @@ pub struct Frame {
     pub damage_pixels: u64,
     /// Time since the previous frame; `None` for the first frame.
     pub gap_ms: Option<f64>,
+    /// Time the damage waited between the commit that created it and this
+    /// frame (`0.0` for a frame with no newly-added damage, e.g. a carry-over).
+    /// P3-T08 frame-gap logger consumes it.
+    pub damage_wait_ms: f64,
     /// Presentation timestamp in milliseconds since compositor start.
     pub time_ms: u32,
 }
@@ -160,6 +164,9 @@ pub struct FrameScheduler {
     pub idle_skips: u64,
     pub presented_pixels: u64,
     pub last_frame: Option<Instant>,
+    /// When the first not-yet-presented damage rect was added, for the P3-T08
+    /// damage-wait (frame-gap) measurement.
+    first_damage: Option<Instant>,
     last_gap_ms: f64,
     total_gap_ms: f64,
     idle_since: Option<Instant>,
@@ -179,6 +186,7 @@ impl FrameScheduler {
             idle_skips: 0,
             presented_pixels: 0,
             last_frame: None,
+            first_damage: None,
             last_gap_ms: 0.0,
             total_gap_ms: 0.0,
             idle_since: None,
@@ -192,7 +200,11 @@ impl FrameScheduler {
     }
 
     pub fn add_damage(&mut self, rect: Rect) {
+        let was_empty = self.damage.is_empty();
         self.damage.add(rect);
+        if was_empty && !self.damage.is_empty() {
+            self.first_damage = Some(Instant::now());
+        }
         // New damage ends the current idle span.
         self.close_idle_span(Instant::now());
         self.idle_reported = false;
@@ -232,6 +244,11 @@ impl FrameScheduler {
         }
         let damage = self.damage.take();
         let damage_pixels = union_area(&damage);
+        let damage_wait_ms = self
+            .first_damage
+            .take()
+            .map(|since| now.saturating_duration_since(since).as_secs_f64() * 1_000.0)
+            .unwrap_or(0.0);
         let gap_ms = self
             .last_frame
             .map(|last| now.duration_since(last).as_secs_f64() * 1_000.0);
@@ -249,6 +266,7 @@ impl FrameScheduler {
             damage,
             damage_pixels,
             gap_ms,
+            damage_wait_ms,
             time_ms: now.duration_since(self.started).as_millis() as u32,
         })
     }
@@ -471,6 +489,23 @@ mod tests {
         assert!(!scheduler.take_idle_report(later), "reported only once");
         scheduler.add_damage(Rect { x: 0, y: 0, w: 4, h: 4 });
         assert!(!scheduler.take_idle_report(later), "damage ends the idle span");
+    }
+
+    #[test]
+    fn damage_wait_is_measured_from_the_commit() {
+        let mut scheduler = FrameScheduler::new(60);
+        scheduler.add_damage(Rect { x: 0, y: 0, w: 10, h: 10 });
+        std::thread::sleep(Duration::from_millis(20));
+        let frame = scheduler.present(Instant::now()).expect("frame");
+        assert!(
+            frame.damage_wait_ms >= 10.0,
+            "damage waited {:?} ms",
+            frame.damage_wait_ms
+        );
+        // No new damage: the waiting time resets once the damage is presented.
+        scheduler.add_damage(Rect { x: 0, y: 0, w: 4, h: 4 });
+        let frame = scheduler.present(Instant::now()).expect("second frame");
+        assert!(frame.damage_wait_ms < 10.0);
     }
 
     #[test]

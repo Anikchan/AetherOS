@@ -15,7 +15,8 @@
 | P3-T04 | **Done 2026-11-26** — floating/snap/tile/workspaces wired into toplevels + unit tests (commit `f6fe3dd`, CI run 45869439628) | `docs/2026/11/26/results/` |
 | P3-T05 | **Done 2026-11-26 (S2)** — glass material pipeline, Full/Reduced/Minimal tiers, tier switch (`AETHER_COMPOSITOR_EFFECT_TIER` + `set_effect_tier` + automatic `TierPolicy`), 60 Hz budget check; **60 fps number is modelled, hardware gap noted** | `docs/2026/11/26/results/p3-t05-t06-glass-and-frame-scheduling.md` |
 | P3-T06 | **Done 2026-11-26 (S2)** — damage tracking, 60 Hz frame pacing, `wl_surface.frame` callbacks, idle measurement hooks (`AETHER_COMPOSITOR_IDLE` / `FRAME_STATS`) | Same results doc |
-| P3-T07..T08 | Not started | — |
+| P3-T07 | **Done 2026-11-27 (S2)** — direct scanout model (`scanout.rs`): a single full-screen opaque toplevel with no Top/Overlay layer bypasses composition; xdg fullscreen requests wired; markers `SCANOUT` / `SCANOUT_FRAME` / `SCANOUT_STATS`; headless acceptance test. Real KMS plane flip hardware-gated. | `docs/2026/11/27/results/p3-t07-direct-scanout.md` |
+| P3-T08 | **Done 2026-11-27 (S2)** — no-hang state machine (`hang.rs`): async Wayland ping/pong, `Not responding` after 5 s (env-tunable), late-pong recovery, shell commit watchdog, frame-gap logger (`Frame.damage_wait_ms`); markers `PING` / `PONG` / `APP_STATE` / `FRAME_GAP` / `SHELL_WATCHDOG` / `NO_HANG_SUMMARY`; headless acceptance test. Shell UI (Wait/Force Quit) + service-manager restart are integration items. | `docs/2026/11/27/results/p3-t08-no-hang.md` |
 
 ## What was delivered for P3-T02
 
@@ -53,16 +54,17 @@ format string) — that is session S3's in-flight work, unrelated to this crate;
 
 ## Next for S2
 
-1. **P3-T07** direct scanout for full-screen apps (consumes the T06 damage
-   model: a full-screen single-surface frame can bypass composition).
-2. **P3-T08** no-hang design (Wayland ping, "Not responding", shell watchdog,
-   frame-gap logger — `FrameScheduler::last_gap_ms` / `average_gap_ms` already
-   expose the gaps it will log).
-3. Once S1 adds `xwayland` to the image and S4 adds it to `ci.yml`, re-verify
-   P3-T03 on CI (the code is in place and `xeyes` is reported as mapped).
-4. On the Dell (when hardware work resumes): measure real Full-tier frame time
-   with three windows, set `GpuProfile::measured = true` with observed
-   throughput, and close the P3-T05 60 fps gate.
+1. **P3-T03 re-verify on CI** once S4 adds `xwayland`/`x11-apps` to `ci.yml`
+   (code is in place; `xeyes` maps in local runs).
+2. On the Dell (when hardware work resumes): measure real Full-tier frame time
+   with three windows, set `GpuProfile::measured = true`, and close the P3-T05
+   60 fps gate.
+3. On the Dell: real KMS direct scanout (atomic plane flip) for P3-T07, plus
+   DMA-BUF opacity detection instead of the `set_opaque_region` fallback.
+4. P3-T08 follow-ups: API for the shell to consume `not_responding` markers
+   (Wait / Force Quit), PSI cause classification for frame gaps (with S4), and
+   the 24-hour gap measurement run.
+5. P3 phase exit: compositor targets + G-NH2 on hardware.
 
 ## P3-T05 / P3-T06 delivery summary (2026-11-26)
 
