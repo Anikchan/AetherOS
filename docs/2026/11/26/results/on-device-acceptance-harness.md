@@ -38,7 +38,7 @@ say preflight
 pgrep -a aether-compositor
 pgrep -a aether-shell
 echo "WAYLAND_DISPLAY=$WAYLAND_DISPLAY XDG_RUNTIME_DIR=$XDG_RUNTIME_DIR"
-aether-shell --status | tail -n 12
+aether-shell --status | tail -n 18
 journalctl -b -u aether-compositor --no-pager | grep -E 'LAYER_SURFACE|OUTPUT_COUNT'
 ```
 
@@ -58,6 +58,12 @@ focus: false
 notifications: <n>
 dock: <n>
 windows: <n>
+effects-tier: full
+effects-effective: full
+effects-env: AETHER_COMPOSITOR_EFFECT_TIER=full
+safe-mode: false
+start-attempts: 0
+nohang: idle
 settings-root: /home/aether/.config/aether
 AETHER_SHELL_STATUS_OK
 AETHER_COMPOSITOR_OUTPUT_COUNT: <n>
@@ -177,6 +183,158 @@ cargo test -p aether-shell --test effects_ui    # control-centre switch
 ```
 
 EXPECT `test result: ok. 8 passed`, `6 passed`, `1 passed`.
+
+## 1c. G-NH2 no-hang: "Not responding", shell watchdog, safe mode (P3-T08 ↔ shell)
+
+The compositor detects, the shell decides. The whole contract is the
+compositor's journal; the shell has no new protocol:
+
+| Compositor marker | Shell reaction |
+| --- | --- |
+| `AETHER_COMPOSITOR_APP_STATE: client=… state=not_responding after_ms=…` | show "Not responding" with **Wait** / **Force Quit** |
+| `AETHER_COMPOSITOR_APP_STATE: client=… state=responsive recovered=true` | close the dialog (the app answered a late ping) |
+| `AETHER_COMPOSITOR_SHELL_WATCHDOG: state=timeout idle_ms=… timeouts=…` | the shell stopped committing; the service manager restarts it |
+
+Shell markers (`shell/src/nohang.rs`): `AETHER_SHELL_NOHANG_DIALOG`,
+`…_ACTION action=wait|force_quit`, `…_RECOVERED`, `…_TERMINATE`,
+`…_SUMMARY`, `AETHER_SHELL_START`, `…_START_CONFIRMED`, `…_SAFE_MODE`,
+`…_SAFE_MODE_RESET`.
+
+### 1c-1 — Hung app shows the dialog within 6 s (G-NH2)
+
+```sh
+say g-nh2-dialog
+( aether-text & echo $! > /tmp/hang.pid )
+sleep 1; kill -STOP "$(cat /tmp/hang.pid)"       # the app stops dispatching
+# do: watch for the dialog; screenshot it; press Wait.
+shot g-nh2-dialog
+journalctl -b -u aether-compositor --no-pager | grep -E 'APP_STATE|FRAME_STATS' | tail -n 4
+journalctl -b -u aether-shell --no-pager | grep AETHER_SHELL_NOHANG | tail -n 3
+```
+
+EXPECT:
+
+```
+AETHER_COMPOSITOR_APP_STATE: client=<n> state=not_responding after_ms=5000
+AETHER_COMPOSITOR_FRAME_STATS: frames=<n> ...            # the desktop kept drawing
+SCREENSHOT g-nh2-dialog                                  # "<App> is not responding"
+AETHER_SHELL_NOHANG_DIALOG: client=<n> app=aether-text after_ms=5000
+```
+
+Pass conditions: the dialog is visible **within 6 s** of `kill -STOP` (the
+`after_ms` value the compositor prints must be `≤ 6000`), the frame counter kept
+increasing while the app was stopped (no desktop freeze), and the screenshot
+shows both buttons.
+
+### 1c-2 — Wait re-offers, Force Quit ends the app
+
+```sh
+# do: press Wait, leave the app stopped for 15 s, press Force Quit on the second dialog.
+journalctl -b -u aether-shell --no-pager | grep AETHER_SHELL_NOHANG | tail -n 5
+pgrep -a aether-text || echo "app ended"
+journalctl -b -u aether-compositor --no-pager > /tmp/compositor.log
+aether-shell --nohang-check /tmp/compositor.log; echo "nohang-check exit=$?"
+```
+
+EXPECT:
+
+```
+AETHER_SHELL_NOHANG_ACTION: client=<n> app=aether-text action=wait grace_ms=15000
+AETHER_SHELL_NOHANG_DIALOG: client=<n> app=aether-text after_ms=5000      # 15 s later
+AETHER_SHELL_NOHANG_ACTION: client=<n> app=aether-text action=force_quit
+AETHER_SHELL_NOHANG_TERMINATE: client=<n>
+AETHER_SHELL_NOHANG_SUMMARY: prompts=2 waits=1 force_quits=1 recoveries=0 open=0
+app ended
+
+NOHANG_HANG client=<n> after_ms=5000 within_limit=true
+NOHANG_WATCHDOG timeouts=<n> last_state=<ok|timeout> recovered=<bool> idle_ms=<ms> timeout_ms=5000 restart_required=<bool>
+NOHANG_START attempts=<n> confirmed=<bool> safe_mode=<bool>
+AETHER_SHELL_NOHANG_OK
+nohang-check exit=0
+```
+
+Recovery instead of Force Quit: `kill -CONT "$(cat /tmp/hang.pid)"` and EXPECT
+`AETHER_SHELL_NOHANG_RECOVERED: client=<n> app=aether-text` with the dialog
+closing on its own (no click). A late `after_ms=8000` fails the check with
+`client=<n> was marked not responding after 8000 ms; G-NH2 allows 6000 ms`.
+
+### 1c-3 — Shell watchdog and safe mode after 3 failed starts
+
+```sh
+say g-nh2-watchdog
+# do: stall the shell three times (the compositor declares a timeout and the
+#     service manager restarts only the shell; windows are kept).
+for i in 1 2 3; do kill -STOP "$(pgrep -x aether-shell)"; sleep 6; kill -CONT "$(pgrep -x aether-shell)"; sleep 2; done
+journalctl -b -u aether-compositor --no-pager | grep SHELL_WATCHDOG | tail -n 6
+# Restart loop: three starts that never reach "session ready".
+aether-shell --start-begin     # attempt=1
+aether-shell --start-begin     # attempt=2, previous=unconfirmed
+aether-shell --start-begin     # attempt=3, safe mode
+aether-shell --status | grep -E '^(safe-mode|start-attempts|effects-effective):'
+```
+
+EXPECT:
+
+```
+AETHER_COMPOSITOR_SHELL_WATCHDOG: state=timeout idle_ms=<ms> timeout_ms=5000 timeouts=1
+AETHER_COMPOSITOR_SHELL_WATCHDOG: state=ok recovered=true timeouts=1
+... timeouts=3
+AETHER_SHELL_START: attempt=1 safe_mode=false previous=clean
+AETHER_SHELL_START: attempt=2 safe_mode=false previous=unconfirmed
+AETHER_SHELL_START: attempt=3 safe_mode=true previous=unconfirmed
+AETHER_SHELL_SAFE_MODE: attempts=3 timeouts=0 reason=3 starts failed in a row effects=minimal
+safe-mode: true
+start-attempts: 3
+effects-effective: minimal
+```
+
+Restart within 5 s without losing windows: after each `kill -CONT` the
+compositor must log `state=ok recovered=true` and `pgrep -a aether-*` must still
+list the open apps (the compositor keeps their windows).
+
+Watchdog escalation from the journal (3 stalls, healthy starts):
+
+```sh
+aether-shell --start-begin /tmp/compositor.log
+```
+
+EXPECT `AETHER_SHELL_SAFE_MODE: attempts=1 timeouts=3 reason=the shell stalled 3 times`.
+
+The banner and its reset:
+
+```sh
+# do: in safe mode an amber banner reads "Safe mode: 3 starts failed in a row.
+#     Glass effects are off; reset to leave it." Press Reset.
+shot g-nh2-safe-mode
+aether-shell --start-confirm    # attempts=0; the banner stays until reset
+aether-shell --safe-mode-reset  # leaves safe mode
+aether-shell --status | grep -E '^(safe-mode|effects-effective):'
+```
+
+EXPECT `AETHER_SHELL_START_CONFIRMED: attempts=0`,
+`AETHER_SHELL_SAFE_MODE_RESET: attempts=0 safe_mode=false`, then
+`safe-mode: false` and `effects-effective: full`. The Reset click must produce
+the same reset marker in `journalctl -u aether-shell`.
+
+The ledger lives at `~/.config/aether/shell/session.json`
+(`{"attempts":3,"confirmed":false,"safe_mode":true,...}`).
+
+Headless evidence (development host, no device):
+
+```sh
+cargo test -p aether-shell --lib nohang      # 12 unit tests
+cargo test -p aether-shell --test nohang     # 7 command tests
+cargo test -p aether-shell --test nohang_ui  # dialog + banner through the widget tree
+```
+
+EXPECT `test result: ok. 12 passed`, `7 passed`, `1 passed`.
+
+> Seams not claimed here: the running shell's journal consumption
+> (`ShellController::observe_health` / `tick_dialog`) is driven by the
+> interactive host that lands with the image; on the development host the same
+> state machine is exercised by the unit and UI tests. Force Quit emits
+> `AETHER_SHELL_NOHANG_TERMINATE` for the host/compositor to enforce (xdg
+> unresponsive error), and the restart itself is the service manager's job.
 
 ## 2. F1 (Desktop Shell) checklist
 
@@ -648,6 +806,10 @@ the name (`shl-ac-01-menubar.png`).
   archive 15, each with a headless UI test.
 - Features page: `cargo test -p aether-shell --lib features` (9) and
   `--test features` — `docs/2026/11/26/results/p7-t07-features-ui.md`.
+- G-NH2 shell side: `cargo test -p aether-shell --lib nohang` (12),
+  `--test nohang` (7) and `--test nohang_ui` (1), plus
+  `aether-shell --nohang-check` / `--start-begin` / `--start-confirm` /
+  `--safe-mode-reset` — `docs/2026/11/27/results/g-nh2-shell-nohang.md`.
 
 ## 8. Known blockers
 
@@ -666,3 +828,8 @@ the name (`shl-ac-01-menubar.png`).
   The measured 60 fps Full-tier gate still needs the Dell GPU (`measured=false`).
 - Browser security (DA-AC-13) needs WebKitGTK in the image; the policy, channel
   and version floor are already testable without it.
+- G-NH2 on device (§1c) needs the interactive shell host to read the compositor
+  journal and a service manager restart rule for `aether-shell`; the dialog,
+  safe-mode ledger and the marker contract are verified headlessly today. Force
+  Quit is an intent marker (`AETHER_SHELL_NOHANG_TERMINATE`) until the host wires
+  the compositor's xdg unresponsive error.

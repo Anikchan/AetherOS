@@ -8,6 +8,7 @@
 use chrono::Timelike;
 use std::cell::RefCell;
 use std::rc::Rc;
+use std::time::Instant;
 
 use crate::IconKind;
 use slint::{Model, ModelRc, VecModel};
@@ -18,6 +19,7 @@ use crate::desktop;
 use crate::effects::{self, EffectSettings};
 use crate::features::FeaturesPage;
 use crate::model::{self, Notification, Overlay, PowerMode, SearchKind, ShellState, Window};
+use crate::nohang::{self, DialogAction, DialogEvent, HangEvent, NoHangDialog, StartLedger, StartOutcome};
 use crate::services::{Battery, Services};
 use aether_ui::theme::Tier;
 use crate::{
@@ -157,6 +159,10 @@ pub struct ShellController {
     features: RefCell<FeaturesPage>,
     /// Effect tier: the persisted request and the resolved tier (P4-T04).
     effects: RefCell<EffectSettings>,
+    /// G-NH2: the "Not responding" dialog (P3-T08 markers).
+    nohang: RefCell<NoHangDialog>,
+    /// G-NH2: consecutive starts / safe mode, persisted across restarts.
+    startup: RefCell<StartLedger>,
     pub log: RefCell<Vec<String>>,
 }
 
@@ -176,6 +182,9 @@ impl ShellController {
         let features_path = store.root().join("features").join("features.toml");
         // P4-T04: the effect tier is a settings value the control centre owns.
         let effects = EffectSettings::load(&store);
+        // G-NH2: read-only here; `--start-begin` owns the counting so a render
+        // or `--status` never looks like a shell start.
+        let startup = StartLedger::load(&StartLedger::path(&store));
         let controller = Rc::new(ShellController {
             state: RefCell::new(state),
             ui,
@@ -185,6 +194,8 @@ impl ShellController {
             authenticator: RefCell::new(auth::default_authenticator()),
             features: RefCell::new(FeaturesPage::load(features_path)),
             effects: RefCell::new(effects),
+            nohang: RefCell::new(NoHangDialog::with_default_grace()),
+            startup: RefCell::new(startup),
             log: RefCell::new(Vec::new()),
         });
         controller.load_settings();
@@ -475,6 +486,30 @@ impl ShellController {
             });
         }
         self.ui.on_window_activated(on(Self::activate_window));
+        {
+            let weak = Rc::downgrade(self);
+            self.ui.on_nohang_wait(move || {
+                if let Some(controller) = weak.upgrade() {
+                    controller.dialog_action(DialogAction::Wait, Instant::now());
+                }
+            });
+        }
+        {
+            let weak = Rc::downgrade(self);
+            self.ui.on_nohang_force_quit(move || {
+                if let Some(controller) = weak.upgrade() {
+                    controller.dialog_action(DialogAction::ForceQuit, Instant::now());
+                }
+            });
+        }
+        {
+            let weak = Rc::downgrade(self);
+            self.ui.on_safe_mode_reset(move || {
+                if let Some(controller) = weak.upgrade() {
+                    controller.reset_safe_mode();
+                }
+            });
+        }
     }
 
     /// Push the model into the UI. Called after every mutation.
@@ -498,11 +533,43 @@ impl ShellController {
         // it) and the control centre shows which one is in effect.
         {
             let effects = self.effects.borrow();
-            let effective = effects.effective();
+            let effective = nohang::resolve_tier(self.safe_mode(), effects.effective());
             self.ui.set_tier(effects::to_slint(effective));
             self.ui
                 .set_effects_tier(effective.as_str().into());
             self.ui.set_effects_note(effects.subtitle().into());
+        }
+        // G-NH2: the "Not responding" dialog and the safe-mode banner.
+        {
+            let dialog = self.nohang.borrow();
+            match dialog.current() {
+                Some(app) => {
+                    self.ui.set_nohang_open(true);
+                    self.ui.set_nohang_app(app.name.into());
+                    self.ui.set_nohang_detail(
+                        "The window stopped answering. Wait for it to recover, or force it to quit."
+                            .into(),
+                    );
+                }
+                None => {
+                    self.ui.set_nohang_open(false);
+                    self.ui.set_nohang_app(Default::default());
+                    self.ui.set_nohang_detail(Default::default());
+                }
+            }
+        }
+        {
+            let startup = self.startup.borrow();
+            self.ui.set_safe_mode(startup.safe_mode);
+            let note = if startup.safe_mode {
+                format!(
+                    "Safe mode: {}. Glass effects are off; reset to leave it.",
+                    startup.safe_mode_reason()
+                )
+            } else {
+                String::new()
+            };
+            self.ui.set_safe_mode_note(note.into());
         }
         self.ui.set_unread(state.unread_badge().into());
         self.ui.set_overlay(state.overlay.code());
@@ -951,14 +1018,124 @@ impl ShellController {
         *self.effects.borrow()
     }
 
-    /// Tier every panel and the compositor should use.
+    /// Tier every panel and the compositor should use (safe mode forces the
+    /// Minimal tier: G-NH2 runs the reduced session).
     pub fn effect_tier(&self) -> Tier {
-        self.effects.borrow().effective()
+        nohang::resolve_tier(self.safe_mode(), self.effects.borrow().effective())
     }
 
     /// `AETHER_COMPOSITOR_EFFECT_TIER=<tier>` for the session environment.
     pub fn effect_env_line(&self) -> String {
-        self.effects.borrow().env_line()
+        format!(
+            "{}={}",
+            effects::ENV_TIER,
+            self.effect_tier().as_str()
+        )
+    }
+
+    // ---------------------------------------------------------------- nohang ---
+
+    /// G-NH2: feed one compositor health marker to the "Not responding" dialog.
+    /// The host reads `AETHER_COMPOSITOR_APP_STATE` from the journal; tests call
+    /// this directly.
+    pub fn observe_health(&self, event: HangEvent, now: Instant) -> DialogEvent {
+        let outcome = self.nohang.borrow_mut().observe(event, now);
+        let marker = match outcome {
+            DialogEvent::Shown(client) => Some(self.nohang.borrow().dialog_line(client)),
+            DialogEvent::Recovered(client) => Some(self.nohang.borrow().recovered_line(client)),
+            DialogEvent::Queued(client) => {
+                Some(format!("AETHER_SHELL_NOHANG_QUEUED: client={client}"))
+            }
+            DialogEvent::None => None,
+        };
+        if let Some(marker) = marker {
+            self.log.borrow_mut().push(marker);
+        }
+        self.sync();
+        outcome
+    }
+
+    /// The dialog's clock: re-offers a waived app after the wait grace.
+    pub fn tick_dialog(&self, now: Instant) -> Option<u64> {
+        let raised = self.nohang.borrow_mut().tick(now);
+        if let Some(client) = raised {
+            let line = self.nohang.borrow().dialog_line(client);
+            self.log.borrow_mut().push(line);
+            self.sync();
+        }
+        raised
+    }
+
+    /// Wait / Force Quit. Force Quit returns the client the host must terminate
+    /// (the compositor's `xdg_toplevel` unresponsive error does the kill).
+    pub fn dialog_action(&self, action: DialogAction, now: Instant) -> Option<u64> {
+        let acted = self.nohang.borrow_mut().act(action, now);
+        if let Some((action, client)) = acted {
+            let line = self.nohang.borrow().action_line(client, action);
+            self.log.borrow_mut().push(line);
+            if action == DialogAction::ForceQuit {
+                self.log
+                    .borrow_mut()
+                    .push(format!("AETHER_SHELL_NOHANG_TERMINATE: client={client}"));
+            }
+        }
+        self.sync();
+        acted.map(|(_, client)| client)
+    }
+
+    /// Register the app identity behind a compositor client id (the journal only
+    /// carries ids).
+    pub fn register_client(&self, client: u64, id: &str, name: &str) {
+        self.nohang.borrow_mut().register_name(client, id, name);
+    }
+
+    pub fn nohang(&self) -> std::cell::Ref<'_, NoHangDialog> {
+        self.nohang.borrow()
+    }
+
+    /// Safe mode is on: the reduced session until the banner's reset.
+    pub fn safe_mode(&self) -> bool {
+        self.startup.borrow().safe_mode
+    }
+
+    pub fn startup(&self) -> std::cell::Ref<'_, StartLedger> {
+        self.startup.borrow()
+    }
+
+    /// Count a start attempt; called by the session launcher before the layer
+    /// surfaces bind (`aether-shell --start-begin`). Three in a row enter safe
+    /// mode.
+    pub fn begin_session_start(&self) -> StartOutcome {
+        let outcome = self.startup.borrow_mut().begin_start();
+        self.persist_startup();
+        self.sync();
+        outcome
+    }
+
+    /// The session is ready: the start counted, so clear the failure loop.
+    pub fn session_ready(&self) {
+        self.startup.borrow_mut().confirm_start();
+        self.persist_startup();
+        self.sync();
+    }
+
+    /// The safe-mode banner's reset: leave safe mode and start counting again.
+    pub fn reset_safe_mode(&self) {
+        self.startup.borrow_mut().reset();
+        self.persist_startup();
+        self.log
+            .borrow_mut()
+            .push("AETHER_SHELL_SAFE_MODE_RESET: attempts=0".to_string());
+        self.sync();
+    }
+
+    fn persist_startup(&self) {
+        let ledger = self.startup.borrow();
+        if let Err(error) = ledger.save(&StartLedger::path(&self.store)) {
+            self.log
+                .borrow_mut()
+                .push(format!("nohang: {error}"));
+        }
     }
 
     fn set_setting_bool(&self, key: &str, value: bool) {

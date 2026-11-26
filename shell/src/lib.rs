@@ -22,6 +22,9 @@
 //!   feature manager (P7-T07).
 //! * [`host`] — layer-shell host contract: request plan, size negotiation and
 //!   the `--host-check` verification of the compositor's markers (P3-T02).
+//! * [`nohang`] — G-NH2: the "Not responding" dialog (Wait / Force Quit) over
+//!   the compositor's health markers, plus the shell restart ledger and safe
+//!   mode after three failed starts (P3-T08).
 
 slint::include_modules!();
 
@@ -37,6 +40,7 @@ pub mod host;
 pub mod layers;
 pub mod greeter_app;
 pub mod model;
+pub mod nohang;
 pub mod render;
 pub mod search;
 pub mod services;
@@ -48,3 +52,4 @@ pub use greeter_app::GreeterController;
 pub use greetd::GreetdConnection;
 pub use host::{plan as layer_plan, BindingReport};
 pub use model::{Overlay, PowerMode, ShellState};
+pub use nohang::{DialogAction, StartLedger};

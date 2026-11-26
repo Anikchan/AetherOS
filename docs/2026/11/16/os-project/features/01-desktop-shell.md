@@ -200,3 +200,48 @@ cargo test -p aether-shell --test effects_ui     # control-centre switch
 
 Evidence: `docs/2026/11/27/results/p4-t04-t18b-effects-and-browser-security.md`.
 
+## 11. No-hang dialog, shell watchdog and safe mode (G-NH2, 2026-11-27)
+
+The compositor never waits for an app (P3-T08): it pings each client, logs a
+frame gap and watches the shell's commits. The shell's half is the user
+decision and the restart policy, and it needs no new protocol — only the
+compositor's journal:
+
+| Signal (compositor) | Shell action (`shell/src/nohang.rs`) |
+| --- | --- |
+| `AETHER_COMPOSITOR_APP_STATE: client=… state=not_responding after_ms=…` | raise `NotRespondingDialog` for that client (app name from the dock/`.desktop` registry) |
+| `AETHER_COMPOSITOR_APP_STATE: client=… state=responsive recovered=true` | close the dialog; the app recovered on its own |
+| `AETHER_COMPOSITOR_SHELL_WATCHDOG: state=timeout timeouts=…` | count a restart; three stalls arm safe mode on the next start |
+
+Rules:
+
+- One dialog at a time (FIFO by client id); other hung apps queue behind it.
+- **Wait** closes the dialog for 15 s and re-offers it while the app is still
+  hung, so the user is never trapped in a modal loop.
+- **Force Quit** closes it and emits `AETHER_SHELL_NOHANG_TERMINATE: client=…`;
+  the host/compositor ends the client (xdg unresponsive error). Windows of every
+  other app are untouched.
+- The dialog is drawn above every overlay, including the lock screen: a hung app
+  must never hide the user's way out.
+- Safe mode counts **consecutive starts that never reached "session ready"**
+  (`~/.config/aether/shell/session.json`): three in a row, or three shell-watchdog timeouts,
+  set it. It resolves the glass tier to Minimal (G-NH2 "reduced session") and
+  shows an amber banner with **Reset**; `--start-confirm` clears the count but
+  keeps the banner until that reset.
+
+```sh
+aether-shell --nohang-check /tmp/compositor.log  # exit 0 only for a hang ≤ 6 s
+aether-shell --start-begin [journal]             # count a start (arms safe mode)
+aether-shell --start-confirm                     # the session bound its surfaces
+aether-shell --safe-mode-reset                   # leave safe mode (banner Reset)
+cargo test -p aether-shell --lib nohang           # 12 unit tests
+cargo test -p aether-shell --test nohang          # 7 command tests
+cargo test -p aether-shell --test nohang_ui       # dialog + banner
+```
+
+Status: dialog state machine, safe-mode ledger and marker contract verified
+headlessly; on-device steps are in §1c of
+`docs/2026/11/26/results/on-device-acceptance-harness.md`. Evidence:
+`docs/2026/11/27/results/g-nh2-shell-nohang.md`.
+
+

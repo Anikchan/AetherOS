@@ -1319,6 +1319,90 @@ export component SettingsApp inherits Rectangle {
 
 // ---------------------------------------------------------------------- root ---
 
+// G-NH2: the shell-side answer to the compositor's `state=not_responding`
+// marker (P3-T08). One dialog at a time; the app name comes from the client
+// registry in `shell/src/nohang.rs`, the rules from `NoHangDialog`.
+export component NotRespondingDialog inherits Rectangle {
+    in property <string> app: "Application";
+    in property <string> detail: "The window stopped responding.";
+    in property <GlassTier> tier: GlassTier.full;
+
+    callback wait();
+    callback force-quit();
+
+    width: 420px;
+    height: 188px;
+    border-radius: Tokens.radius-panel;
+    background: Tokens.surface;
+    border-width: 1px;
+    border-color: Tokens.divider;
+    drop-shadow-blur: 32px;
+    drop-shadow-color: #00000066;
+
+    VerticalLayout {
+        padding: Tokens.space(5);
+        spacing: Tokens.space(2);
+
+        HorizontalLayout {
+            spacing: Tokens.space(2);
+            Icon { kind: IconKind.activity; size: 18px; tint: Tokens.warning; }
+            Text {
+                text: root.app + " is not responding";
+                color: Tokens.text;
+                font-size: Tokens.font-title;
+                font-weight: 600;
+                vertical-alignment: center;
+                horizontal-stretch: 1;
+            }
+        }
+        Text {
+            text: root.detail;
+            color: Tokens.text-muted;
+            font-size: Tokens.font-body;
+            wrap: word-wrap;
+        }
+        Rectangle { vertical-stretch: 1; background: transparent; }
+        HorizontalLayout {
+            alignment: end;
+            spacing: Tokens.space(2);
+            AetherButton { text: "Wait"; clicked => { root.wait(); } }
+            AetherButton { text: "Force Quit"; primary: true; clicked => { root.force-quit(); } }
+        }
+    }
+}
+
+// Shell restart flow (G-NH2): after three failed starts (or three compositor
+// shell-watchdog timeouts) the shell runs the reduced session until the user
+// resets it. `aether-shell --start-begin` owns the counting.
+export component SafeModeBanner inherits Rectangle {
+    in property <string> message: "Safe mode";
+
+    callback reset();
+
+    width: 560px;
+    height: 48px;
+    border-radius: Tokens.radius-menu;
+    background: Tokens.surface-high;
+    border-width: 1px;
+    border-color: Tokens.warning;
+
+    HorizontalLayout {
+        padding-left: Tokens.space(4);
+        padding-right: Tokens.space(2);
+        spacing: Tokens.space(2);
+        Icon { kind: IconKind.shield; size: 16px; tint: Tokens.warning; }
+        Text {
+            text: root.message;
+            color: Tokens.text;
+            font-size: Tokens.font-body;
+            vertical-alignment: center;
+            horizontal-stretch: 1;
+            wrap: word-wrap;
+        }
+        AetherButton { text: "Reset"; clicked => { root.reset(); } }
+    }
+}
+
 export component ShellRoot inherits Window {
     title: "AetherOS";
     background: Tokens.background;
@@ -1363,6 +1447,12 @@ export component ShellRoot inherits Window {
     in-out property <GlassTier> tier: GlassTier.full;
     in-out property <bool> dock-auto-hide: false;
     in-out property <string> desk-note: "Welcome to AetherOS";
+    // G-NH2 (P3-T08): "Not responding" dialog and safe mode.
+    in-out property <bool> nohang-open: false;
+    in-out property <string> nohang-app: "";
+    in-out property <string> nohang-detail: "";
+    in-out property <bool> safe-mode: false;
+    in-out property <string> safe-mode-note: "";
 
     callback launch-app(string);
     callback menu-chosen(int, int);
@@ -1387,6 +1477,9 @@ export component ShellRoot inherits Window {
     callback feature-enabled(string, bool);
     callback workspace-requested(int);
     callback window-activated(string);
+    callback nohang-wait();
+    callback nohang-force-quit();
+    callback safe-mode-reset();
 
     Wallpaper { width: 100%; height: 100%; }
 
@@ -1592,6 +1685,30 @@ export component ShellRoot inherits Window {
         unlocking: root.unlocking;
         tier: root.tier;
         submitted(password) => { root.unlock-submitted(password); }
+    }
+
+    // G-NH2: above every overlay, including the lock screen — a hung app must
+    // never hide the user's way out.
+    if root.safe-mode : SafeModeBanner {
+        x: (parent.width - self.width) / 2;
+        y: Tokens.menubar-height + 8px;
+        message: root.safe-mode-note;
+        reset => { root.safe-mode-reset(); }
+    }
+
+    if root.nohang-open : Rectangle {
+        width: 100%;
+        height: 100%;
+        background: #05070A88;
+        NotRespondingDialog {
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            app: root.nohang-app;
+            detail: root.nohang-detail;
+            tier: root.tier;
+            wait => { root.nohang-wait(); }
+            force-quit => { root.nohang-force-quit(); }
+        }
     }
 }
 
