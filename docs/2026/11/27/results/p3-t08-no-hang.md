@@ -38,6 +38,17 @@
 `compositor/src/scheduling.rs`: `Frame.damage_wait_ms` + `FrameScheduler`
 first-damage timestamp (unit-tested).
 
+### Client identity in the markers (2026-11-27)
+
+The watchdog numbers clients by connect order, and the compositor also starts
+XWayland on Linux, which takes a slot. `AETHER_COMPOSITOR_XDG_TOPLEVEL` therefore
+carries the owning client: `output=<name> client=<id>` (or `client=unwatched` when
+no watchdog registration exists). The integration test reads that id instead of
+assuming client 0, which is how the run on the Ubuntu CI runner failed: it waited
+for `client=0` to time out while client 0 was the XWayland connection and the
+test's own client had already recovered. Verified on Linux (Dell, XWayland
+present, test client `client=0`) and on macOS.
+
 ## 2. Verification
 
 ```

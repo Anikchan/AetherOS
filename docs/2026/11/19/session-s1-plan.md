@@ -120,3 +120,8 @@ No further startable tasks remain in S1's territory. Parallel sessions S2/S3/S4 
 ## Coordination
 
 See shared protocol in `session-s2-plan.md` / `session-s3-plan.md` / `session-s4-plan.md` (identical protocol section) and the index `4-session-parallel-plan.md`. In short: read `plan.md` before/after work; never start a task another session marked In progress; S1 alone updates the tracker and has merge authority; conflicts favor S1.
+
+## Progress log
+
+- **2026-11-27 (S1, Nov27 round)** — image `45876776939` green (boot tests BIOS + UEFI), artifact `15150017702` flashed to the Dell USB and verified byte-identical (`sha256 60a65adc…`), `/root/test.sh` present in the squashfs. UI status recorded in `docs/2026/11/27/results/ui-readiness-status.md`: the shell and apps render headless (10 surfaces + 9 tabs) but no Rust binary is packaged into the image yet — the Buildroot UI package is the next task. CI fixes: `3e43953` (sandbox Landlock test asserted rule order; now asserts rule shape) and `00eb1f5` (compositor `XDG_TOPLEVEL` names its client; the no-hang test follows its own client instead of assuming client 0, which broke on the Linux runner where XWayland shares the client numbering).
+- **Hardware/dev loop**: the Dell is reachable again (`ubuntu@192.168.68.112`, passwordless sudo); Rust 1.100 installed there so Linux-only test failures reproduce in minutes instead of a two-hour CI cycle. USB flashed with the image above; awaiting a boot pass for `sh /root/test.sh`.
