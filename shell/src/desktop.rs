@@ -217,34 +217,62 @@ pub fn icon_for(icon_name: &str, app_name: &str, categories: &[String]) -> IconK
     }
 }
 
-/// Built-in default apps (P4-T10 .. T18). Used when no `.desktop` files exist
-/// and as the pinned dock layout on a fresh install.
-pub fn default_apps() -> Vec<App> {
-    let entries = [
-        ("aether-files", "Files", IconKind::Folder, "aether-files", true, true),
-        ("aether-terminal", "Terminal", IconKind::Terminal, "aether-terminal", true, true),
-        ("aether-browser", "Browser", IconKind::Globe, "aether-browser", true, true),
-        ("aether-text", "AetherPad", IconKind::Document, "aether-text", true, false),
-        ("aether-calculator", "Calculator", IconKind::Calculator, "aether-calculator", false, false),
-        ("aether-images", "Images", IconKind::Image, "aether-images", false, false),
-        ("aether-documents", "Documents", IconKind::Document, "aether-documents", false, false),
-        ("aether-player", "Player", IconKind::Play, "aether-player", false, false),
-        ("aether-calendar", "Calendar", IconKind::Calendar, "aether-calendar", false, false),
-        ("aether-archive", "Archive", IconKind::Archive, "aether-archive", false, false),
-        ("aether-settings", "Settings", IconKind::Gear, "aether-settings", false, false),
-    ];
-    entries
-        .into_iter()
-        .map(|(id, name, icon, exec, pinned, running)| App {
-            id: id.to_string(),
-            name: name.to_string(),
-            icon,
-            exec: exec.to_string(),
-            running,
-            pinned,
-            badge: 0,
+/// Launcher ids the shell itself owns: they are shell surfaces, not processes,
+/// so they have no registry entry and nothing to spawn.
+pub const SHELL_OWNED_IDS: &[&str] = &["aether-settings"];
+
+/// The pinned dock layout on a fresh install (ids, in dock order).
+pub const PINNED_IDS: &[&str] = &[
+    "aether-files",
+    "aether-terminal",
+    "aether-browser",
+    "aether-text",
+];
+
+/// Apps the dock shows as already running on a fresh session (the demo set the
+/// dock has always presented, pinned in [`PINNED_IDS`] order).
+pub const RUNNING_IDS: &[&str] = &["aether-files", "aether-terminal", "aether-browser"];
+
+/// The launcher model of every app in `aether-launcher-registry`, in registry
+/// order. Names, icons and `Exec` come from the registry, so the shell cannot
+/// drift from the apps; only the pinning and running demo set is shell policy.
+pub fn registry_apps() -> Vec<App> {
+    aether_launcher_registry::entries()
+        .iter()
+        .map(|entry| {
+            let categories: Vec<String> = entry
+                .categories
+                .iter()
+                .map(|category| category.to_string())
+                .collect();
+            App {
+                id: entry.id.to_string(),
+                name: entry.name.to_string(),
+                icon: icon_for(entry.icon, entry.name, &categories),
+                exec: entry.exec.to_string(),
+                running: RUNNING_IDS.contains(&entry.id),
+                pinned: PINNED_IDS.contains(&entry.id),
+                badge: 0,
+            }
         })
         .collect()
+}
+
+/// Built-in default apps: every registry app, then the shell-owned surfaces
+/// (Settings). Used when no `.desktop` files exist and as the pinned dock
+/// layout on a fresh install.
+pub fn default_apps() -> Vec<App> {
+    let mut apps = registry_apps();
+    apps.push(App {
+        id: "aether-settings".to_string(),
+        name: "Settings".to_string(),
+        icon: IconKind::Gear,
+        exec: "aether-settings".to_string(),
+        running: false,
+        pinned: false,
+        badge: 0,
+    });
+    apps
 }
 
 /// Merge discovered entries with the built-in list: discovered ids win, built-in
@@ -333,6 +361,38 @@ Categories=Utility;TextEditor;
             "dock ships with Files, Terminal, Browser and AetherPad pinned"
         );
         assert!(apps.iter().any(|app| app.running));
+    }
+
+    #[test]
+    fn the_shell_app_list_equals_the_registry_plus_shell_owned_surfaces() {
+        let apps = default_apps();
+        let registry = aether_launcher_registry::entries();
+        assert_eq!(
+            apps.len(),
+            registry.len() + SHELL_OWNED_IDS.len(),
+            "the model is the registry plus the shell's own surfaces"
+        );
+        for (app, entry) in apps.iter().zip(registry.iter()) {
+            assert_eq!(app.id, entry.id, "registry order is launcher order");
+            assert_eq!(app.name, entry.name, "{} name", entry.id);
+            assert_eq!(app.exec, entry.exec, "{} exec", entry.id);
+            assert_eq!(
+                app.icon,
+                icon_for(entry.icon, entry.name, &[]),
+                "{} icon comes from the registry icon name",
+                entry.id
+            );
+        }
+        for id in SHELL_OWNED_IDS {
+            assert!(
+                apps.iter().any(|app| app.id == *id),
+                "{id} is a shell surface and must still be listed"
+            );
+            assert!(
+                aether_launcher_registry::resolve(id).is_none(),
+                "{id} is shell-owned, so it has no registry entry"
+            );
+        }
     }
 
     #[test]

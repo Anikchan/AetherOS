@@ -23,6 +23,7 @@ use crate::kbdnav::{self, Focus, Surface, Tray};
 use crate::model::{self, Notification, Overlay, PowerMode, SearchKind, ShellState, Window};
 use crate::nohang::{self, DialogAction, DialogEvent, HangEvent, NoHangDialog, StartLedger, StartOutcome};
 use crate::services::{Battery, Services};
+use crate::spawn;
 use aether_ui::theme::Tier;
 use crate::{
     AppEntry, MenuEntry, MenuGroup, NotificationEntry, SearchResultEntry,
@@ -154,6 +155,9 @@ pub struct ShellController {
     store: SettingsStore,
     /// Spawn app processes on launch. Off in tests and in the renderer.
     spawn_apps: RefCell<bool>,
+    /// How a launcher id becomes a process: the registry argv through this
+    /// seam. Tests install a recording spawner.
+    spawner: RefCell<Box<dyn spawn::Spawner>>,
     /// Lock-screen backend: PAM on Linux builds, the local prototype
     /// elsewhere (P4-T06). Tests substitute a scripted backend.
     authenticator: RefCell<Box<dyn Authenticator>>,
@@ -199,6 +203,7 @@ impl ShellController {
             services: RefCell::new(services),
             store,
             spawn_apps: RefCell::new(false),
+            spawner: RefCell::new(Box::new(spawn::ProcessSpawner)),
             authenticator: RefCell::new(auth::default_authenticator()),
             features: RefCell::new(FeaturesPage::load(features_path)),
             effects: RefCell::new(effects),
@@ -253,6 +258,26 @@ impl ShellController {
 
     pub fn set_spawn_apps(&self, enabled: bool) {
         *self.spawn_apps.borrow_mut() = enabled;
+    }
+
+    /// Replace the process seam and enable spawning: the launcher hands every
+    /// start to `spawner` (tests record it, the host may supervise it).
+    pub fn set_spawner(&self, spawner: Box<dyn spawn::Spawner>) {
+        *self.spawner.borrow_mut() = spawner;
+        *self.spawn_apps.borrow_mut() = true;
+    }
+
+    /// The argv a launcher id would start, without starting it.
+    pub fn launch_argv(&self, id: &str) -> Option<Vec<String>> {
+        let exec = {
+            let state = self.state.borrow();
+            state
+                .apps
+                .iter()
+                .find(|app| app.id == id)
+                .map(|app| app.exec.clone())
+        }?;
+        Some(spawn::launch_argv(id, &exec).0)
     }
 
     /// Replace the lock-screen backend (tests, and hosts that bring their own
@@ -717,6 +742,11 @@ impl ShellController {
         if !*self.spawn_apps.borrow() {
             return;
         }
+        // Shell-owned surfaces (Settings) are overlays the shell draws itself;
+        // there is no process to start for them.
+        if desktop::SHELL_OWNED_IDS.contains(&id) {
+            return;
+        }
         let exec = {
             let state = self.state.borrow();
             state
@@ -725,20 +755,23 @@ impl ShellController {
                 .find(|app| app.id == id)
                 .map(|app| app.exec.clone())
         };
-        if let Some(exec) = exec {
-            // `.desktop` Exec lines may contain quoted arguments; let the shell
-            // parse them instead of splitting on whitespace.
-            match std::process::Command::new("sh")
-                .arg("-c")
-                .arg(format!("exec {exec}"))
-                .spawn()
-            {
-                Ok(_) => self.log.borrow_mut().push(format!("spawned {id}")),
-                Err(error) => self
-                    .log
-                    .borrow_mut()
-                    .push(format!("spawn {id} failed: {error}")),
-            }
+        let Some(exec) = exec else {
+            return;
+        };
+        // P4 launch path: registry ids start with `<exec> --launch <id>`, which
+        // every app's `handle_launch_arg` handshake expects; anything the
+        // registry does not own keeps its `.desktop` Exec line.
+        let spawner = self.spawner.borrow();
+        let (argv, source, outcome) = spawn::launch(id, &exec, spawner.as_ref());
+        drop(spawner);
+        let mut log = self.log.borrow_mut();
+        match outcome {
+            Ok(()) => log.push(format!(
+                "spawned {id} source={} argv={}",
+                source.as_str(),
+                argv.join(" ")
+            )),
+            Err(error) => log.push(format!("spawn {id} failed: {error}")),
         }
     }
 

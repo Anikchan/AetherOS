@@ -54,6 +54,7 @@ pub mod render;
 pub mod runtime;
 pub mod search;
 pub mod services;
+pub mod spawn;
 pub mod wayland;
 
 pub use app::ShellController;
@@ -67,3 +68,4 @@ pub use layers::Keyboard;
 pub use model::{Overlay, PowerMode, ShellState};
 pub use nohang::{DialogAction, StartLedger};
 pub use runtime::{FileJournal, HostConfig, HostRun, Journal, MemoryJournal, ShellHost};
+pub use spawn::{launch_argv, ProcessSpawner, Spawner};

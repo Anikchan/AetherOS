@@ -45,6 +45,7 @@ fn usage() {
          \x20 aether-shell --host-plan             print the layer-surface request plan\n\
          \x20 aether-shell --connect [--hold-ms <ms>]\n\
          \x20                                    create the layer surfaces on $WAYLAND_DISPLAY\n\
+         \x20 aether-shell --launch <id>          start a launcher app through the registry argv\n\
          \x20 aether-shell --effects-tier          print the effective glass tier\n\
          \x20 aether-shell --effects-env           print the compositor tier export\n\
          \x20 aether-shell --effects-check <log|-> verify the compositor's effect/frame markers\n\
@@ -215,6 +216,39 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             });
             if !report.is_ok() {
                 std::process::exit(1);
+            }
+        }
+        Some("--launch") => {
+            // P4 launch path: a file manager, the session launcher or the
+            // acceptance harness starts an app with `aether-shell --launch
+            // <id>`. The registry owns the argv, so the shell never guesses.
+            use aether_shell::Spawner;
+            let Some(id) = args.get(1) else {
+                eprintln!("--launch needs an app id (for example aether-files)");
+                std::process::exit(2);
+            };
+            if aether_shell::desktop::SHELL_OWNED_IDS.contains(&id.as_str()) {
+                // Settings and friends are shell surfaces, not processes.
+                println!("AETHER_SHELL_LAUNCH: id={id} handled=shell");
+                return Ok(());
+            }
+            let Some(argv) = aether_launcher_registry::launch_argv(id) else {
+                eprintln!(
+                    "aether-shell: unknown app id '{id}'; it is not in the launcher registry \
+                     (see apps/launcher-registry)"
+                );
+                std::process::exit(2);
+            };
+            match aether_shell::ProcessSpawner.spawn(&argv) {
+                Ok(()) => println!(
+                    "AETHER_SHELL_LAUNCH: id={id} source=registry exec={} argv={}",
+                    argv[0],
+                    argv[1..].join(" ")
+                ),
+                Err(error) => {
+                    eprintln!("aether-shell: {error}");
+                    std::process::exit(1);
+                }
             }
         }
         Some("--host-check") => {
