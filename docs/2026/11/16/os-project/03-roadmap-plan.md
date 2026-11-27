@@ -331,6 +331,8 @@ Update this table whenever a task changes state. Allowed statuses: Not started, 
 
 ### Progress Log
 
+| 2026-11-28 | S1 (overnight) | **Defconfig guard found 8 silent drops** (`46056906489`): Mesa iris/radeonsi/ANV/RADV (all need `BR2_PACKAGE_MESA3D_LLVM`), `BR2_PACKAGE_XWAYLAND` and `BR2_PACKAGE_POWER_PROFILES_DAEMON` (not Buildroot 2025.11 symbols), `BR2_PACKAGE_EUDEV`/`BR2_PACKAGE_UDEV` (systemd provides udev). Consequence: **hardware GPU acceleration and XWayland were never in the image**; every earlier "graphics" result was KMS/modeset + software rendering. All eight are now explicit (`c6e26ef`); the LLVM decision and its cost are recorded in `docs/2026/11/28/results/defconfig-drops.md`. |
+
 | Date | Session | Change |
 | --- | --- | --- |
 | 2026-11-27 | S1 (overnight) | **Overnight parallel run started (22:40 IST):** 7 developer/tester sessions launched under `docs/2026/11/27/overnight-parallel-plan.md` — UI packaging into the image (critical path), kernel regulatory.db + touchpad i2c-hid, compositor layer-damage translation, shell↔compositor real handshake, apps/launcher wiring, CI parity guards, sandbox seccomp hardening. `test.sh` now collects the Wi-Fi credentials before the log file exists (nothing typed can be captured) and the USB ESP copy was refreshed. WirePlumber root cause fixed (`BR2_PACKAGE_LUA_5_4=y`); build `46041689625` verifies it. Hardware: P2 run 3 logged (10/10 sleep, graphics/audio/battery/webcam OK, touchpad and regulatory domain open). |
