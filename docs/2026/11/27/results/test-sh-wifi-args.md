@@ -63,6 +63,7 @@ found`, `wpa_supplicant is not installed`, `no association after 30 s`,
 | macOS (stub `iw`/`ip`/`udhcpc`, fake sysfs) | positional, `--` with a dash-leading passphrase, `--no-wifi`, SSID-only, bad option, `--help` | correct marker in every case; `grep -c 'S3cret' log` → **0** |
 | Dell Ubuntu, `dash` | `--wifi-ssid … --wifi-password …` | `WIFI_CONNECT_OK`, `wifi connect: ok`, 0 leaks |
 | Dell Ubuntu, **the image's own busybox 1.37** (`/bin/busybox` extracted from the squashfs) | same | `WIFI_ASSOC`, `WIFI_IP 192.168.68.151/24`, `WIFI_GW`, `WIFI_PING: gateway ok`, `WIFI_CONNECT_OK`, `WIFI_AFTER_SUSPEND: still connected` |
+| Dell Ubuntu, pty (`script -qec`) | no arguments, typed SSID then passphrase | prompts for both, passphrase not echoed, `WIFI_CONNECT_OK`, 0 leaks |
 | Syntax | `sh -n` | OK |
 
 Note: Ubuntu's own `/usr/bin/busybox` is built with a standalone shell, so it
