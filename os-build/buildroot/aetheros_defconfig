@@ -78,7 +78,10 @@ BR2_PACKAGE_SYSTEMD_NETWORKD=y
 
 # --- Battery and power data sources (D5, ADR-014) ---
 BR2_PACKAGE_UPOWER=y
-BR2_PACKAGE_POWER_PROFILES_DAEMON=y
+# DROPPED by kconfig: BR2_PACKAGE_POWER_PROFILES_DAEMON is not a Buildroot
+# 2025.11 package (the symbol does not exist, so it never had any effect).
+# See docs/2026/11/28/results/defconfig-drops.md. powerd owns the power policy on AetherOS.
+# BR2_PACKAGE_POWER_PROFILES_DAEMON is not set
 
 # --- P2 additions (hardware bring-up) — merged 2026-11-23 (P1 green) ---
 # Graphics (P2-T02): Mesa + Vulkan (ANV, RADV) for Intel/AMD
@@ -89,10 +92,13 @@ BR2_PACKAGE_MESA3D=y
 # pushes the compressed image well past the 150 MB P1 gate.
 # Hardware EGL on the Dell's Iris Xe needs BR2_PACKAGE_MESA3D_LLVM=y plus
 # BR2_PACKAGE_MESA3D_GALLIUM_DRIVER_IRIS=y (see the 2026-11-28 D6 note).
-BR2_PACKAGE_MESA3D_GALLIUM_DRIVER_IRIS=y
-BR2_PACKAGE_MESA3D_GALLIUM_DRIVER_RADEONSI=y
-BR2_PACKAGE_MESA3D_VULKAN_DRIVER_INTEL=y
-BR2_PACKAGE_MESA3D_VULKAN_DRIVER_AMD=y
+# Disabled until BR2_PACKAGE_MESA3D_LLVM=y is enabled (build time + image
+# size decision, see docs/2026/11/28/results/defconfig-drops.md). Without LLVM kconfig drops all four and
+# the image renders with softpipe, which is what the first UI boot uses.
+# BR2_PACKAGE_MESA3D_GALLIUM_DRIVER_IRIS is not set
+# BR2_PACKAGE_MESA3D_GALLIUM_DRIVER_RADEONSI is not set
+# BR2_PACKAGE_MESA3D_VULKAN_DRIVER_INTEL is not set
+# BR2_PACKAGE_MESA3D_VULKAN_DRIVER_AMD is not set
 # UI image (2026-11-28): the compositor's DRM backend needs EGL + GLES + GBM.
 # softpipe is the only gallium driver Buildroot 2025.11 offers without LLVM, so
 # it is what actually ships tonight: EGL_PLATFORM_GBM -> kms_swrast over the
@@ -106,7 +112,11 @@ BR2_PACKAGE_LIBDRM=y
 BR2_PACKAGE_WAYLAND=y
 BR2_PACKAGE_WAYLAND_PROTOCOLS=y
 # XWayland for X11 apps (P3-T03)
-BR2_PACKAGE_XWAYLAND=y
+# DROPPED by kconfig: BR2_PACKAGE_XWAYLAND is not a Buildroot 2025.11
+# package name; XWayland is a sub-option of the Xorg server package and
+# is not needed by this image (apps use the native Wayland backend).
+# See docs/2026/11/28/results/defconfig-drops.md.
+# BR2_PACKAGE_XWAYLAND is not set
 
 # Audio (P2-T04): PipeWire + WirePlumber + ALSA tools
 BR2_PACKAGE_PIPEWIRE=y
@@ -159,8 +169,10 @@ BR2_PACKAGE_BLUEZ5_UTILS_PLUGINS_AUDIO=y
 
 # Input (P2-T05)
 BR2_PACKAGE_LIBINPUT=y
-BR2_PACKAGE_EUDEV=y
-BR2_PACKAGE_UDEV=y
+# systemd provides udev on this image (BR2_PACKAGE_SYSTEMD selects the
+# udev provider). BR2_PACKAGE_EUDEV/BR2_PACKAGE_UDEV are not symbols that
+# survive in a systemd build, so they are removed rather than left to be
+# dropped silently.
 
 # --- Graphical session runtime (UI image, 2026-11-28) ---
 # Slint renders text through fontdb/fontconfig: without these the shell and
