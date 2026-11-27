@@ -511,10 +511,16 @@ mod tests {
         // that readable rules come first (the CI kernel orders the writable
         // data folder before /usr). Assert the shape of the rule list and that
         // both rule kinds are present, never a specific order.
-        assert!(matches!(args[shim + 1].as_str(), "--ro" | "--rw"));
-        assert!(args[shim + 2..].iter().any(|arg| arg == "--ro"));
-        assert!(args[shim + 2..].iter().any(|arg| arg == "--rw"));
-        assert!(args[shim + 1..].iter().any(|arg| arg == "--"));
+        assert!(matches!(args[shim + 1].as_str(), "--ro" | "--rw"), "shim has no rule: {args:?}");
+        assert!(
+            args[shim + 1..].iter().any(|arg| arg == "--ro"),
+            "no readable rule in {args:?}"
+        );
+        assert!(
+            args[shim + 1..].iter().any(|arg| arg == "--rw"),
+            "no writable rule in {args:?}"
+        );
+        assert!(args[shim + 1..].iter().any(|arg| arg == "--"), "no entry separator in {args:?}");
         assert_eq!(args.last().unwrap(), &entry.to_string_lossy());
         assert!(args[..shim].contains(&"--unshare-user".to_string()));
         let _ = fs::remove_dir_all(dir);
