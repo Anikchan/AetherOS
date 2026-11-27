@@ -175,6 +175,13 @@ The test builds the compositor itself through `$CARGO` if the binary is not next
 to `target/<profile>/aether-files`, so a bare `cargo test --workspace` on a Linux
 runner is enough as well; the explicit build step only makes the first run fast.
 
+The runner's existing "Install system dependencies" step already carries what
+this path needs: `libfontconfig1-dev`/`libfreetype-dev` (Slint system fonts,
+runtime `fontconfig`), `libxkbcommon-dev`, and the `libwayland-client` link that
+the shell already requires. If the app link ever reports
+`ld: cannot find -lwayland-client`, add `libwayland-dev` there; at runtime the
+app only needs `libwayland-client.so.0` and fontconfig, both on `ubuntu-latest`.
+
 ## Verification run in this session (macOS)
 
 | Command | Result |
