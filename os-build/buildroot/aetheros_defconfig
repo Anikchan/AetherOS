@@ -208,7 +208,12 @@ BR2_PACKAGE_HWDATA_USB_IDS=y
 # toolchain), threads, headers >= 3.12 (6.18), gcc >= 4.9; efivar and popt are
 # selected by the package.
 BR2_PACKAGE_EFIBOOTMGR=y
-BR2_PACKAGE_MESA3D_DEMOS=y
+# mesa3d-demos needs `glslangValidator` at configure time and Buildroot
+# 2025.11 has no glslang package, so the build fails in
+# output/build/mesa3d-demos-9.0.0/meson.build:158. The demos are not
+# needed by the image (EGL is verified from the compositor's own markers);
+# see docs/2026/11/28/results/defconfig-drops.md.
+# BR2_PACKAGE_MESA3D_DEMOS is not set
 BR2_PACKAGE_VULKAN_TOOLS=y
 
 # SSH server for autonomous hardware validation (P2)

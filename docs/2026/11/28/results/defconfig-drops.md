@@ -46,3 +46,20 @@ Costs: roughly +30–45 min build time and tens of MB in the compressed image
 
 The guard now makes this choice explicit: re-enabling a driver without LLVM
 fails the build with the symbol's name instead of shipping a slower image.
+
+## Second finding — a package that cannot build at all (2026-11-28 03:46)
+
+Build `46060990220` (commit `c6e26ef`, the first run that got past the guard)
+failed in `mesa3d-demos-9.0.0`:
+
+```
+output/build/mesa3d-demos-9.0.0/meson.build:158:17: ERROR:
+Program 'glslangValidator' not found or not executable
+```
+
+`BR2_PACKAGE_MESA3D_DEMOS=y` (added for `eglinfo`) has an undeclared host
+requirement: Buildroot 2025.11 has **no `glslang` package**, so the demos cannot
+build on a clean runner. Disabled with a comment; EGL is verified from the
+compositor's own `BACKEND`/`EGL` markers and from `eglinfo` only if it ever
+ships. This is the same lesson as the eight drops above: an enabled symbol is
+not a built feature.
