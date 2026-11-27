@@ -300,7 +300,7 @@ pub fn probe() -> SeccompStatus {
                 available: false,
                 arch: Some(arch.label().into()),
                 denials: 0,
-                reason: "the kernel does not expose seccomp filter support".into(),
+                reason: Some("the kernel does not expose seccomp filter support".into()),
             };
         }
         SeccompStatus {
