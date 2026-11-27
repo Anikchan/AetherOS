@@ -190,8 +190,8 @@ app only needs `libwayland-client.so.0` and fontconfig, both on `ubuntu-latest`.
 | `LIBRARY_PATH=/opt/homebrew/lib cargo build --workspace` | ok, all bins link |
 | `cargo build --workspace` (no `LIBRARY_PATH`) | fails at `aether-compositor` link: `ld: library 'xkbcommon' not found`. Pre-existing macOS/Homebrew search-path issue: `xkbcommon` is only used by `smithay ← aether-compositor` (`cargo tree -i xkbcommon`), untouched by this change, and the compositor does not build on macOS without the Homebrew lib dir either |
 | `cargo test -p aether-archive -p aether-browser -p aether-calculator -p aether-calendar -p aether-documents -p aether-files -p aether-images -p aether-player -p aether-terminal -p aether-text -p aether-taskmanager` | all pass (incl. every `tests/ui.rs` that installs the testing backend with winit linked in) |
-| `cargo test -p aether-shell --test host --test interaction --test a11y_ui --test host_ledger --test keyboard_wire --test effects_ui --test nohang_ui --test launcher --test greeter` | all pass |
-| `cargo test -p aether-shell` | **not runnable in this session**: `shell/src/host.rs` (uncommitted work of the shell session) fails to compile its unit tests (`cannot find function specs`). Not caused by this change; re-run once that session lands. The shell's feature scoping is independent of it and is shown above |
+| `cargo test -p aether-shell` | **179 passed, 0 failed** (re-run after the shell session committed its layer-paint work; the earlier `cannot find function specs` compile error was their uncommitted tree) |
+| `cargo test -p aether-shell -p aether-files` (one build graph, so `slint` unifies to `backend-winit, backend-winit-wayland, …, std`) | **196 passed, 0 failed** — the shell's UI/render tests still select `i-slint-backend-testing` and pass with winit compiled into the same `slint` rlib |
 | `./target/debug/aether-files --render /tmp/...` (also `aether-text`, `aether-calculator`) | PNGs written, same sizes/markers as before |
 | Linux cross-check: `RUST_FONTCONFIG_DLOPEN`/stub `fontconfig.pc` + `rustup run stable cargo check --target x86_64-unknown-linux-gnu -p aether-files` | `Finished dev profile` — winit's Wayland path, sctk, softbuffer and slint's backend selector compile for Linux |
 
@@ -250,6 +250,5 @@ session had no Docker daemon and no Linux machine, so it could not execute it.
   (`ubuntu-latest`, before `cargo test --workspace`) and mark the test required.
 - Activity Manager (`aether-taskmanager`) still launches as a CLI; add a
   `--window`/no-flag window path that reuses `ActivityManagerWindow`.
-- Re-run `cargo test -p aether-shell` (179 tests) once the shell session's
-  `shell/src/host.rs` edit compiles, to reconfirm the testing-backend selection
-  in a `-p aether-shell` build.
+- Execute the Linux runtime test on CI or the device: it is the only part of
+  this change this session could not execute (no Docker daemon, no Linux host).
