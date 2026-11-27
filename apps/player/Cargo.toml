@@ -15,6 +15,7 @@ slint-build.workspace = true
 [dependencies]
 slint.workspace = true
 aether-ui.workspace = true
+aether-launcher-registry = { path = "../launcher-registry" }
 aether-media = { path = "../media" }
 
 [dev-dependencies]

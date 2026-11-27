@@ -21,11 +21,13 @@ export struct HistoryRow {
 component CalcKey inherits Rectangle {
     in property <string> key-label: "";
     in property <string> key-value: "";
+    in property <string> name-text: "";
     in property <bool> primary: false;
     in property <bool> faint: false;
+    in property <bool> compact: false;
     callback pressed(string);
 
-    height: 44px;
+    height: root.compact ? 32px : 44px;
     border-radius: 10px;
     background: key-ta.pressed ? Tokens.pressed
         : (key-ta.has-hover ? Tokens.hover
@@ -33,7 +35,8 @@ component CalcKey inherits Rectangle {
     border-width: root.primary ? 0px : 1px;
     border-color: Tokens.divider;
     accessible-role: button;
-    accessible-label: root.key-label != "" ? root.key-label : root.key-value;
+    accessible-label: root.name-text != "" ? root.name-text
+        : (root.key-label != "" ? root.key-label : root.key-value);
 
     Text {
         text: root.key-label != "" ? root.key-label : root.key-value;
@@ -121,18 +124,21 @@ component HistoryItem inherits Rectangle {
 export component CalculatorApp inherits Window {
     title: "Calculator";
     width: 420px;
-    height: 640px;
+    height: 720px;
     background: Tokens.background;
 
     in property <string> expression: "12 + 30 * 0.5";
     in property <string> result: "27";
     in property <bool> has-error: false;
     in property <string> memory-label: "M 0";
+    in property <string> angle-mode: "DEG";
+    in property <bool> scientific: true;
     in property <[HistoryRow]> history: [];
 
     callback key(string);
     callback recall(int);
     callback clear-history();
+    callback toggle-scientific();
 
     VerticalLayout {
         padding-left: 16px;
@@ -159,11 +165,27 @@ export component CalculatorApp inherits Window {
                 font-weight: 700;
                 vertical-alignment: center;
             }
-            Text {
-                text: "standard";
-                color: Tokens.text-faint;
-                font-size: Tokens.font-small;
-                vertical-alignment: center;
+            mode-key := Rectangle {
+                height: 22px;
+                width: mode-text.width + 16px;
+                border-radius: 6px;
+                background: mode-ta.has-hover ? Tokens.hover : Tokens.surface-low;
+                border-width: 1px;
+                border-color: Tokens.divider;
+                accessible-role: button;
+                accessible-label: "Scientific mode";
+
+                mode-text := Text {
+                    x: 8px;
+                    vertical-alignment: center;
+                    text: root.scientific ? "scientific" : "standard";
+                    color: Tokens.text-muted;
+                    font-size: Tokens.font-small;
+                }
+
+                mode-ta := TouchArea {
+                    clicked => { root.toggle-scientific(); }
+                }
             }
             Rectangle {
                 height: 1px;
@@ -221,6 +243,34 @@ export component CalculatorApp inherits Window {
             MemoryKey { label-text: "MR"; value-text: "MR"; pressed(value) => { root.key(value); } }
             MemoryKey { label-text: "M+"; value-text: "M+"; pressed(value) => { root.key(value); } }
             MemoryKey { label-text: "M−"; value-text: "M-"; pressed(value) => { root.key(value); } }
+        }
+
+        // Scientific row (DA-02 v1) -----------------------------------------
+        GridLayout {
+            visible: root.scientific;
+            height: 70px;
+            spacing: 6px;
+
+            Row {
+                CalcKey { key-label: "sin("; key-value: "sin("; compact: true; pressed(value) => { root.key(value); } }
+                CalcKey { key-label: "cos("; key-value: "cos("; compact: true; pressed(value) => { root.key(value); } }
+                CalcKey { key-label: "tan("; key-value: "tan("; compact: true; pressed(value) => { root.key(value); } }
+                CalcKey { key-label: "x!"; key-value: "!"; compact: true; pressed(value) => { root.key(value); } }
+            }
+
+            Row {
+                CalcKey { key-label: "ln("; key-value: "ln("; compact: true; pressed(value) => { root.key(value); } }
+                CalcKey { key-label: "log("; key-value: "log("; compact: true; pressed(value) => { root.key(value); } }
+                CalcKey { key-label: "eˣ"; key-value: "exp("; compact: true; pressed(value) => { root.key(value); } }
+                CalcKey {
+                    key-label: root.angle-mode;
+                    key-value: "DEG";
+                    name-text: "Toggle angle unit";
+                    faint: true;
+                    compact: true;
+                    pressed(value) => { root.key(value); }
+                }
+            }
         }
 
         // Keypad ------------------------------------------------------------

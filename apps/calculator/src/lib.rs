@@ -15,7 +15,7 @@ use slint::{ModelRc, SharedString, VecModel};
 pub mod eval;
 pub mod history;
 
-pub use eval::{evaluate, evaluate_display, format_number, EvalError};
+pub use eval::{evaluate, evaluate_display, evaluate_mode, format_number, AngleMode, EvalError};
 pub use history::{Entry, History, HISTORY_LIMIT};
 
 slint::include_modules!();
@@ -28,6 +28,10 @@ struct State {
     has_error: bool,
     /// Next digit starts a fresh expression (set after `=` or MR).
     fresh: bool,
+    /// Angle unit for sin/cos/tan; the window starts in degrees.
+    angle: AngleMode,
+    /// The scientific keypad is shown.
+    scientific: bool,
     history: History,
 }
 
@@ -47,6 +51,8 @@ impl CalculatorController {
                 result: "0".to_string(),
                 has_error: false,
                 fresh: false,
+                angle: AngleMode::Degrees,
+                scientific: true,
                 history: History::new(),
             }),
         });
@@ -108,6 +114,25 @@ impl CalculatorController {
         self.state.borrow().history.memory_label()
     }
 
+    /// Current angle unit for the trigonometric keys.
+    pub fn angle_mode(&self) -> AngleMode {
+        self.state.borrow().angle
+    }
+
+    /// True while the scientific keypad is visible.
+    pub fn scientific(&self) -> bool {
+        self.state.borrow().scientific
+    }
+
+    /// Show or hide the scientific keypad (the header toggle).
+    pub fn toggle_scientific(&self) {
+        {
+            let mut state = self.state.borrow_mut();
+            state.scientific = !state.scientific;
+        }
+        self.sync();
+    }
+
     /// Process one key from the keypad or the keyboard.
     pub fn press(&self, key: &str) {
         {
@@ -145,6 +170,14 @@ impl CalculatorController {
                     let value = state.value;
                     state.history.memory_subtract(value);
                     state.fresh = false;
+                }
+                "DEG" | "RAD" => {
+                    state.angle = state.angle.toggled();
+                    state.fresh = false;
+                    preview(&mut state);
+                }
+                "SCI" => {
+                    state.scientific = !state.scientific;
                 }
                 other => {
                     let starts_value = other
@@ -209,6 +242,14 @@ impl CalculatorController {
                 }
             });
         }
+        {
+            let weak = Rc::downgrade(self);
+            self.ui.on_toggle_scientific(move || {
+                if let Some(controller) = weak.upgrade() {
+                    controller.toggle_scientific();
+                }
+            });
+        }
     }
 
     fn sync(&self) {
@@ -218,6 +259,8 @@ impl CalculatorController {
         ui.set_result(SharedString::from(state.result.clone()));
         ui.set_has_error(state.has_error);
         ui.set_memory_label(SharedString::from(state.history.memory_label()));
+        ui.set_angle_mode(SharedString::from(state.angle.label()));
+        ui.set_scientific(state.scientific);
 
         let rows: Vec<HistoryRow> = state
             .history
@@ -238,7 +281,7 @@ fn preview(state: &mut State) {
         state.result = "0".to_string();
         return;
     }
-    if let Ok(value) = evaluate(&state.expression) {
+    if let Ok(value) = evaluate_mode(&state.expression, state.angle) {
         state.result = format_number(value);
         state.value = value;
     }
@@ -247,7 +290,7 @@ fn preview(state: &mut State) {
 /// Evaluate on `=` and keep the result in the history.
 fn evaluate_now(state: &mut State) {
     let expression = state.expression.trim().to_string();
-    match evaluate(&expression) {
+    match evaluate_mode(&expression, state.angle) {
         Ok(value) => {
             state.result = format_number(value);
             state.value = value;

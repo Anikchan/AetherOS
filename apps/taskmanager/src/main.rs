@@ -159,6 +159,12 @@ fn epoch_ms() -> u64 {
 }
 
 fn main() {
+    if let Some(code) = aether_launcher_registry::handle_launch_arg(
+        "aether-taskmanager",
+        std::env::args().skip(1),
+    ) {
+        std::process::exit(code);
+    }
     let args = parse_args();
     if args.energy_contract {
         let contract = aether_taskmanager::EnergyImpact::contract();

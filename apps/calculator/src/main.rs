@@ -19,6 +19,11 @@ fn usage() {
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    if let Some(code) =
+        aether_launcher_registry::handle_launch_arg("aether-calculator", std::env::args().skip(1))
+    {
+        std::process::exit(code);
+    }
     let args: Vec<String> = std::env::args().skip(1).collect();
     match args.first().map(String::as_str) {
         Some("--render") => {
@@ -30,7 +35,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let ui = CalculatorApp::new()?;
             let controller = CalculatorController::with_demo(ui);
             let path = dir.join("app-calculator.png");
-            let frame = aether_ui::render::render_png(controller.ui(), 420, 640, &path)?;
+            let frame = aether_ui::render::render_png(controller.ui(), 420, 720, &path)?;
             println!(
                 "AETHER_APP_CALCULATOR_RENDERED {}x{} -> {}",
                 frame.width,

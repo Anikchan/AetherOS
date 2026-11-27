@@ -30,6 +30,7 @@ members = [
     "apps/runner",
     "apps/store",
     "apps/storage-analyzer",
+    "apps/launcher-registry",
 ]
 
 [workspace.package]

@@ -9,6 +9,7 @@ description = "AetherOS Activity Manager: process/system metrics, sensors, effic
 aether-lifecycled = { path = "../../lifecycled" }
 aether-powerd = { path = "../../powerd" }
 aether-ui.workspace = true
+aether-launcher-registry = { path = "../launcher-registry" }
 libc = "0.2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

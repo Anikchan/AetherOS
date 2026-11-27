@@ -1,11 +1,14 @@
 //! Calculator expression evaluator (P4-T11, DA-AC-03).
 //!
 //! A recursive-descent parser over `+ - * / % ^`, unary sign, parentheses,
-//! decimals, the constants `pi`/`e` and the functions `sqrt`, `abs` and
-//! `round`. Precedence follows the usual calculator rules:
+//! factorials (`n!`), decimals, the constants `pi`/`e` and the functions
+//! `sqrt`, `abs`, `round`, `sin`, `cos`, `tan`, `ln`, `log` and `exp`.
+//! Trigonometry follows the [`AngleMode`] (degrees in the window, radians for
+//! [`evaluate`]). Precedence follows the usual calculator rules:
 //!
 //! * `^` binds tightest and is right associative (`2^3^2` = 512),
 //! * unary minus binds looser than `^` (`-2^2` = -4),
+//! * `!` binds to the value it follows (`3! + 1` = 7),
 //! * `* / %` before `+ -`.
 //!
 //! Errors are typed so the window can tell "incomplete input" from a real
@@ -85,6 +88,41 @@ enum Token {
     Close,
 }
 
+/// Angle unit used by `sin`, `cos` and `tan`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum AngleMode {
+    /// Radians: what [`evaluate`] and the acceptance tests use.
+    #[default]
+    Radians,
+    /// Degrees: the Calculator window's default, like the DA-02 keypad.
+    Degrees,
+}
+
+impl AngleMode {
+    /// Label shown on the toggle key.
+    pub fn label(self) -> &'static str {
+        match self {
+            AngleMode::Radians => "RAD",
+            AngleMode::Degrees => "DEG",
+        }
+    }
+
+    /// The other unit, for the `DEG`/`RAD` toggle key.
+    pub fn toggled(self) -> AngleMode {
+        match self {
+            AngleMode::Radians => AngleMode::Degrees,
+            AngleMode::Degrees => AngleMode::Radians,
+        }
+    }
+
+    fn to_radians(self, value: f64) -> f64 {
+        match self {
+            AngleMode::Radians => value,
+            AngleMode::Degrees => value.to_radians(),
+        }
+    }
+}
+
 fn tokenize(input: &str) -> Result<Vec<Token>, EvalError> {
     let chars: Vec<char> = input.chars().collect();
     let mut tokens = Vec::new();
@@ -125,7 +163,7 @@ fn tokenize(input: &str) -> Result<Vec<Token>, EvalError> {
                     .to_lowercase();
                 tokens.push(Token::Ident(name));
             }
-            '+' | '-' | '*' | '/' | '%' | '^' | '×' | '÷' | '−' => {
+            '+' | '-' | '*' | '/' | '%' | '^' | '!' | '×' | '÷' | '−' => {
                 let normalised = match ch {
                     '×' => '*',
                     '÷' => '/',
@@ -152,6 +190,7 @@ fn tokenize(input: &str) -> Result<Vec<Token>, EvalError> {
 struct Parser {
     tokens: Vec<Token>,
     position: usize,
+    angle: AngleMode,
 }
 
 impl Parser {
@@ -250,7 +289,7 @@ impl Parser {
     }
 
     fn primary(&mut self) -> Result<f64, EvalError> {
-        match self.next() {
+        let value = match self.next() {
             Some(Token::Number(value)) => Ok(value),
             Some(Token::Open) => {
                 let value = self.expression()?;
@@ -270,7 +309,7 @@ impl Parser {
                     }
                     let argument = self.expression()?;
                     self.expect_close()?;
-                    apply_function(&name, argument)
+                    apply_function(&name, argument, self.angle)
                 } else {
                     match name.as_str() {
                         "pi" => Ok(std::f64::consts::PI),
@@ -282,11 +321,18 @@ impl Parser {
             Some(Token::Close) => Err(EvalError::UnbalancedParenthesis),
             Some(_) => Err(EvalError::UnexpectedToken("expression")),
             None => Err(EvalError::EmptyExpression),
+        }?;
+        // Postfix factorial: `3!` = 6, `(2+2)!` = 24.
+        let mut value = value;
+        while let Some(Token::Op('!')) = self.peek() {
+            self.position += 1;
+            value = factorial(value)?;
         }
+        Ok(value)
     }
 }
 
-fn apply_function(name: &str, value: f64) -> Result<f64, EvalError> {
+fn apply_function(name: &str, value: f64, angle: AngleMode) -> Result<f64, EvalError> {
     match name {
         "sqrt" => {
             if value < 0.0 {
@@ -298,12 +344,73 @@ fn apply_function(name: &str, value: f64) -> Result<f64, EvalError> {
         }
         "abs" => Ok(value.abs()),
         "round" => Ok(value.round()),
+        "sin" => Ok(snap_trig(angle.to_radians(value).sin())),
+        "cos" => Ok(snap_trig(angle.to_radians(value).cos())),
+        "tan" => {
+            let tangent = angle.to_radians(value).tan();
+            if tangent.is_finite() {
+                Ok(tangent)
+            } else {
+                Err(EvalError::DomainError(
+                    "tan() is undefined at this angle".to_string(),
+                ))
+            }
+        }
+        "ln" | "log" => {
+            if value <= 0.0 {
+                return Err(EvalError::DomainError(format!(
+                    "{name}() needs a positive number"
+                )));
+            }
+            Ok(if name == "ln" {
+                value.ln()
+            } else {
+                value.log10()
+            })
+        }
+        "exp" => Ok(value.exp()),
         _ => Err(EvalError::UnknownFunction(name.to_string())),
     }
 }
 
-/// Evaluate a complete expression.
+/// Trigonometry on a calculator snaps tan(90°) noise to the exact value users
+/// expect (cos 90° is 6.1e-17 in f64, which would print as `6.12e-17`).
+fn snap_trig(value: f64) -> f64 {
+    if value.abs() < 1e-12 {
+        0.0
+    } else if (value.abs() - 1.0).abs() < 1e-12 {
+        value.signum()
+    } else {
+        value
+    }
+}
+
+/// `n!` for whole numbers the f64 result can hold exactly enough to compare.
+fn factorial(value: f64) -> Result<f64, EvalError> {
+    if !value.is_finite() || value < 0.0 || value.fract() != 0.0 {
+        return Err(EvalError::DomainError(
+            "factorial needs a whole number from 0 to 170".to_string(),
+        ));
+    }
+    if value > 170.0 {
+        return Err(EvalError::Overflow);
+    }
+    let mut result = 1.0;
+    let mut factor = 2.0;
+    while factor <= value {
+        result *= factor;
+        factor += 1.0;
+    }
+    Ok(result)
+}
+
+/// Evaluate a complete expression in radians.
 pub fn evaluate(input: &str) -> Result<f64, EvalError> {
+    evaluate_mode(input, AngleMode::Radians)
+}
+
+/// Evaluate with an explicit angle unit (the window passes [`AngleMode::Degrees`]).
+pub fn evaluate_mode(input: &str, angle: AngleMode) -> Result<f64, EvalError> {
     let tokens = tokenize(input)?;
     if tokens.is_empty() {
         return Err(EvalError::EmptyExpression);
@@ -311,6 +418,7 @@ pub fn evaluate(input: &str) -> Result<f64, EvalError> {
     let mut parser = Parser {
         tokens,
         position: 0,
+        angle,
     };
     let value = parser.expression()?;
     if parser.position < parser.tokens.len() {
@@ -328,6 +436,11 @@ pub fn evaluate(input: &str) -> Result<f64, EvalError> {
 /// Evaluate and format in one step, the way the window shows a result.
 pub fn evaluate_display(input: &str) -> Result<String, EvalError> {
     evaluate(input).map(format_number)
+}
+
+/// Like [`evaluate_display`], with an explicit angle unit.
+pub fn evaluate_display_mode(input: &str, angle: AngleMode) -> Result<String, EvalError> {
+    evaluate_mode(input, angle).map(format_number)
 }
 
 /// Format without floating point noise: at most 10 decimals, no trailing
@@ -418,8 +531,8 @@ mod tests {
             Err(EvalError::UnknownIdentifier("foo".to_string()))
         );
         assert_eq!(
-            evaluate("tan(1)"),
-            Err(EvalError::UnknownFunction("tan".to_string()))
+            evaluate("cbrt(1)"),
+            Err(EvalError::UnknownFunction("cbrt".to_string()))
         );
         assert_eq!(
             evaluate("1 + * 2"),
@@ -436,6 +549,66 @@ mod tests {
         assert_eq!(evaluate("2 3"), Err(EvalError::UnexpectedToken("token")));
         assert!(evaluate("1 +").unwrap_err().is_incomplete());
         assert!(!evaluate("1 / 0").unwrap_err().is_incomplete());
+    }
+
+    #[test]
+    fn scientific_functions_and_factorials() {
+        // Radians (the library default).
+        assert_eq!(format("sin(pi / 2)"), "1");
+        assert_eq!(format("cos(pi)"), "-1");
+        assert_eq!(format("ln(e)"), "1");
+        assert_eq!(format("log(1000)"), "3");
+        assert_eq!(format("exp(0)"), "1");
+        assert_eq!(format("5!"), "120");
+        assert_eq!(format("0!"), "1");
+        assert_eq!(format("3! + 1"), "7");
+        assert_eq!(format("(2 + 2)!"), "24");
+        assert_eq!(
+            format("2^3!"),
+            "64",
+            "factorial binds inside the power base"
+        );
+        // Degrees (to_radians): sin(30°) is exactly 0.5 within float noise.
+        assert_eq!(
+            evaluate_display_mode("sin(30)", AngleMode::Degrees),
+            Ok("0.5".to_string())
+        );
+        assert_eq!(
+            evaluate_display_mode("cos(90)", AngleMode::Degrees),
+            Ok("0".to_string())
+        );
+        assert_eq!(
+            evaluate_display_mode("tan(45)", AngleMode::Degrees),
+            Ok("1".to_string())
+        );
+        assert_eq!(
+            evaluate_display_mode("sin(90)", AngleMode::Degrees),
+            Ok("1".to_string())
+        );
+        assert_eq!(AngleMode::Degrees.toggled(), AngleMode::Radians);
+        assert_eq!(AngleMode::Degrees.label(), "DEG");
+        assert_eq!(AngleMode::default(), AngleMode::Radians);
+
+        // Domain errors are specific, not silent NaNs.
+        assert_eq!(
+            evaluate("ln(0)"),
+            Err(EvalError::DomainError(
+                "ln() needs a positive number".to_string()
+            ))
+        );
+        assert_eq!(
+            evaluate("log(-1)"),
+            Err(EvalError::DomainError(
+                "log() needs a positive number".to_string()
+            ))
+        );
+        assert_eq!(
+            evaluate("2.5!"),
+            Err(EvalError::DomainError(
+                "factorial needs a whole number from 0 to 170".to_string()
+            ))
+        );
+        assert_eq!(evaluate("200!"), Err(EvalError::Overflow));
     }
 
     #[test]

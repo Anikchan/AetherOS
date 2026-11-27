@@ -69,6 +69,53 @@ pub enum SessionError {
     Io(String),
 }
 
+/// How the shell inside the terminal ended, decoded from `waitpid`'s raw
+/// status (DA-AC-07: exit codes are reported, not the raw wait word).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExitStatus {
+    /// The process called `exit(code)` (0 is success).
+    Exited(i32),
+    /// The process was killed by a signal number.
+    Signaled(i32),
+}
+
+impl ExitStatus {
+    /// Decode a raw `waitpid` status (POSIX `WIFEXITED`/`WIFSIGNALED`).
+    pub fn from_raw(status: i32) -> ExitStatus {
+        if status & 0x7f == 0 {
+            ExitStatus::Exited((status >> 8) & 0xff)
+        } else {
+            ExitStatus::Signaled(status & 0x7f)
+        }
+    }
+
+    /// The exit code for a normal exit; `None` when a signal ended the process.
+    pub fn code(self) -> Option<i32> {
+        match self {
+            ExitStatus::Exited(code) => Some(code),
+            ExitStatus::Signaled(_) => None,
+        }
+    }
+
+    pub fn is_success(self) -> bool {
+        self == ExitStatus::Exited(0)
+    }
+
+    /// Human label for the status bar and the screen: `exit 0`, `SIGKILL`.
+    pub fn label(self) -> String {
+        match self {
+            ExitStatus::Exited(code) => format!("exit {code}"),
+            ExitStatus::Signaled(signal) => match signal {
+                1 => "SIGHUP".to_string(),
+                2 => "SIGINT".to_string(),
+                9 => "SIGKILL".to_string(),
+                15 => "SIGTERM".to_string(),
+                other => format!("signal {other}"),
+            },
+        }
+    }
+}
+
 impl std::fmt::Display for SessionError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -83,7 +130,7 @@ impl std::error::Error for SessionError {}
 
 #[cfg(unix)]
 mod unix {
-    use super::{Command, SessionError};
+    use super::{Command, ExitStatus, SessionError};
     use std::ffi::CString;
     use std::os::raw::{c_char, c_int, c_void};
 
@@ -275,8 +322,9 @@ mod unix {
         }
 
         /// Reap the child if it already exited. Marks the session closed so
-        /// `Drop` never signals a pid that the OS may have recycled.
-        pub fn wait(&mut self) -> Option<i32> {
+        /// `Drop` never signals a pid that the OS may have recycled. The
+        /// returned status carries the decoded exit code or signal.
+        pub fn wait(&mut self) -> Option<ExitStatus> {
             if self.closed {
                 return None;
             }
@@ -285,7 +333,7 @@ mod unix {
             if result == self.child {
                 self.closed = true;
                 let _ = unsafe { libc::close(self.master) };
-                Some(status)
+                Some(ExitStatus::from_raw(status))
             } else {
                 None
             }
@@ -323,7 +371,7 @@ pub use other::PtySession;
 
 #[cfg(not(unix))]
 mod other {
-    use super::{Command, SessionError};
+    use super::{Command, ExitStatus, SessionError};
 
     /// Non-unix placeholder that fails every operation clearly.
     #[derive(Debug)]
@@ -375,7 +423,7 @@ mod other {
             Err(Self::unsupported())
         }
 
-        pub fn wait(&mut self) -> Option<i32> {
+        pub fn wait(&mut self) -> Option<ExitStatus> {
             None
         }
     }
@@ -435,7 +483,48 @@ mod tests {
             }
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
-        assert!(status.is_some(), "the child exits after echo");
+        let status = status.expect("the child exits after echo");
+        assert_eq!(status.code(), Some(0), "echo exits successfully");
+        assert!(status.is_success());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unix_pty_reports_the_child_exit_code() {
+        let mut session =
+            match PtySession::spawn(&Command::new("/bin/sh").arg("-c").arg("exit 7"), 80, 24) {
+                Ok(session) => session,
+                Err(error) => {
+                    eprintln!("skipping PTY exit-code test: {error}");
+                    return;
+                }
+            };
+        let mut status = None;
+        for _ in 0..200 {
+            if let Some(code) = session.wait() {
+                status = Some(code);
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        let status = status.expect("the shell exits");
+        assert_eq!(status, ExitStatus::Exited(7));
+        assert_eq!(status.code(), Some(7));
+        assert!(!status.is_success());
+        assert_eq!(status.label(), "exit 7");
+    }
+
+    #[test]
+    fn exit_status_decodes_wait_words() {
+        // POSIX wait encoding: exit code in bits 8..15, signal in bits 0..6.
+        assert_eq!(ExitStatus::from_raw(0), ExitStatus::Exited(0));
+        assert_eq!(ExitStatus::from_raw(7 << 8), ExitStatus::Exited(7));
+        assert_eq!(ExitStatus::from_raw(9), ExitStatus::Signaled(9));
+        assert_eq!(ExitStatus::from_raw(15), ExitStatus::Signaled(15));
+        assert_eq!(ExitStatus::Exited(0).label(), "exit 0");
+        assert_eq!(ExitStatus::Signaled(15).label(), "SIGTERM");
+        assert_eq!(ExitStatus::Signaled(7).label(), "signal 7");
+        assert!(!ExitStatus::Signaled(15).is_success());
     }
 
     #[cfg(unix)]

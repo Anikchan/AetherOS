@@ -8,7 +8,7 @@ use i_slint_backend_testing::{ElementHandle, ElementQuery};
 use slint::platform::PointerEventButton;
 use slint::{ComponentHandle, Model};
 
-use aether_calculator::{CalculatorApp, CalculatorController};
+use aether_calculator::{AngleMode, CalculatorApp, CalculatorController};
 
 /// Click the visible element with this accessible label.
 async fn click(ui: &CalculatorApp, label: &str) {
@@ -38,7 +38,7 @@ fn calculator_keypad_evaluates_and_remembers() {
         controller
             .ui()
             .window()
-            .set_size(slint::PhysicalSize::new(420, 640));
+            .set_size(slint::PhysicalSize::new(420, 720));
 
         assert_eq!(controller.history_len(), 0);
 
@@ -98,6 +98,38 @@ fn calculator_keypad_evaluates_and_remembers() {
         click(controller.ui(), "Clear history").await;
         assert_eq!(controller.history_len(), 0);
         assert_eq!(controller.ui().get_history().row_count(), 0);
+
+        // Scientific mode (DA-02 v1): degrees by default, sin(30) = 0.5.
+        assert!(controller.scientific());
+        assert!(controller.ui().get_scientific());
+        assert_eq!(controller.angle_mode(), AngleMode::Degrees);
+        assert_eq!(controller.ui().get_angle_mode().as_str(), "DEG");
+        click(controller.ui(), "C").await;
+        click(controller.ui(), "sin(").await;
+        click(controller.ui(), "3").await;
+        click(controller.ui(), "0").await;
+        click(controller.ui(), ")").await;
+        click(controller.ui(), "=").await;
+        assert_eq!(controller.result(), "0.5");
+        assert!(!controller.has_error());
+
+        // The toggle key switches to radians and the label follows.
+        click(controller.ui(), "Toggle angle unit").await;
+        assert_eq!(controller.angle_mode(), AngleMode::Radians);
+        assert_eq!(controller.ui().get_angle_mode().as_str(), "RAD");
+
+        // Factorial comes from the keypad, not a text shortcut.
+        click(controller.ui(), "C").await;
+        click(controller.ui(), "5").await;
+        click(controller.ui(), "x!").await;
+        assert_eq!(controller.expression(), "5!");
+        click(controller.ui(), "=").await;
+        assert_eq!(controller.result(), "120");
+
+        // Hiding the scientific keypad is a header click.
+        click(controller.ui(), "Scientific mode").await;
+        assert!(!controller.scientific());
+        assert!(!controller.ui().get_scientific());
     })
     .unwrap();
 }

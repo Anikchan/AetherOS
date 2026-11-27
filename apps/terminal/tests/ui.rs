@@ -75,6 +75,34 @@ fn terminal_tabs_and_screen_are_interactive() {
         assert_eq!(controller.tab_titles().len(), 3);
         assert_eq!(controller.active_tab(), 2);
         assert_eq!(controller.ui().get_tabs().row_count(), 3);
+
+        // Resizing the window (the host calls this) resizes the grid.
+        controller.resize(100, 24);
+        assert_eq!(controller.viewport(), (100, 24));
+        assert_eq!(controller.ui().get_grid_cols(), 100);
+        assert_eq!(controller.ui().get_grid_rows(), 24);
+
+        // A real PTY shell reports its exit code instead of a raw wait word.
+        click(controller.ui(), "build").await;
+        assert_eq!(controller.active_tab(), 1);
+        match controller.spawn_pty(80, 24) {
+            Ok(()) => {
+                controller
+                    .write_pty(b"exit 9\n")
+                    .expect("write exit to the pty");
+                for _ in 0..200 {
+                    controller.pump(50);
+                    if controller.note().starts_with("Process ") {
+                        break;
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(10));
+                }
+                assert_eq!(controller.note(), "Process exit 9");
+                assert!(controller.screen_text().contains("[process exit 9]"));
+            }
+            // A sandbox without /dev/ptmx still exercises the grid resize above.
+            Err(error) => eprintln!("skipping PTY exit-code check: {error}"),
+        }
     })
     .unwrap();
 }

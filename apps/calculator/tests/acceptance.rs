@@ -74,7 +74,12 @@ fn fifty_cases_are_correct() {
             Err(error) => failures.push(format!("{expression}: errored {error:?}")),
         }
     }
-    assert!(failures.is_empty(), "{} case(s) failed:\n{}", failures.len(), failures.join("\n"));
+    assert!(
+        failures.is_empty(),
+        "{} case(s) failed:\n{}",
+        failures.len(),
+        failures.join("\n")
+    );
 }
 
 #[test]

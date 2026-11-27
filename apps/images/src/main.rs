@@ -15,6 +15,11 @@ fn usage() {
 }
 
 fn main() {
+    if let Some(code) =
+        aether_launcher_registry::handle_launch_arg("aether-images", std::env::args().skip(1))
+    {
+        std::process::exit(code);
+    }
     let mut args = std::env::args().skip(1);
     let mut render_dir: Option<PathBuf> = None;
     while let Some(arg) = args.next() {

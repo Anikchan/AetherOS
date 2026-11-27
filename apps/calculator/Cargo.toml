@@ -15,6 +15,7 @@ slint-build.workspace = true
 [dependencies]
 slint.workspace = true
 aether-ui.workspace = true
+aether-launcher-registry = { path = "../launcher-registry" }
 
 [dev-dependencies]
 i-slint-backend-testing = "1.19.0"

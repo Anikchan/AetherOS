@@ -22,7 +22,7 @@ use slint::{ModelRc, SharedString, VecModel};
 pub mod session;
 pub mod vt;
 
-pub use session::{Command, PtySession, SessionError};
+pub use session::{Command, ExitStatus, PtySession, SessionError};
 pub use vt::{AnsiColor, Cell, Vt, DEFAULT_COLS, DEFAULT_ROWS, MAX_SCROLLBACK};
 
 slint::include_modules!();
@@ -186,6 +186,18 @@ impl TerminalController {
         self.sync();
     }
 
+    /// Send keystrokes (or a whole command line) to the active PTY. The
+    /// interactive host forwards keyboard input here; headless tests use it to
+    /// drive a real shell to its exit code.
+    pub fn write_pty(&self, bytes: &[u8]) -> Result<(), SessionError> {
+        let mut state = self.state.borrow_mut();
+        let active = state.active;
+        match state.tabs[active].pty.as_mut() {
+            Some(pty) => pty.write(bytes),
+            None => Err(SessionError::Io("no PTY session in this tab".into())),
+        }
+    }
+
     /// Submit the prompt line: echo it, then run the command.
     pub fn submit(&self) {
         let line = {
@@ -311,26 +323,70 @@ impl TerminalController {
     }
 
     /// Read whatever the PTY has produced and draw it. The interactive host
-    /// calls this on a short timer.
+    /// calls this on a short timer. When the shell has exited, the decoded
+    /// status is drawn and shown in the status bar (DA-AC-07).
     pub fn pump(&self, timeout_ms: i32) {
-        let mut chunks = Vec::new();
+        let mut drew = false;
+        let mut ended = None;
         {
             let mut state = self.state.borrow_mut();
             let active = state.active;
-            if let Some(pty) = state.tabs[active].pty.as_mut() {
+            if let Some(mut pty) = state.tabs[active].pty.take() {
                 match pty.read_available(timeout_ms) {
-                    Ok(bytes) if !bytes.is_empty() => chunks = bytes,
+                    Ok(bytes) if !bytes.is_empty() => {
+                        state.tabs[active].vt.feed(&bytes);
+                        drew = true;
+                    }
                     Ok(_) => {}
                     Err(error) => state.note = error.to_string(),
                 }
-            }
-            if !chunks.is_empty() {
-                state.tabs[active].vt.feed(&chunks);
+                if let Some(status) = pty.wait() {
+                    ended = Some(status);
+                } else {
+                    state.tabs[active].pty = Some(pty);
+                }
             }
         }
-        if !chunks.is_empty() {
+        if let Some(status) = ended {
+            let label = status.label();
+            {
+                let mut state = self.state.borrow_mut();
+                let active = state.active;
+                state.tabs[active]
+                    .vt
+                    .feed_str(&format!("\r\n\x1b[2m[process {label}]\x1b[0m\r\n"));
+                state.note = format!("Process {label}");
+            }
+            self.sync();
+        } else if drew {
             self.sync();
         }
+    }
+
+    /// Resize the active tab: the screen grid and, when a PTY is open, the
+    /// kernel window size (the shell receives `SIGWINCH`). The interactive
+    /// host calls this from its window-resize event.
+    pub fn resize(&self, cols: u16, rows: u16) {
+        let cols = cols.max(1);
+        let rows = rows.max(1);
+        let mut error = None;
+        {
+            let mut state = self.state.borrow_mut();
+            let active = state.active;
+            state.tabs[active].vt.resize(cols as usize, rows as usize);
+            if let Some(pty) = state.tabs[active].pty.as_mut() {
+                error = pty.resize(cols, rows).err();
+            }
+        }
+        if let Some(error) = error {
+            self.state.borrow_mut().note = error.to_string();
+        }
+        self.sync();
+    }
+
+    /// The status-bar note (resize errors and exit codes are reported here).
+    pub fn note(&self) -> String {
+        self.state.borrow().note.clone()
     }
 
     fn wire(self: &Rc<Self>) {

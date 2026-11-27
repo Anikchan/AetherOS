@@ -19,6 +19,11 @@ fn usage() {
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    if let Some(code) =
+        aether_launcher_registry::handle_launch_arg("aether-terminal", std::env::args().skip(1))
+    {
+        std::process::exit(code);
+    }
     let args: Vec<String> = std::env::args().skip(1).collect();
     match args.first().map(String::as_str) {
         Some("--render") => {
