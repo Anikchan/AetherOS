@@ -96,6 +96,13 @@ let _ = std::process::Command::new(&argv[0]).args(&argv[1..]).spawn();
 `apps/<crate>/Cargo.toml` and `src/main.rs` and fail if a registered app loses
 the `--launch` handshake or renames its binary.
 
+Activity Manager is the one app whose CLI is also a product surface. It keeps
+the rule "any flag = CLI, no flags = window": a bare launch opens the Slint
+window on the Processes tab and refreshes it once a second
+(`AETHER_TM_WINDOW: refresh=<n> rows=<n>`), while `--tab`, `--render`,
+`--pack-d-history`, `--service-action …` and the other flags behave exactly as
+before (`apps/taskmanager/src/launch.rs`).
+
 ## Conventions
 
 - Import the design system with a relative path:

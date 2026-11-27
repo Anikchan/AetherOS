@@ -13,10 +13,11 @@
 slint::include_modules!();
 
 use aether_lifecycled::state::Band;
+use aether_powerd::analytics::BatteryAnalytics;
 
 use slint::{ComponentHandle, ModelRc, VecModel};
 
-use crate::manager::{human_bytes, ConfirmationDialog};
+use crate::manager::{human_bytes, ActivityManager, ConfirmationDialog};
 use crate::model::{
     EnergyColumnContract, EnergyImpact, PerformanceHistory, ProcessRow, SystemSample, Tab,
 };
@@ -26,6 +27,19 @@ use crate::tabs::{BatteryTabView, MetricLine, PerformanceView, SensorsTabView, T
 /// Height/width used for the headless evidence render.
 pub const RENDER_WIDTH: u32 = 1080;
 pub const RENDER_HEIGHT: u32 = 640;
+
+/// What one live Processes refresh produced (timer tick and headless test).
+#[derive(Debug, Clone)]
+pub struct ProcessRefresh {
+    /// Rows visible after the energy contract's sort and the empty query.
+    pub visible: usize,
+    /// The sampled rows, kept so a tab switch can reuse them.
+    pub rows: Vec<ProcessRow>,
+    /// The CPU/memory summary for this sample.
+    pub system: SystemSample,
+    /// The performance series, kept so the Performance tab follows the timer.
+    pub history: PerformanceHistory,
+}
 
 /// Controller around the Slint component.
 pub struct ActivityManagerWindow {
@@ -132,6 +146,35 @@ impl ActivityManagerWindow {
         self.ui
             .set_status(format!("{count} of {} processes", rows.len()).into());
         count
+    }
+
+    /// One live refresh of the Processes tab: sample through `manager`, apply
+    /// the energy contract and bind the rows. Hosts without `/proc` (the macOS
+    /// dev host) fall back to the demo rows so the window still shows content.
+    pub fn refresh_processes(
+        &self,
+        manager: &mut ActivityManager,
+        analytics: Option<&BatteryAnalytics>,
+        now_ms: u64,
+    ) -> ProcessRefresh {
+        let (mut rows, system, history) = match manager.refresh(now_ms) {
+            Ok(snapshot) => (snapshot.rows, snapshot.system, snapshot.history),
+            Err(_) => (
+                demo_rows(),
+                demo_system(),
+                PerformanceHistory::default(),
+            ),
+        };
+        if let Some(analytics) = analytics {
+            manager.apply_energy_impact(&mut rows, analytics);
+        }
+        let visible = self.bind(&rows, Some(&system), "");
+        ProcessRefresh {
+            visible,
+            rows,
+            system,
+            history,
+        }
     }
 
     fn row_view(&self, row: &ProcessRow) -> ProcessRowView {

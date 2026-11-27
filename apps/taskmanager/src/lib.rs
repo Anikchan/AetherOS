@@ -5,6 +5,7 @@
 //! tested headlessly.
 
 pub mod collect;
+pub mod launch;
 pub mod manager;
 pub mod model;
 pub mod pack_d;
@@ -29,7 +30,7 @@ pub use tabs::{
 };
 pub use window::{
     demo_history, demo_pack_d, demo_rows, demo_sensors, demo_services, demo_startup, demo_system,
-    demo_users, ActivityManagerWindow, ProcessRowView,
+    demo_users, ActivityManagerWindow, ProcessRefresh, ProcessRowView,
 };
 pub use model::{
     BatteryView, Column, EnergyColumnContract, EnergyImpact, EnergyLevelSpec, EnergySourceSpec,

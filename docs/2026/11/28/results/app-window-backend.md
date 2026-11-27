@@ -45,10 +45,13 @@ and `shell/**` were not modified.
 kept because the brief asked for it and it leaves the XWayland fallback in the
 binary without extra build steps.
 
-`taskmanager` gets the features so its manifest is uniform with the other apps,
-but its launch path is still its CLI default (`aether-taskmanager` prints the
-process report). Adding an `ActivityManagerWindow` launch is a follow-up; the
-window binding code already exists in `apps/taskmanager/src/main.rs::render_window`.
+`taskmanager` gets the features so its manifest is uniform with the other apps.
+Its first round kept the CLI as the launch path; **round 3 (2026-11-28) added
+the window path**: a bare launch opens `ActivityManagerWindow` on the Processes
+tab with a one-second refresh, while any flag (`--tab`, `--render`,
+`--pack-d-history`, `--service-action …`) keeps the CLI contract. See
+`docs/2026/11/27/results/apps-launcher-and-gaps.md` §7 and
+`apps/taskmanager/src/launch.rs`.
 
 ### What the app binaries do now
 
@@ -248,7 +251,10 @@ session had no Docker daemon and no Linux machine, so it could not execute it.
 
 - S1: add the two-line step above to `.github/workflows/ci.yml`
   (`ubuntu-latest`, before `cargo test --workspace`) and mark the test required.
-- Activity Manager (`aether-taskmanager`) still launches as a CLI; add a
-  `--window`/no-flag window path that reuses `ActivityManagerWindow`.
+- ~~Activity Manager (`aether-taskmanager`) still launches as a CLI; add a
+  `--window`/no-flag window path that reuses `ActivityManagerWindow`.~~
+  **Done (2026-11-28):** a bare launch opens the window on the Processes tab and
+  refreshes once a second (`AETHER_TM_WINDOW: refresh=<n> rows=<n>`); every CLI
+  flag is unchanged. See `docs/2026/11/27/results/apps-launcher-and-gaps.md` §7.
 - Execute the Linux runtime test on CI or the device: it is the only part of
   this change this session could not execute (no Docker daemon, no Linux host).

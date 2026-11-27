@@ -24,16 +24,25 @@
 //! `--yes` is required for real signals and nice changes; without it actions
 //! run in dry-run mode and print what they would do.
 
+use std::cell::RefCell;
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use aether_lifecycled::daemon::MetricsSnapshot;
 use aether_powerd::analytics::BatteryAnalytics;
 
 use aether_taskmanager::collect::ProcFs;
+use aether_taskmanager::launch::{
+    launch_mode, refresh_marker, reduce_motion, LaunchMode, REFRESH_INTERVAL,
+};
 use aether_taskmanager::manager::{ActivityManager, EndTaskOutcome};
-use aether_taskmanager::model::ExportFormat;
+use aether_taskmanager::model::{
+    BatteryView, ExportFormat, PerformanceHistory, ProcessRow, SensorReading, ServiceRow,
+    StartupItem, SystemSample, Tab, UserSession,
+};
+use aether_taskmanager::pack_d::{AppCpuTime, AppNetworkHistory};
 use aether_taskmanager::s7;
 use aether_taskmanager::window::{ActivityManagerWindow, RENDER_HEIGHT, RENDER_WIDTH};
 
@@ -166,6 +175,9 @@ fn main() {
     if let Some(code) = startup.exit {
         std::process::exit(code);
     }
+    // A bare launch (the shell spawns `<exec> --launch <id>` and the registry
+    // strips the flags) opens the window; any flag keeps the CLI contract.
+    let mode = launch_mode(&startup.rest);
     let args = parse_args(startup.rest);
     if args.energy_contract {
         let contract = aether_taskmanager::EnergyImpact::contract();
@@ -264,6 +276,14 @@ fn main() {
 
     if let Some(dir) = &args.render {
         render_window(dir, &args, &mut manager);
+        return;
+    }
+
+    if mode == LaunchMode::Window {
+        if let Err(error) = run_window(&args, manager) {
+            eprintln!("cannot open the Activity Manager window: {error}");
+            std::process::exit(1);
+        }
         return;
     }
 
@@ -601,21 +621,29 @@ fn truncate(value: &str, max: usize) -> String {
     value.chars().take(max.saturating_sub(1)).collect::<String>() + "…"
 }
 
-/// Draw the Activity Manager window to `<dir>/activity-manager-<tab>.png` for
-/// every rendered tab through the shared headless renderer (P5 evidence).
-///
-/// The rows come from the live sampler where `/proc` exists and from
-/// [`aether_taskmanager::demo_rows`] on the dev host; the Energy column is
-/// always resolved through the contract, so the screenshot proves the binding.
-fn render_window(dir: &Path, args: &Args, manager: &mut ActivityManager) {
-    if let Err(error) = aether_ui::render::init() {
-        eprintln!("cannot initialise the renderer: {error}");
-        std::process::exit(1);
-    }
-    if let Err(error) = std::fs::create_dir_all(dir) {
-        eprintln!("cannot create {}: {error}", dir.display());
-        std::process::exit(1);
-    }
+/// Everything the window binds: live values plus the same demo fallbacks the
+/// evidence render uses on hosts without `/proc`, so one model feeds both the
+/// timer refresh and `--render`.
+struct WindowData {
+    tabs: Vec<Tab>,
+    rows: Vec<ProcessRow>,
+    system: SystemSample,
+    history: PerformanceHistory,
+    analytics: Option<BatteryAnalytics>,
+    status: Option<BatteryView>,
+    sensors: Vec<SensorReading>,
+    startup: Vec<StartupItem>,
+    pack_d_cpu: AppCpuTime,
+    pack_d_network: AppNetworkHistory,
+    services: Vec<ServiceRow>,
+    users: Vec<UserSession>,
+    users_current_uid: u32,
+    query: String,
+}
+
+/// Build the model once. `manager` supplies live samples; the demo values stand
+/// in only where this host has nothing to report.
+fn window_data(args: &Args, manager: &mut ActivityManager) -> WindowData {
     let snapshot = manager.refresh(epoch_ms()).ok();
     let (mut rows, system, mut history) = match snapshot {
         Some(snapshot) => (snapshot.rows, Some(snapshot.system), snapshot.history),
@@ -712,17 +740,100 @@ fn render_window(dir: &Path, args: &Args, manager: &mut ActivityManager) {
         }
     };
 
+    WindowData {
+        tabs,
+        rows,
+        system: sample_system,
+        history,
+        analytics,
+        status,
+        sensors,
+        startup,
+        pack_d_cpu,
+        pack_d_network,
+        services,
+        users,
+        users_current_uid,
+        query: String::new(),
+    }
+}
+
+/// Bind one tab from the model. The Processes tab is the live default; the
+/// other tabs use the same contract-driven views the CLI prints.
+fn bind_window(window: &ActivityManagerWindow, tab: Tab, data: &WindowData, windows_profile: bool) {
+    window.bind_tabs(&data.tabs, tab);
+    window.bind_shortcut(
+        &aether_taskmanager::ShortcutBinding::default(),
+        windows_profile,
+    );
+    window.bind(&data.rows, Some(&data.system), &data.query);
+    match tab {
+        Tab::Performance => {
+            window.bind_performance(&aether_taskmanager::performance_view(
+                &data.system,
+                &data.history,
+            ));
+        }
+        Tab::Battery => {
+            window.bind_battery(&aether_taskmanager::battery_view(
+                data.status.as_ref().or(data.system.battery.as_ref()),
+                data.analytics.as_ref(),
+                epoch_ms() / 1000,
+            ));
+        }
+        Tab::Sensors => {
+            window.bind_sensors(&aether_taskmanager::sensors_view(
+                &data.sensors,
+                &data.system,
+            ));
+        }
+        other => {
+            let view = match other {
+                Tab::AppHistory => aether_taskmanager::app_history_view(
+                    data.analytics.as_ref(),
+                    Some(&data.pack_d_cpu),
+                    Some(&data.pack_d_network),
+                    epoch_ms() / 1000,
+                ),
+                Tab::StartupApps => aether_taskmanager::startup_view(&data.startup),
+                Tab::Users => aether_taskmanager::users_view(&data.users, data.users_current_uid),
+                Tab::Details => aether_taskmanager::details_view(&data.rows),
+                Tab::Services => aether_taskmanager::services_view(&data.services),
+                _ => aether_taskmanager::TableView::default(),
+            };
+            window.bind_table(&view);
+        }
+    }
+}
+
+/// Draw the Activity Manager window to `<dir>/activity-manager-<tab>.png` for
+/// every rendered tab through the shared headless renderer (P5 evidence).
+///
+/// The rows come from the live sampler where `/proc` exists and from
+/// [`aether_taskmanager::demo_rows`] on the dev host; the Energy column is
+/// always resolved through the contract, so the screenshot proves the binding.
+fn render_window(dir: &Path, args: &Args, manager: &mut ActivityManager) {
+    if let Err(error) = aether_ui::render::init() {
+        eprintln!("cannot initialise the renderer: {error}");
+        std::process::exit(1);
+    }
+    if let Err(error) = std::fs::create_dir_all(dir) {
+        eprintln!("cannot create {}: {error}", dir.display());
+        std::process::exit(1);
+    }
+    let data = window_data(args, manager);
+
     let mut rendered = Vec::new();
     for tab in [
-        aether_taskmanager::model::Tab::Processes,
-        aether_taskmanager::model::Tab::Performance,
-        aether_taskmanager::model::Tab::Battery,
-        aether_taskmanager::model::Tab::Sensors,
-        aether_taskmanager::model::Tab::AppHistory,
-        aether_taskmanager::model::Tab::StartupApps,
-        aether_taskmanager::model::Tab::Users,
-        aether_taskmanager::model::Tab::Details,
-        aether_taskmanager::model::Tab::Services,
+        Tab::Processes,
+        Tab::Performance,
+        Tab::Battery,
+        Tab::Sensors,
+        Tab::AppHistory,
+        Tab::StartupApps,
+        Tab::Users,
+        Tab::Details,
+        Tab::Services,
     ] {
         let window = match ActivityManagerWindow::new() {
             Ok(window) => window,
@@ -731,56 +842,7 @@ fn render_window(dir: &Path, args: &Args, manager: &mut ActivityManager) {
                 std::process::exit(1);
             }
         };
-        window.bind_tabs(&tabs, tab);
-        window.bind_shortcut(&aether_taskmanager::ShortcutBinding::default(), args.windows_profile);
-        window.bind(&rows, Some(&sample_system), "");
-        match tab {
-            aether_taskmanager::model::Tab::Performance => {
-                window.bind_performance(&aether_taskmanager::performance_view(
-                    &sample_system,
-                    &history,
-                ));
-            }
-            aether_taskmanager::model::Tab::Battery => {
-                window.bind_battery(&aether_taskmanager::battery_view(
-                    status.as_ref().or(sample_system.battery.as_ref()),
-                    analytics.as_ref(),
-                    epoch_ms() / 1000,
-                ));
-            }
-            aether_taskmanager::model::Tab::Sensors => {
-                window.bind_sensors(&aether_taskmanager::sensors_view(
-                    &sensors,
-                    &sample_system,
-                ));
-            }
-            other => {
-                let view = match other {
-                    aether_taskmanager::model::Tab::AppHistory => {
-                        aether_taskmanager::app_history_view(
-                            analytics.as_ref(),
-                            Some(&pack_d_cpu),
-                            Some(&pack_d_network),
-                            epoch_ms() / 1000,
-                        )
-                    }
-                    aether_taskmanager::model::Tab::StartupApps => {
-                        aether_taskmanager::startup_view(&startup)
-                    }
-                    aether_taskmanager::model::Tab::Users => {
-                        aether_taskmanager::users_view(&users, users_current_uid)
-                    }
-                    aether_taskmanager::model::Tab::Details => {
-                        aether_taskmanager::details_view(&rows)
-                    }
-                    aether_taskmanager::model::Tab::Services => {
-                        aether_taskmanager::services_view(&services)
-                    }
-                    _ => aether_taskmanager::TableView::default(),
-                };
-                window.bind_table(&view);
-            }
-        }
+        bind_window(&window, tab, &data, args.windows_profile);
 
         let path = dir.join(format!("activity-manager-{}.png", tab.key()));
         match aether_ui::render::render_png(window.ui(), RENDER_WIDTH, RENDER_HEIGHT, &path) {
@@ -804,4 +866,132 @@ fn render_window(dir: &Path, args: &Args, manager: &mut ActivityManager) {
         eprintln!("nothing rendered");
         std::process::exit(1);
     }
+}
+
+/// State shared by the event-loop timer and the window's callbacks.
+struct LiveWindow {
+    manager: ActivityManager,
+    data: WindowData,
+    tab: Tab,
+    tick: u64,
+    /// `theme.reduce-motion` pauses the automatic refresh (the Refresh button
+    /// still works because the user asked for it).
+    paused: bool,
+    windows_profile: bool,
+}
+
+/// One live refresh: sample through the manager, bind the active tab and return
+/// the visible row count. Reuses the same providers as the CLI and `--render`.
+fn refresh_live(window: &ActivityManagerWindow, live: &mut LiveWindow) -> usize {
+    let refresh =
+        window.refresh_processes(&mut live.manager, live.data.analytics.as_ref(), epoch_ms());
+    live.data.rows = refresh.rows;
+    if !refresh.history.cpu.is_empty() {
+        live.data.history = refresh.history;
+    }
+    live.data.system = refresh.system;
+    bind_window(window, live.tab, &live.data, live.windows_profile);
+    refresh.visible
+}
+
+/// Open the Activity Manager window on the Processes tab and run its loop.
+///
+/// A bare launch reaches this path (the shell spawns `aether-taskmanager
+/// --launch aether-taskmanager`); any CLI flag keeps the text behaviour. The
+/// timer refreshes once a second while the window is visible and reduce-motion
+/// is off, logging `AETHER_TM_WINDOW: refresh=<n> rows=<n>` per tick.
+fn run_window(args: &Args, manager: ActivityManager) -> Result<(), slint::PlatformError> {
+    use slint::ComponentHandle;
+
+    let mut manager = manager;
+    let data = window_data(args, &mut manager);
+    let window = Rc::new(ActivityManagerWindow::new()?);
+    window.bind_shortcut(
+        &aether_taskmanager::ShortcutBinding::default(),
+        args.windows_profile,
+    );
+    bind_window(&window, Tab::Processes, &data, args.windows_profile);
+
+    let state = Rc::new(RefCell::new(LiveWindow {
+        manager,
+        data,
+        tab: Tab::Processes,
+        tick: 0,
+        paused: reduce_motion(),
+        windows_profile: args.windows_profile,
+    }));
+
+    {
+        // The toolbar's Refresh button asks for a sample even when the timer is
+        // paused by reduce-motion.
+        let state = Rc::clone(&state);
+        let ui = Rc::clone(&window);
+        window.ui().on_refresh(move || {
+            let Ok(mut live) = state.try_borrow_mut() else {
+                return;
+            };
+            live.tick += 1;
+            let rows = refresh_live(&ui, &mut live);
+            println!("{}", refresh_marker(live.tick, rows));
+            let _ = std::io::stdout().flush();
+        });
+    }
+    {
+        // Switching tabs rebinds that tab from the same model.
+        let tabs = {
+            let live = state.borrow();
+            live.data.tabs.clone()
+        };
+        let state = Rc::clone(&state);
+        let ui = Rc::clone(&window);
+        window.ui().on_tab_selected(move |index| {
+            let Ok(mut live) = state.try_borrow_mut() else {
+                return;
+            };
+            let Some(tab) = tabs.get(index.max(0) as usize).copied() else {
+                return;
+            };
+            live.tab = tab;
+            bind_window(&ui, tab, &live.data, live.windows_profile);
+        });
+    }
+    {
+        // The search box filters the Processes list live.
+        let state = Rc::clone(&state);
+        let ui = Rc::clone(&window);
+        window.ui().on_search_edited(move |text| {
+            let Ok(mut live) = state.try_borrow_mut() else {
+                return;
+            };
+            live.data.query = text.to_string();
+            bind_window(&ui, live.tab, &live.data, live.windows_profile);
+        });
+    }
+
+    let timer = slint::Timer::default();
+    {
+        let state = Rc::clone(&state);
+        let window = Rc::clone(&window);
+        timer.start(slint::TimerMode::Repeated, REFRESH_INTERVAL, move || {
+            // Paused when reduce-motion is on or the window is hidden.
+            if !window.ui().window().is_visible() {
+                return;
+            }
+            let Ok(mut live) = state.try_borrow_mut() else {
+                return;
+            };
+            if live.paused {
+                return;
+            }
+            live.tick += 1;
+            let rows = refresh_live(&window, &mut live);
+            println!("{}", refresh_marker(live.tick, rows));
+            let _ = std::io::stdout().flush();
+        });
+    }
+
+    window.ui().show()?;
+    slint::run_event_loop()?;
+    timer.stop();
+    Ok(())
 }

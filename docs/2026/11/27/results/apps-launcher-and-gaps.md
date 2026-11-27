@@ -190,3 +190,46 @@ is verified below.
 change is needed. The registry path in this report is
 `apps/launcher-registry/src/lib.rs`.
 
+## 7. Round 3 — Activity Manager window path (2026-11-28)
+
+The window-backend round gave the 10 GUI apps a winit/Wayland window on the
+plain launch path but deliberately left `aether-taskmanager` CLI-only, so it was
+the one app the shell could launch that would show nothing. Round 3 closes that
+without touching the CLI contract.
+
+### Rule
+
+| Arguments | Path |
+| --- | --- |
+| no arguments (the registry strips `--launch aether-taskmanager`) | open `ActivityManagerWindow`, Processes tab, 1 s refresh |
+| any flag (`--tab`, `--render`, `--pack-d-history`, `--service-action …`, `--once`, `--json`, `--help`, …) | the existing CLI, byte-for-byte |
+
+The rule is `aether_taskmanager::launch::launch_mode(&args)` — pure, no display.
+
+### Changes
+
+| File | Change |
+| --- | --- |
+| `apps/taskmanager/src/launch.rs` (new) | `LaunchMode { Window, Cli }`, `launch_mode`, `REFRESH_INTERVAL` (1 s), `reduce_motion()` / `reduce_motion_from()` (`AETHER_SHELL_REDUCE_MOTION`), `refresh_marker(tick, rows)`; 4 unit tests |
+| `apps/taskmanager/src/window.rs` | `ProcessRefresh { visible, rows, system, history }` and `ActivityManagerWindow::refresh_processes(manager, analytics, now_ms)` — samples through the same `ActivityManager`, applies the energy contract, binds rows; demo fallback on hosts without `/proc` |
+| `apps/taskmanager/src/main.rs` | `window_data()` builds the model once (the body of the old `render_window`), `bind_window()` binds a tab, `render_window()` reuses both so rendering is unchanged; `run_window()` shows the window, wires Refresh / tab selection / search, and runs a 1 s `slint::Timer` that pauses on reduce-motion or while the window is hidden and logs `AETHER_TM_WINDOW: refresh=<n> rows=<n>` per tick; the bare-launch arm runs it, the render arm still runs first |
+| `apps/taskmanager/tests/window_tick.rs` (new) | headless: no flags → `Window`, each CLI flag → `Cli`, default tab `processes`, two `refresh_processes` ticks bind rows and produce the refresh marker |
+
+### Verification (2026-11-28)
+
+| Check | Command | Result |
+| --- | --- | --- |
+| Taskmanager suite | `LIBRARY_PATH=/opt/homebrew/lib cargo test -p aether-taskmanager` | 69 lib (65 + 4 launch) + 4 integration (`tables`, `tabs`, `ui`, `window_tick`) — all green |
+| Registry suite | `cargo test -p aether-launcher-registry` | 7 passed |
+| Workspace build | `cargo check --workspace` | `Finished` — no errors or new warnings |
+| Render unchanged | `--render /tmp/tm-after` vs the pre-change `/tmp/tm-before` | combined PNG hash identical (`2dec601a…`), 9 surfaces |
+| CLI unchanged | `--tab <each of 9 tabs>` vs pre-change output | byte-identical for all 9 |
+| `--launch-check` | `aether-taskmanager --launch-check aether-taskmanager` | `AETHER_LAUNCH aether-taskmanager`, exit 0 |
+| Service action dry run | `--service-action aether-demo.service restart` | plan + `SERVICE_ACTION_PLAN_OK`, exit 0 |
+| `--pack-d-history` + `--tab` | `--pack-d-history /tmp/nope.json --tab app-history` | App-history table, exit 0 (CLI path, missing file tolerated as before) |
+| Live window + timer | bare `aether-taskmanager --launch aether-taskmanager` on this macOS host (winit native window) | window opened; before it was stopped by hand it logged `AETHER_TM_WINDOW: refresh=1 … 1198 rows=5` once a second (5 = demo rows, host has no `/proc`); stopped with `pkill` |
+
+Real window creation on the image remains the Linux/Wayland path (same
+winit/softbuffer backend as the other apps); the headless tests never open a
+display.
+
