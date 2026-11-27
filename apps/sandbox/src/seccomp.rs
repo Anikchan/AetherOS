@@ -197,6 +197,40 @@ impl SeccompPlan {
     pub fn denied_count(&self) -> usize {
         self.denied.len()
     }
+
+    /// Run the program the way the kernel would, for one syscall.
+    ///
+    /// The kernel executes the classic-BPF subset this crate emits; evaluating
+    /// it here keeps the encoding testable on any host, including the ones
+    /// without a usable seccomp/Landlock kernel. Returns the `SECCOMP_RET_*`
+    /// action (`RET_ALLOW`, `RET_KILL_PROCESS`, or a `ret_errno` value).
+    pub fn evaluate(&self, audit_arch: u32, syscall: u32) -> u32 {
+        let mut accumulator: u32 = 0;
+        let mut pc = 0usize;
+        // Bounded walk: a malformed program must not loop forever in a test.
+        for _ in 0..self.instructions.len() + 1 {
+            let Some(insn) = self.instructions.get(pc) else {
+                return RET_KILL_PROCESS;
+            };
+            match insn.code {
+                BPF_LD_W_ABS => {
+                    accumulator = match insn.k {
+                        DATA_ARCH_OFFSET => audit_arch,
+                        DATA_NR_OFFSET => syscall,
+                        _ => return RET_KILL_PROCESS,
+                    };
+                    pc += 1;
+                }
+                BPF_JMP_JEQ_K => {
+                    let taken = accumulator == insn.k;
+                    pc += 1 + if taken { insn.jt as usize } else { insn.jf as usize };
+                }
+                BPF_RET_K => return insn.k,
+                _ => return RET_KILL_PROCESS,
+            }
+        }
+        RET_KILL_PROCESS
+    }
 }
 
 /// Build the filter. `Err` means the app must not start.
@@ -217,10 +251,15 @@ pub fn plan(policy: &SeccompPolicy, arch: SeccompArch) -> Result<SeccompPlan, Sa
         jf: 0,
         k: DATA_ARCH_OFFSET,
     });
+    // Classic BPF jumps are relative to the *next* instruction: `jt` is the
+    // number of instructions to skip when the comparison holds. A matching
+    // architecture must therefore skip the kill (jt = 1, over RET_KILL) and a
+    // mismatching one must fall into it (jf = 0). Getting these the other way
+    // round kills every syscall of the app, which is what the Dell caught.
     instructions.push(SeccompInsn {
         code: BPF_JMP_JEQ_K,
-        jt: 0,
-        jf: 1,
+        jt: 1,
+        jf: 0,
         k: arch.audit_arch(),
     });
     instructions.push(SeccompInsn {
@@ -409,6 +448,40 @@ mod tests {
     use super::*;
 
     #[test]
+    fn evaluated_filter_allows_innocuous_syscalls_and_denies_listed_ones() {
+        // The kernel semantics of the emitted program, evaluated here so a
+        // wrong jump offset fails on every host instead of only on a Linux
+        // kernel that runs the filter (the Dell caught an inverted arch check
+        // that killed the app on its first syscall).
+        let plan = plan(&standard_policy(), SeccompArch::X86_64).unwrap();
+        let arch = SeccompArch::X86_64.audit_arch();
+        assert_eq!(plan.evaluate(arch, 1), RET_ALLOW, "write must be allowed");
+        assert_eq!(plan.evaluate(arch, 59), RET_ALLOW, "execve must be allowed");
+        let mount = plan
+            .denied
+            .iter()
+            .find(|(name, _)| *name == "mount")
+            .map(|(_, number)| *number as u32)
+            .expect("mount is in the standard policy");
+        assert_eq!(plan.evaluate(arch, mount), ret_errno(DENY_ERRNO));
+        assert_eq!(
+            plan.evaluate(SeccompArch::Aarch64.audit_arch(), 1),
+            RET_KILL_PROCESS,
+            "a program built for another architecture must not run"
+        );
+    }
+
+    #[test]
+    fn arch_check_skips_the_kill_for_the_right_architecture() {
+        let plan = plan(&standard_policy(), SeccompArch::X86_64).unwrap();
+        // LD arch, JEQ arch, RET kill, LD nr, ...
+        assert_eq!(plan.instructions[1].code, BPF_JMP_JEQ_K);
+        assert_eq!(plan.instructions[1].jt, 1, "match skips the kill");
+        assert_eq!(plan.instructions[1].jf, 0, "mismatch falls into the kill");
+        assert_eq!(plan.instructions[2].k, RET_KILL_PROCESS);
+    }
+
+    #[test]
     fn policy_resolves_per_architecture() {
         let policy = SeccompPolicy::standard();
         let x86 = policy.deny_list(SeccompArch::X86_64).unwrap();
@@ -463,8 +536,10 @@ mod tests {
         assert_eq!(insns[0].k, DATA_ARCH_OFFSET);
         assert_eq!(insns[1].code, BPF_JMP_JEQ_K);
         assert_eq!(insns[1].k, SeccompArch::X86_64.audit_arch());
-        assert_eq!(insns[1].jt, 0);
-        assert_eq!(insns[1].jf, 1, "a foreign architecture falls into the kill");
+        // Classic BPF offsets are relative to the next instruction: a matching
+        // architecture skips the kill, a foreign one falls into it.
+        assert_eq!(insns[1].jt, 1, "a matching architecture skips the kill");
+        assert_eq!(insns[1].jf, 0, "a foreign architecture falls into the kill");
         assert_eq!(insns[2].k, RET_KILL_PROCESS);
         assert_eq!(insns[3].k, DATA_NR_OFFSET);
         // mount then ptrace, each followed by EPERM.
