@@ -73,12 +73,12 @@ struct Args {
     render: Option<PathBuf>,
 }
 
-fn parse_args() -> Args {
+fn parse_args(argv: Vec<String>) -> Args {
     let mut args = Args {
         interval: 1,
         ..Default::default()
     };
-    let mut it = std::env::args().skip(1);
+    let mut it = argv.into_iter();
     while let Some(arg) = it.next() {
         let mut value = |name: &str| {
             it.next().unwrap_or_else(|| {
@@ -159,13 +159,14 @@ fn epoch_ms() -> u64 {
 }
 
 fn main() {
-    if let Some(code) = aether_launcher_registry::handle_launch_arg(
+    let startup = aether_launcher_registry::handle_launch_arg(
         "aether-taskmanager",
         std::env::args().skip(1),
-    ) {
+    );
+    if let Some(code) = startup.exit {
         std::process::exit(code);
     }
-    let args = parse_args();
+    let args = parse_args(startup.rest);
     if args.energy_contract {
         let contract = aether_taskmanager::EnergyImpact::contract();
         println!("{}", serde_json::to_string_pretty(&contract).unwrap_or_default());

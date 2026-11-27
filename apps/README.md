@@ -48,20 +48,43 @@ pub struct Entry { id, name, exec, icon, crate_dir, categories, terminal }
 | `resolve(id)` | id → record (`aether-files`, `aether-text`, …) |
 | `launch_argv(id)` | the argv the shell must spawn: `<exec> --launch <id>` |
 | `desktop_file(entry)` | the entry rendered as a `.desktop` file |
-| `handle_launch_arg(exec, args)` | the one-line entry point every app calls |
+| `launch_decision(exec, args)` | the pure rule: continue, or stop with a code |
+| `handle_launch_arg(exec, args)` | applies the rule at the top of `main` |
 
-Every app binary accepts `--launch <id>` before its own CLI. The app validates
-that the id belongs to it and prints `AETHER_LAUNCH <id>`; headless builds exit
-0 after the marker, and the interactive window host (P3-T02) continues into the
-Slint event loop with the same argv. Wrong ids and mismatched executables print
-a clear error and exit 2.
+`--launch <id>` is a **real launch**. The app validates that the id belongs to
+it, prints `AETHER_LAUNCH <id>` for the shell log, and then keeps running into
+the same code path it uses without a launch flag (the Slint window when the
+P3-T02 host is attached; the app's normal CLI/`--render` path today). The launch
+flags are removed from the arguments, so `--launch <id> --render <dir>` renders
+exactly like `--render <dir>`.
 
-```bash
-cargo run -q -p aether-files -- --launch aether-files   # AETHER_LAUNCH aether-files
+`--launch-check <id>` is the dry handshake: validate, print the marker, exit 0.
+Tests and packaging checks use this. Unknown, foreign or missing ids print an
+error that names the registry and exit 2. The decision is pure and unit-tested
+per app (`apps/<crate>/tests/launch.rs`: own id → continue + marker, foreign or
+missing id → exit 2, no flag → continue).
+
+Every app's `main` starts with:
+
+```rust
+let startup = aether_launcher_registry::handle_launch_arg(
+    "aether-files",
+    std::env::args().skip(1),
+);
+if let Some(code) = startup.exit {
+    std::process::exit(code);
+}
+let mut args = startup.rest.into_iter(); // Vec-based mains: startup.rest
 ```
 
-The shell spawns that argv instead of guessing an `Exec` string. The integration
-line (in `shell/src/app.rs`, inside `spawn_if_enabled`) is:
+```bash
+cargo run -q -p aether-files -- --launch-check aether-files   # AETHER_LAUNCH aether-files, exit 0
+cargo run -q -p aether-files -- --launch aether-files --render /tmp/x  # marker + render
+```
+
+The shell spawns that argv instead of guessing an `Exec` string. The spawn
+command stays `<exec> --launch <id>`. The integration line (in
+`shell/src/app.rs`, inside `spawn_if_enabled`) is:
 
 ```rust
 let argv = aether_launcher_registry::launch_argv(id)

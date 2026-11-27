@@ -31,10 +31,9 @@ if let Some(code) =
 }
 ```
 
-`<app> --launch <id>` prints `AETHER_LAUNCH <id>` and exits 0 in headless
-builds; a window host keeps the same argv and continues into the Slint event
-loop. An unknown id, a missing id, or an id owned by another executable prints a
-clear error and exits 2.
+`<app> --launch <id>` prints `AETHER_LAUNCH <id>` and continues into the app
+(round 2 changed this from an exit-after-marker handshake; §6 has the current
+contract). Wrong ids and mismatched executables print a clear error and exit 2.
 
 ### What the shell session must change (not edited here)
 
@@ -96,15 +95,17 @@ is implemented.
 | All app suites | `cargo test -p aether-files … -p aether-taskmanager -p aether-launcher-registry` (11 apps + registry) | all green, no failures |
 | Terminal only | `cargo test -p aether-terminal` | 17 lib + 1 headless UI |
 | Calculator only | `cargo test -p aether-calculator` | 12 lib + 2 acceptance + 1 headless UI |
-| `--launch` handshake, every app | `cargo run -q -p aether-<app> -- --launch aether-<app>` × 11 | `AETHER_LAUNCH aether-<app>`, exit 0 |
-| Rejection paths | `aether-files --launch aether-terminal`; `aether-files --launch` | exit 2 with `'aether-files' cannot start 'aether-terminal'; use 'aether-terminal'` and `--launch needs an app id` |
+| `--launch` handshake, every app (round 1, now `--launch-check`) | `cargo run -q -p aether-<app> -- --launch-check aether-<app>` × 11 | `AETHER_LAUNCH aether-<app>`, exit 0 |
+| Rejection paths | `aether-files --launch-check aether-nope`; `aether-files --launch aether-terminal`; `aether-files --launch` | exit 2 with a message naming `apps/launcher-registry` |
 | Headless render, every app | `cargo run -q -p aether-<app> -- --render /tmp/aether-render-check` × 10 + taskmanager | every `AETHER_*_RENDERED` marker present (`app-calculator.png` 420×720 with the scientific row, activity-manager 9 surfaces) |
 
 ## 4. Risks and honest status
 
-- `--launch` exits after the marker until the interactive window host (P3-T02)
-  exists. The argv and validation are final, so the shell spawn line does not
-  need to change again when the host lands.
+- `--launch` no longer exits after the marker (round 2); the app keeps running
+  into its normal path. A window appears only once the interactive host
+  (P3-T02) is attached; until then `--launch <id> --render <dir>` is the
+  headless evidence. The argv and validation are final, so the shell spawn line
+  does not need to change again when the host lands.
 - The shell still holds its own `default_apps()` list; until it depends on this
   registry, ids/exec names can drift. The registry's drift guard covers the
   apps side only.
@@ -145,4 +146,47 @@ Verification (this host, 2026-11-28):
 
 Before: ≈3.3% failure rate (1/30 per CI observation, mechanism confirmed by the
 collision probe). After: 0/30.
+
+## 6. Round 2 — `--launch` is a real launch (2026-11-28)
+
+Defect found while wiring the shell: the round-1 `--launch` printed the marker
+and exited, so a dock click would start the binary and the window would never
+appear. The contract is now split in two:
+
+| Flag | Behaviour |
+| --- | --- |
+| `--launch <id>` | validate that `<id>` is this executable's registry id, print `AETHER_LAUNCH <id>`, remove the launch flags and **continue into the normal app path** |
+| `--launch-check <id>` | dry handshake: validate, print the marker, exit 0 (tests and packaging checks) |
+| wrong / foreign / missing id | stderr message naming `apps/launcher-registry`, exit 2 |
+
+### Changes
+
+| File | Change |
+| --- | --- |
+| `apps/launcher-registry/src/lib.rs` | `LaunchDecision { Continue { marker }, Exit { code, marker, message } }` (pure, with `marker()`/`exit_code()`), `launch_decision(exec, args)`, `LaunchStartup { exit, rest }`; `handle_launch_arg` now applies the decision, strips `--launch`/`--launch-check` + id from `rest`, and returns instead of exiting on a real launch; rejection messages name the registry |
+| all 11 `apps/<crate>/src/main.rs` | call `handle_launch_arg`, stop only when `startup.exit` is set, parse `startup.rest` (taskmanager's `parse_args` now takes the argv) |
+| `apps/<crate>/tests/launch.rs` (new × 11) | own id → `Continue` + `AETHER_LAUNCH <id>`, `--launch-check` own → `Exit(0)` + marker, foreign id → `Exit(2)`, missing id → `Exit(2)`, no flag → `Continue`, `launch_argv` = `<exec> --launch <id>` |
+| `apps/launcher-registry/src/lib.rs` tests | `launch_decision` table and `handle_launch_arg` stripping/exit behaviour |
+| `apps/README.md` | the two-flag contract, app `main` snippet, unchanged shell spawn line |
+
+Rendering is untouched: after the marker the process runs exactly the code it
+runs without a launch flag. The image/session spawns `<exec> --launch <id>`;
+headless evidence adds `--render <dir>` (`--launch <id> --render <dir>`), which
+is verified below.
+
+### Verification (2026-11-28)
+
+| Check | Command | Result |
+| --- | --- | --- |
+| Registry + all 11 app suites | `cargo test -p aether-files … -p aether-taskmanager -p aether-launcher-registry` | all green (11 new `launch` tests, 1 per app; registry 7) |
+| Own id, dry | `cargo run -q -p aether-files -- --launch-check aether-files` | `AETHER_LAUNCH aether-files`, exit 0 |
+| Unknown id, dry | `cargo run -q -p aether-files -- --launch-check aether-nope` | `aether-files: unknown app id 'aether-nope' (launcher ids live in apps/launcher-registry/src/lib.rs)`, exit 2 |
+| Real launch keeps running | `cargo run -q -p aether-files -- --launch aether-files` | marker, then the normal usage path, exit 0 (no handler exit) |
+| Real launch + render | `cargo run -q -p aether-files -- --launch aether-files --render /tmp/aether-launch-r2` | marker, `AETHER_APP_FILES_RENDERED … (1200x800)` |
+| Real launch + render, Vec CLI | `aether-calculator --launch aether-calculator --render …`, `aether-taskmanager --launch aether-taskmanager --render …` | marker + `AETHER_APP_CALCULATOR_RENDERED 420x720`, marker + Activity Manager surfaces |
+| Every app's dry handshake | `--launch-check <own id>` × 11 | marker, exit 0; `--launch-check aether-nope` × 11 → exit 2 |
+
+**Shell note:** the spawn command stays exactly `<exec> --launch <id>`; no shell
+change is needed. The registry path in this report is
+`apps/launcher-registry/src/lib.rs`.
 

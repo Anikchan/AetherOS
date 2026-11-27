@@ -24,12 +24,12 @@ fn usage() {
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    if let Some(code) =
-        aether_launcher_registry::handle_launch_arg("aether-text", std::env::args().skip(1))
-    {
+    let startup =
+        aether_launcher_registry::handle_launch_arg("aether-text", std::env::args().skip(1));
+    if let Some(code) = startup.exit {
         std::process::exit(code);
     }
-    let args: Vec<String> = std::env::args().skip(1).collect();
+    let args: Vec<String> = startup.rest;
     match args.first().map(String::as_str) {
         Some("--render") => {
             let dir = args

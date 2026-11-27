@@ -10,13 +10,18 @@
 //! * [`launch_argv`] returns the argv the shell must spawn:
 //!   `<exec> --launch <id>`,
 //! * [`desktop_file`] renders the record as a `.desktop` file for packaging,
-//! * [`handle_launch_arg`] is the one-line entry point each app calls at the
-//!   top of `main` so `--launch <id>` validates the id and prints the
-//!   `AETHER_LAUNCH <id>` handshake marker without opening a window.
+//! * [`launch_decision`] is the pure rule: `--launch <own id>` continues into
+//!   the app, `--launch-check <own id>` stops after the marker, and a wrong or
+//!   unknown id exits 2,
+//! * [`handle_launch_arg`] applies that rule at the top of `main`, prints the
+//!   `AETHER_LAUNCH <id>` marker and removes the launch flags from the
+//!   arguments so the app continues into its normal UI path.
 //!
-//! Headless builds stop after the marker. The interactive window host (P3-T02)
-//! keeps the same argv and continues into the Slint event loop instead of
-//! exiting, so the shell's spawn line does not change.
+//! `--launch <id>` is a real launch: a dock click starts the binary, the marker
+//! goes to the shell log, and the process keeps running into the same code path
+//! it uses without flags (the Slint window once the P3-T02 host is attached,
+//! `--render` for headless evidence). `--launch-check <id>` is the dry variant
+//! used by tests and packaging checks.
 
 /// One default app, shaped like a freedesktop `.desktop` entry.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -196,15 +201,13 @@ pub fn launch_argv(id: &str) -> Option<Vec<String>> {
     })
 }
 
-/// The marker a headless `--launch` prints, used by the acceptance checks.
+/// The marker a launch prints (`AETHER_LAUNCH <id>`), used by the shell log
+/// and the acceptance checks.
 pub fn launch_marker(id: &str) -> String {
     format!("AETHER_LAUNCH {id}")
 }
 
 /// Validate a `--launch <id>` pair for the app whose executable is `exec`.
-///
-/// Returns the handshake marker on success; the marker is what the app prints
-/// before it continues (interactive host) or exits (headless build).
 pub fn launch_outcome(id: &str, exec: &str) -> Result<String, LaunchError> {
     let entry = resolve(id).ok_or_else(|| LaunchError::UnknownId(id.to_string()))?;
     if entry.exec != exec {
@@ -217,43 +220,150 @@ pub fn launch_outcome(id: &str, exec: &str) -> Result<String, LaunchError> {
     Ok(launch_marker(entry.id))
 }
 
-/// Handle `--launch <id>` before the app's own argument parsing.
+/// What a launch flag means, decided without printing or exiting.
 ///
-/// Returns `Some(exit code)` when the arguments start with `--launch`, and
-/// `None` when they do not, so the caller keeps its normal CLI:
+/// * `--launch <own id>` → [`LaunchDecision::Continue`] with the marker: the
+///   process keeps running and enters the app's normal UI path.
+/// * `--launch-check <own id>` → [`LaunchDecision::Exit`] with code 0: the dry
+///   handshake used by tests and packaging checks.
+/// * unknown, foreign or missing id → [`LaunchDecision::Exit`] with code 2.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LaunchDecision {
+    /// Keep running the app. `marker` is `Some` for a real `--launch <id>`,
+    /// and the app prints it before continuing.
+    Continue { marker: Option<String> },
+    /// Stop with `code`. `marker` goes to stdout, `message` to stderr.
+    Exit {
+        code: i32,
+        marker: Option<String>,
+        message: Option<String>,
+    },
+}
+
+impl LaunchDecision {
+    /// The marker to print, if any.
+    pub fn marker(&self) -> Option<&str> {
+        match self {
+            LaunchDecision::Continue { marker } | LaunchDecision::Exit { marker, .. } => {
+                marker.as_deref()
+            }
+        }
+    }
+
+    /// The exit code, `None` when the app keeps running.
+    pub fn exit_code(&self) -> Option<i32> {
+        match self {
+            LaunchDecision::Continue { .. } => None,
+            LaunchDecision::Exit { code, .. } => Some(*code),
+        }
+    }
+}
+
+/// The arguments the launch flags left for the app, plus the exit request.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct LaunchStartup {
+    /// `Some(code)` when the process must stop (dry check or rejection).
+    pub exit: Option<i32>,
+    /// The app's own arguments with `--launch`/`--launch-check` removed.
+    pub rest: Vec<String>,
+}
+
+/// The error message for a rejected launch. It names the registry as the place
+/// where launcher ids are defined, so a wrong `Exec` line is easy to fix.
+fn reject_message(exec: &str, error: &LaunchError) -> String {
+    format!("{exec}: {error} (launcher ids live in apps/launcher-registry/src/lib.rs)")
+}
+
+/// Decide what the first two arguments mean for `exec`. Pure: no printing, no
+/// process exit, so every app can test its own id without a display.
+pub fn launch_decision(exec: &str, args: &[String]) -> LaunchDecision {
+    let Some(flag) = args.first().map(String::as_str) else {
+        return LaunchDecision::Continue { marker: None };
+    };
+    if flag != "--launch" && flag != "--launch-check" {
+        return LaunchDecision::Continue { marker: None };
+    }
+    let dry_run = flag == "--launch-check";
+    let Some(id) = args.get(1) else {
+        return LaunchDecision::Exit {
+            code: 2,
+            marker: None,
+            message: Some(reject_message(exec, &LaunchError::MissingId)),
+        };
+    };
+    match launch_outcome(id, exec) {
+        Ok(marker) if dry_run => LaunchDecision::Exit {
+            code: 0,
+            marker: Some(marker),
+            message: None,
+        },
+        Ok(marker) => LaunchDecision::Continue {
+            marker: Some(marker),
+        },
+        Err(error) => LaunchDecision::Exit {
+            code: 2,
+            marker: None,
+            message: Some(reject_message(exec, &error)),
+        },
+    }
+}
+
+/// Apply a launch flag before the app's own argument parsing.
+///
+/// Returns the app's remaining arguments and, only when the process must stop
+/// (`--launch-check`, a wrong id), the exit code. A real `--launch <id>` prints
+/// the marker and leaves `exit` as `None`, so the app continues into the same
+/// path it uses without a launch flag:
 ///
 /// ```ignore
 /// fn main() {
-///     if let Some(code) =
-///         aether_launcher_registry::handle_launch_arg("aether-files", std::env::args().skip(1))
-///     {
+///     let startup = aether_launcher_registry::handle_launch_arg(
+///         "aether-files",
+///         std::env::args().skip(1),
+///     );
+///     if let Some(code) = startup.exit {
 ///         std::process::exit(code);
 ///     }
+///     let mut args = startup.rest.into_iter();
 ///     // ...
 /// }
 /// ```
-pub fn handle_launch_arg(exec: &str, args: impl IntoIterator<Item = String>) -> Option<i32> {
-    let mut args = args.into_iter();
-    if args.next().as_deref() != Some("--launch") {
-        return None;
-    }
-    let id = args.next();
-    Some(match id {
-        Some(id) => match launch_outcome(&id, exec) {
-            Ok(marker) => {
+pub fn handle_launch_arg(exec: &str, args: impl IntoIterator<Item = String>) -> LaunchStartup {
+    let args: Vec<String> = args.into_iter().collect();
+    let decision = launch_decision(exec, &args);
+    let has_launch_flag = matches!(
+        args.first().map(String::as_str),
+        Some("--launch" | "--launch-check")
+    );
+    let rest = if has_launch_flag {
+        args.into_iter().skip(2).collect()
+    } else {
+        args
+    };
+    match decision {
+        LaunchDecision::Continue { marker } => {
+            if let Some(marker) = marker {
                 println!("{marker}");
-                0
             }
-            Err(error) => {
-                eprintln!("{exec}: {error}");
-                2
-            }
-        },
-        None => {
-            eprintln!("{exec}: {}", LaunchError::MissingId);
-            2
+            LaunchStartup { exit: None, rest }
         }
-    })
+        LaunchDecision::Exit {
+            code,
+            marker,
+            message,
+        } => {
+            if let Some(marker) = marker {
+                println!("{marker}");
+            }
+            if let Some(message) = message {
+                eprintln!("{message}");
+            }
+            LaunchStartup {
+                exit: Some(code),
+                rest,
+            }
+        }
+    }
 }
 
 /// Render an entry as a freedesktop `.desktop` file (packaging and tests).
@@ -371,25 +481,87 @@ mod tests {
     }
 
     #[test]
-    fn handle_launch_arg_is_silent_without_the_flag() {
-        assert_eq!(handle_launch_arg("aether-files", ["--render".into()]), None);
+    fn launch_decision_continues_for_a_real_launch_and_stops_for_a_check() {
+        let args = |list: &[&str]| list.iter().map(|s| s.to_string()).collect::<Vec<_>>();
         assert_eq!(
-            handle_launch_arg("aether-files", Vec::<String>::new()),
-            None
-        );
-        // Success and failure both return an exit code instead of panicking.
-        assert_eq!(
-            handle_launch_arg("aether-files", ["--launch".into(), "aether-files".into()]),
-            Some(0)
+            launch_decision("aether-files", &args(&[])),
+            LaunchDecision::Continue { marker: None }
         );
         assert_eq!(
-            handle_launch_arg("aether-files", ["--launch".into()]),
-            Some(2)
+            launch_decision("aether-files", &args(&["--render", "out"])),
+            LaunchDecision::Continue { marker: None }
         );
+        // A real launch keeps running so the window can appear.
+        let launch = launch_decision("aether-files", &args(&["--launch", "aether-files"]));
         assert_eq!(
-            handle_launch_arg("aether-files", ["--launch".into(), "aether-text".into()]),
-            Some(2)
+            launch,
+            LaunchDecision::Continue {
+                marker: Some("AETHER_LAUNCH aether-files".to_string())
+            }
         );
+        assert_eq!(launch.exit_code(), None);
+        assert_eq!(launch.marker(), Some("AETHER_LAUNCH aether-files"));
+        // The dry check prints the marker and exits 0.
+        let check = launch_decision("aether-files", &args(&["--launch-check", "aether-files"]));
+        assert_eq!(
+            check,
+            LaunchDecision::Exit {
+                code: 0,
+                marker: Some("AETHER_LAUNCH aether-files".to_string()),
+                message: None
+            }
+        );
+        assert_eq!(check.exit_code(), Some(0));
+        // Foreign, unknown and missing ids stop with 2 and name the registry.
+        for bad in [
+            args(&["--launch", "aether-text"]),
+            args(&["--launch", "aether-nope"]),
+            args(&["--launch"]),
+            args(&["--launch-check"]),
+        ] {
+            match launch_decision("aether-files", &bad) {
+                LaunchDecision::Exit {
+                    code: 2,
+                    message: Some(message),
+                    ..
+                } => assert!(
+                    message.contains("apps/launcher-registry"),
+                    "message names the registry: {message}"
+                ),
+                other => panic!("{bad:?} decided {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn handle_launch_arg_strips_the_flags_and_keeps_a_real_launch_running() {
+        // `--launch` does not stop the process; the app's own flags survive.
+        let startup = handle_launch_arg(
+            "aether-files",
+            [
+                "--launch".to_string(),
+                "aether-files".to_string(),
+                "--render".to_string(),
+                "/tmp/x".to_string(),
+            ],
+        );
+        assert_eq!(startup.exit, None);
+        assert_eq!(startup.rest, vec!["--render", "/tmp/x"]);
+        // `--launch-check` is the dry handshake.
+        let check = handle_launch_arg(
+            "aether-files",
+            ["--launch-check".to_string(), "aether-files".to_string()],
+        );
+        assert_eq!(check.exit, Some(0));
+        assert!(check.rest.is_empty());
+        // Rejections stop with 2 and leave no launch flags behind.
+        let missing = handle_launch_arg("aether-files", ["--launch".to_string()]);
+        assert_eq!(missing.exit, Some(2));
+        assert!(missing.rest.is_empty());
+        // No launch flag: the arguments pass through untouched.
+        let plain = handle_launch_arg("aether-files", ["--render".to_string()]);
+        assert_eq!(plain.exit, None);
+        assert_eq!(plain.rest, vec!["--render"]);
     }
 
     #[test]
