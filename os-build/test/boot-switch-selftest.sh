@@ -46,6 +46,21 @@
 #  35  clear removes BootNext AND the recorded order
 #  36  clear with a failing order write keeps the record and exits 4
 #  37  unit: stale record -> record dropped, one-shot BootNext used instead
+#  38  unit: no record -> unchanged one-shot BootNext path
+#  39  the `mode` query (default / next / persistent / owner)
+#  40  persistent round trip with the /var copy deleted (AetherOS tmpfs)
+#  41  AetherOS first with NO marker -> owner: nothing is written at all
+#
+# ESP marker (the armed state both systems can see):
+#  42  written by the arm with mode/original/armed_utc; reads never delete it
+#  43  removed by `ubuntu --persistent`
+#  44  removed by `clear` (together with BootNext and the order)
+#  45  marker naming a deleted entry -> that index is dropped
+#  46  marker whose entry is missing from BootOrder -> put back as recorded
+#  47  ESP not writable -> the arm is refused, BootOrder untouched
+#  47b marker readable but not deletable -> exit 4, order still restored
+#  48  mount discipline: `-o ro` for the decision, unmounted, no needless rw
+#  49  after the round trip the mode is default and the marker is gone
 #
 # Usage: os-build/test/boot-switch-selftest.sh [-v]
 # Exit: 0 all cases pass, 1 a case failed.
@@ -112,6 +127,8 @@ setup() {
     export AETHER_RUN_DIR=$T/run
     export AETHER_CMDLINE=$T/cmdline
     export AETHER_STATE_DIR=$T/persist
+    export AETHER_ESP_DIR=$T/esp
+    mkdir -p "$T/esp"
     export AETHER_USB_PART=/dev/fake-usb1
     export AETHER_USB_DISK=/dev/fake-usb
     export AETHER_USB_PARTNUM=1
@@ -246,6 +263,8 @@ ret() { sh "$RETURN"; }
 next_now() { cat "$FAKE_STATE/next" 2>/dev/null || true; }
 order_now() { cat "$FAKE_STATE/order" 2>/dev/null || true; }
 record_now() { cat "$AETHER_STATE_DIR/original-order" 2>/dev/null || true; }
+marker_now() { cat "$AETHER_ESP_DIR/aether-boot-mode" 2>/dev/null || true; }
+esp_has_marker() { [ -f "$AETHER_ESP_DIR/aether-boot-mode" ]; }
 called() { grep -Fq -- "$1" "$FAKE_STATE/calls"; }
 wrote_order() { grep -Fq -- '-o ' "$FAKE_STATE/calls"; }
 
@@ -516,17 +535,28 @@ expect_eq "persistent arm records the original order" "$(record_now)" "0000,0001
 expect_has "persistent arm marker" "$out" "result=switched mode=persistent"
 if called '-n'; then bad "persistent arm wrote BootNext"; else ok "persistent arm writes no BootNext"; fi
 if wrote_order; then ok "persistent arm used efibootmgr -o"; else bad "persistent arm did not use -o"; fi
-expect_has "persistent arm logs the record" "$(cat "$AETHER_LOG" 2>/dev/null)" "recorded the original BootOrder: 0000,0001"
+expect_has "persistent arm writes the ESP marker with mode=persistent" "$(marker_now)" "mode=persistent"
+expect_has "persistent arm records the original order on the ESP" "$(marker_now)" "original=0000,0001"
+expect_has "persistent arm stamps the marker with armed_utc" "$(marker_now)" "armed_utc="
+expect_eq "persistent arm also keeps the convenience copy" "$(record_now)" "0000,0001"
 
-# --- 22: idempotent arm ----------------------------------------------------
-setup; std_fixture
+# --- 22: idempotent arm, with AetherOS in the middle of the original order --
+setup
+add_entry 0000 on ubuntu "$UBUNTU_PATH"
+add_entry 0001 on AetherOS "$AETHER_PATH"
+add_entry 0002 on Fedora 'HD(1,GPT,99999999-0000-0000-0000-000000000000)/File(\EFI\fedora\shimx64.efi)'
+printf '0000,0001,0002\n' >"$FAKE_STATE/order"; printf '0000\n' >"$FAKE_STATE/current"
 sw aether --persistent >/dev/null 2>&1
+expect_eq "arm keeps the original order on the ESP" "$(marker_now | sed -n 's/^original=//p')" "0000,0001,0002"
 : >"$FAKE_STATE/calls"
 out=$(sw aether --persistent); rc=$?
 expect_rc "second persistent arm exits 0" "$rc" 0
 expect_has "second persistent arm says already" "$out" "result=already"
-expect_eq "second persistent arm leaves the order" "$(order_now)" "0001,0000"
+expect_eq "second persistent arm leaves the order" "$(order_now)" "0001,0000,0002"
 if wrote_order; then bad "second persistent arm rewrote BootOrder"; else ok "second persistent arm performs no write"; fi
+expect_eq "second persistent arm does not re-derive the marker" "$(marker_now | sed -n 's/^original=//p')" "0000,0001,0002"
+out=$(sw ubuntu --persistent)
+expect_eq "restore puts AetherOS back in the middle" "$(order_now)" "0000,0001,0002"
 
 # --- 23: full persistent round trip, byte for byte -------------------------
 setup; std_fixture
@@ -540,6 +570,7 @@ expect_has "round trip: unit reports the restore" "$out" "persistent switch undo
 expect_has "round trip: marker is result=restored" "$out" "result=restored mode=default"
 [ "$(next_now)" = "" ] && ok "round trip: no BootNext armed" || bad "round trip: BootNext was written"
 [ -e "$AETHER_STATE_DIR/original-order" ] && bad "round trip: record not removed" || ok "round trip: record removed"
+esp_has_marker && bad "round trip: marker not removed from the ESP" || ok "round trip: marker removed from the ESP"
 
 # --- 24: restore with no record: internal first, AetherOS last -------------
 setup
@@ -613,7 +644,7 @@ out=$(sw aether --persistent 2>&1); rc=$?
 expect_rc "unwritable BootOrder exits 4" "$rc" 4
 expect_has "unwritable BootOrder is explained" "$out" "was not confirmed"
 expect_eq "unwritable BootOrder leaves the order" "$(order_now)" "0000,0001"
-expect_eq "unwritable BootOrder keeps the record for a retry" "$(record_now)" "0000,0001"
+esp_has_marker && bad "failed arm left the marker armed" || ok "failed arm removes the ESP marker again"
 expect_has "unwritable BootOrder marker is failed" "$out" "result=failed"
 
 # --- 30: silent BootOrder write failure ------------------------------------
@@ -668,7 +699,8 @@ expect_has "status marker next" "$out" "result=status mode=next"
 rm -f "$FAKE_STATE/next"
 sw aether --persistent >/dev/null 2>&1
 out=$(sw status)
-expect_has "status says persistent when BootOrder is armed" "$out" "Mode        : persistent (BootOrder=0001,0000, original recorded: 0000,0001)"
+expect_has "status says persistent when the marker is armed" "$out" "Mode        : persistent (armed marker on the ESP, original 0000,0001)"
+expect_has "status says the marker is present" "$out" "Marker      : present (aether-boot-mode)"
 expect_has "status shows the recorded order" "$out" "Recorded    : 0000,0001"
 expect_has "status marker persistent" "$out" "result=status mode=persistent"
 # a pending BootNext plus a record: BootNext is what the next boot does
@@ -754,19 +786,140 @@ printf '0001\n' >"$FAKE_STATE/current"
 out=$(ret 2>&1); rc=$?
 expect_rc "tmpfs case: unit exits 0" "$rc" 0
 expect_eq "tmpfs case: order restored byte for byte from the table" "$(order_now)" "0000,0001"
-expect_has "tmpfs case: unit says it rebuilt from the table" "$out" "rebuilding from the table"
+expect_has "tmpfs case: unit reports the undo" "$out" "persistent switch undone"
+esp_has_marker && bad "tmpfs case: marker not removed" || ok "tmpfs case: marker removed"
 [ "$(next_now)" = "" ] && ok "tmpfs case: no BootNext needed" || bad "tmpfs case: BootNext was written"
 
-# --- 41: AetherOS first with a third OS, no record ------------------------
+# --- 41: AetherOS first, NO marker -> the owner's choice, untouched ------
 setup
 add_entry 0000 on ubuntu "$UBUNTU_PATH"
 add_entry 0001 on AetherOS "$AETHER_PATH"
 add_entry 0002 on Fedora 'HD(1,GPT,99999999-0000-0000-0000-000000000000)/File(\EFI\fedora\shimx64.efi)'
 printf '0001,0000,0002\n' >"$FAKE_STATE/order"; printf '0001\n' >"$FAKE_STATE/current"
+: >"$FAKE_STATE/calls"
 out=$(ret 2>&1); rc=$?
-expect_rc "third-OS case: unit exits 0" "$rc" 0
-expect_eq "third-OS case: internal first, AetherOS last" "$(order_now)" "0000,0002,0001"
-[ "$(next_now)" = "" ] && ok "third-OS case: no BootNext needed" || bad "third-OS case: BootNext was written"
+expect_rc "owner case: unit exits 0" "$rc" 0
+expect_eq "owner case: BootOrder untouched" "$(order_now)" "0001,0000,0002"
+[ "$(next_now)" = "" ] && ok "owner case: no BootNext written" || bad "owner case: BootNext was written"
+if wrote_order; then bad "owner case: BootOrder was rewritten"; else ok "owner case: no BootOrder write"; fi
+expect_has "owner case: the unit says it is the owner's choice" "$out" "that is the owner's choice"
+expect_eq "owner case: mode query says owner" "$(sw mode)" "AETHER_BOOT_MODE: owner"
+
+# ==========================================================================
+# The armed marker on the ESP (the authority across the two systems)
+# ==========================================================================
+
+# --- 42: a read-only decision never deletes the marker -------------------
+setup; std_fixture
+sw aether --persistent >/dev/null 2>&1
+esp_has_marker && ok "marker: written by the arm" || bad "marker: not written by the arm"
+sw status >/dev/null 2>&1
+sw status >/dev/null 2>&1
+expect_eq "marker: read-only status keeps it" "$(sw mode)" "AETHER_BOOT_MODE: persistent"
+esp_has_marker && ok "marker: still there after two status reads" || bad "marker: deleted by a read"
+
+# --- 43: ubuntu --persistent removes the marker --------------------------
+setup; std_fixture
+sw aether --persistent >/dev/null 2>&1
+out=$(sw ubuntu --persistent); rc=$?
+expect_rc "marker: ubuntu --persistent exits 0" "$rc" 0
+expect_eq "marker: order restored" "$(order_now)" "0000,0001"
+esp_has_marker && bad "marker: not removed by ubuntu --persistent" || ok "marker: removed by ubuntu --persistent"
+expect_eq "marker: mode back to default" "$(sw mode)" "AETHER_BOOT_MODE: default"
+
+# --- 44: clear removes the marker ---------------------------------------
+setup; std_fixture
+sw aether --persistent >/dev/null 2>&1
+printf '0000\n' >"$FAKE_STATE/next"
+out=$(sw clear); rc=$?
+expect_rc "marker: clear exits 0" "$rc" 0
+esp_has_marker && bad "marker: not removed by clear" || ok "marker: removed by clear"
+expect_eq "marker: clear restores the order" "$(order_now)" "0000,0001"
+[ "$(next_now)" = "" ] && ok "marker: clear also drops BootNext" || bad "marker: clear left BootNext"
+
+# --- 45: marker recording an index that no longer exists ----------------
+setup; std_fixture
+printf 'mode=persistent\noriginal=0000,0009\narmed_utc=2026-11-28T00:00:00Z\n' >"$AETHER_ESP_DIR/aether-boot-mode"
+printf '0001,0000\n' >"$FAKE_STATE/order"; printf '0001\n' >"$FAKE_STATE/current"
+out=$(sw ubuntu --persistent); rc=$?
+expect_rc "dead index in the marker: exits 0" "$rc" 0
+expect_eq "dead index in the marker: dropped from the order" "$(order_now)" "0000"
+esp_has_marker && bad "dead index in the marker: marker kept" || ok "dead index in the marker: marker removed"
+
+# --- 46: marker present but BootOrder lost the AetherOS entry -----------
+setup; std_fixture
+printf 'mode=persistent\noriginal=0000,0001\narmed_utc=2026-11-28T00:00:00Z\n' >"$AETHER_ESP_DIR/aether-boot-mode"
+printf '0000\n' >"$FAKE_STATE/order"          # someone dropped AetherOS from the order
+printf '0001\n' >"$FAKE_STATE/current"
+out=$(sw ubuntu --persistent); rc=$?
+expect_rc "marker without its entry in the order: exits 0" "$rc" 0
+expect_eq "marker without its entry in the order: order restored from the marker" "$(order_now)" "0000,0001"
+esp_has_marker && bad "marker kept after a restore from the marker" || ok "marker removed after a restore from the marker"
+
+# --- 47: the ESP is not writable -> refuse to arm -----------------------
+setup; std_fixture
+chmod 500 "$AETHER_ESP_DIR"
+out=$(sw aether --persistent 2>&1); rc=$?
+chmod 700 "$AETHER_ESP_DIR"
+expect_rc "unwritable ESP: arm refuses (exit 1)" "$rc" 1
+expect_has "unwritable ESP: arm explains itself" "$out" "cannot write the armed marker"
+expect_eq "unwritable ESP: BootOrder untouched" "$(order_now)" "0000,0001"
+esp_has_marker && bad "unwritable ESP: marker appeared anyway" || ok "unwritable ESP: no marker"
+if wrote_order; then bad "unwritable ESP: BootOrder was written"; else ok "unwritable ESP: no BootOrder write"; fi
+
+# --- 47b: marker readable but not deletable ----------------------------
+setup; std_fixture
+printf 'mode=persistent\noriginal=0000,0001\narmed_utc=2026-11-28T00:00:00Z\n' >"$AETHER_ESP_DIR/aether-boot-mode"
+printf '0001,0000\n' >"$FAKE_STATE/order"; printf '0001\n' >"$FAKE_STATE/current"
+chmod 500 "$AETHER_ESP_DIR"
+out=$(sw ubuntu --persistent 2>&1); rc=$?
+chmod 700 "$AETHER_ESP_DIR"
+expect_rc "undeletable marker: exit 4" "$rc" 4
+expect_eq "undeletable marker: order still restored" "$(order_now)" "0000,0001"
+expect_has "undeletable marker: says so" "$out" "could not be"
+esp_has_marker && ok "undeletable marker: honestly still there" || bad "undeletable marker: vanished"
+
+# --- 48: mount discipline (read-only for the decision, then unmount) ----
+setup; std_fixture
+unset AETHER_ESP_DIR
+mkdir -p "$T/bin" "$T/mnt" "$T/esp-real"
+cat >"$T/bin/mount" <<'FM'
+#!/bin/sh
+echo "mount $*" >>"$MOUNT_LOG"
+exit 0
+FM
+cat >"$T/bin/umount" <<'FU'
+#!/bin/sh
+echo "umount $*" >>"$UMOUNT_LOG"
+exit 0
+FU
+chmod +x "$T/bin/mount" "$T/bin/umount"
+export PATH="$T/bin:$PATH"
+export MOUNT_LOG=$T/mount.log UMOUNT_LOG=$T/umount.log
+export AETHER_ESP_MNT=$T/mnt
+printf 'mode=persistent\noriginal=0000,0001\narmed_utc=2026-11-28T00:00:00Z\n' >"$T/mnt/aether-boot-mode"
+printf '0001,0000\n' >"$FAKE_STATE/order"; printf '0001\n' >"$FAKE_STATE/current"
+expect_eq "mount: decision reads the marker and reports persistent" "$(sw mode)" "AETHER_BOOT_MODE: persistent"
+expect_has "mount: the ESP is mounted read-only" "$(cat "$MOUNT_LOG" 2>/dev/null)" "-o ro"
+expect_has "mount: the ESP is unmounted again" "$(cat "$UMOUNT_LOG" 2>/dev/null)" "$T/mnt"
+[ -f "$T/mnt/aether-boot-mode" ] && ok "mount: the read-only decision keeps the marker" || bad "mount: marker lost"
+out=$(sw ubuntu --persistent); rc=$?
+expect_rc "mount: restore exits 0" "$rc" 0
+if grep -Fq -- "remount,rw" "$MOUNT_LOG" 2>/dev/null; then
+    bad "mount: remounted read-write although the mount was writable"
+else
+    ok "mount: no needless read-write remount"
+fi
+[ -f "$T/mnt/aether-boot-mode" ] && bad "mount: marker not deleted" || ok "mount: marker deleted on the mount"
+
+# --- 49: after the round trip the mode is default ----------------------
+setup; std_fixture
+sw aether --persistent >/dev/null 2>&1
+printf '0001\n' >"$FAKE_STATE/current"
+sw mode >/dev/null 2>&1
+out=$(ret 2>&1)
+expect_eq "round trip: mode default afterwards" "$(sw mode)" "AETHER_BOOT_MODE: default"
+esp_has_marker && bad "round trip: marker still on the ESP" || ok "round trip: marker gone"
 
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" = 0 ]

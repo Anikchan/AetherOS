@@ -9,12 +9,16 @@
 #   AetherOS: this unit sets BootNext -> Ubuntu
 #   reboot                                          -> Ubuntu
 #
-# Persistent variant: if `aether-boot-switch aether --persistent` was used, a
-# BootOrder change is armed and recorded in /var/lib/aether-boot/original-order.
-# This unit then restores that recorded order instead of writing BootNext, and
-# keeps the existing escapes working. The trade-off of the persistent mode lives
-# in docs/2026/11/28/results/boot-switch-ubuntu-aetheros.md (if AetherOS dies
-# before restoring, the machine keeps booting AetherOS).
+# Persistent variant: `aether-boot-switch aether --persistent` puts AetherOS first
+# in BootOrder and arms it with a marker on the ESP (<esp>/aether-boot-mode),
+# which is the only store both systems can see (AetherOS keeps /var on tmpfs, so
+# a record under /var/lib written from Ubuntu is invisible here). When that
+# marker is present this unit restores the recorded order instead of writing
+# BootNext, then deletes the marker. When it is absent the boot table is left
+# alone: AetherOS first without a marker is the owner's choice, not ours.
+# The trade-off of the persistent mode lives in
+# docs/2026/11/28/results/boot-switch-ubuntu-aetheros.md (if AetherOS dies before
+# restoring, the machine keeps booting AetherOS).
 #
 # The switch itself lives in /usr/bin/aether-boot-switch (one implementation,
 # shared with the Ubuntu host helper). BootNext is deleted by the firmware once
@@ -100,20 +104,17 @@ relay() {
 
 ORDER_FILE=${AETHER_STATE_DIR:-/var/lib/aether-boot}/original-order
 
-# 4. persistent mode: the live BootOrder starts with the AetherOS entry (armed
-# from Ubuntu with --persistent). Undo the order change instead of arming
-# another BootNext, so the machine returns to Ubuntu and the table is what it
-# was before the round. The record file is honoured when it is reachable; on
-# AetherOS /var/lib is tmpfs, so the live BootOrder is the authority and
-# `ubuntu --persistent` rebuilds the restore order from the table itself.
+# 4. persistent mode: an armed marker on the ESP means a --persistent switch was
+# made from Ubuntu. Undo the order change instead of arming another BootNext, so
+# the machine returns to Ubuntu and the table is what it was before the round.
+# The switch reads the marker (read-only mount) and removes it (read-write for
+# that one operation, then unmount), so this unit never touches the ESP itself.
 mode=$("$SWITCH" mode 2>/dev/null | sed -n 's/^AETHER_BOOT_MODE: //p')
 case "$mode" in
     persistent)
         log "persistent BootOrder in effect (first entry is AetherOS); restoring the internal-disk order."
         if [ -e "$ORDER_FILE" ]; then
-            log "restore record: $ORDER_FILE"
-        else
-            log "no restore record visible (AetherOS keeps /var/lib on tmpfs); rebuilding from the table."
+            log "restore record (convenience copy): $ORDER_FILE"
         fi
         out=$("$SWITCH" ubuntu --persistent 2>&1)
         rc=$?
@@ -127,6 +128,11 @@ case "$mode" in
                 log "persistent restore did not complete (exit $rc); falling back to a one-shot BootNext return."
                 ;;
         esac
+        ;;
+    owner)
+        log "AetherOS is first in BootOrder and no armed marker is on the ESP: that is the owner's choice."
+        log "left the boot table alone (use 'aether-boot-switch ubuntu --persistent' to change it)."
+        exit 0
         ;;
     *)
         # Not persistent. A record left on disk is stale (the order no longer

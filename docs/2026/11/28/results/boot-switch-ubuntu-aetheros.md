@@ -5,7 +5,7 @@ rebooting twice — no manual F12. The Dell must ping-pong between Ubuntu (inter
 disk) and AetherOS (USB stick) automatically, and must never be left unbootable.
 
 Status: **implemented and verified on macOS with a fake-efibootmgr harness**
-(198/198 cases). Not yet exercised on the Dell: the device was unreachable
+(245/245 cases). Not yet exercised on the Dell: the device was unreachable
 (read-only) in this session, so the on-hardware confirmation is still open.
 
 ## Decision: `BootNext` (default) versus `--persistent` (`BootOrder`)
@@ -39,7 +39,7 @@ setup. That is why `BootNext` is the default and `--persistent` is never implied
 | `os-build/scripts/aether-boot-switch.sh` | symlink to the file above, so Ubuntu and the image cannot drift |
 | `os-build/board/aetheros/overlay/usr/libexec/aether-boot-return.sh` | the every-boot systemd job on AetherOS |
 | `os-build/board/aetheros/overlay/etc/systemd/system/aether-boot-return.service` | oneshot unit, `After=local-fs.target`, `RemainAfterExit=yes` |
-| `os-build/test/boot-switch-selftest.sh` | fake-efibootmgr harness (198 assertions, runs on macOS) |
+| `os-build/test/boot-switch-selftest.sh` | fake-efibootmgr + fake-ESP harness (245 assertions, runs on macOS) |
 | `/var/lib/aether-boot/original-order` (runtime) | the recorded `BootOrder` that makes a persistent switch reversible |
 
 ## Why `BootNext` is the default
@@ -101,16 +101,23 @@ Persistent mode (`--persistent`, opt-in):
 ```
         Ubuntu booted, order = ubuntu,fedora,aether
                  │  aether-boot-switch aether --persistent
-                 │     1. record "ubuntu,fedora,aether" in <state>/original-order
+                 │     1. write the ESP marker:  <esp>/aether-boot-mode
+                 │           mode=persistent
+                 │           original=ubuntu,fedora,aether
+                 │           armed_utc=2026-11-28T03:55:02Z
+                 │        (refused outright if the ESP cannot be written)
                  │     2. efibootmgr -o aether,ubuntu,fedora   (verified)
                  ▼
         BootOrder = aether,ubuntu,fedora   [result=switched, mode=persistent]
                  │  reboot (no BootNext involved)
                  ▼
         AetherOS booted
-                 │  unit: `aether-boot-switch mode` prints persistent
+                 │  unit: `aether-boot-switch mode` (ESP mounted read-only)
+                 │        prints persistent because the marker is there
                  │        → aether-boot-switch ubuntu --persistent
-                 │        → efibootmgr -o ubuntu,fedora,aether (verified, record dropped)
+                 │        → efibootmgr -o ubuntu,fedora,aether (verified)
+                 │        → marker deleted (ESP remounted read-write for that
+                 │          one operation, then unmounted)
                  ▼
         BootOrder = ubuntu,fedora,aether  ← byte for byte what it was
                  │  reboot
@@ -118,29 +125,62 @@ Persistent mode (`--persistent`, opt-in):
         Ubuntu booted, mode=default
 ```
 
+And the case this exists to protect — the owner's own choice:
+
+```
+        BootOrder = aether,ubuntu   (set in BIOS, or armed and already undone)
+        no marker on the ESP
+                 │  AetherOS boots
+                 ▼
+        unit: mode=owner → logs "that is the owner's choice" and exits
+                 │  no BootNext, no BootOrder write: AetherOS stays the default
+                 ▼
+        reboot → AetherOS again, for ever, until the owner says otherwise
+        (aether-boot-switch ubuntu --persistent is how they say otherwise)
+```
+
 Idempotency: if `BootNext` already points at the target, or `BootOrder` already
 equals the recorded order, no write happens at all (`result=already`), so the
 unit can run on every boot without churn.
 
-### The record and the tmpfs caveat
+### Where the armed state lives, and why it is the ESP
 
-`/var/lib/aether-boot/original-order` holds the order to restore. It is written
-*before* the `BootOrder` write (so the order is always reversible) and removed
-only after a verified restore.
+AetherOS mounts `/var` from tmpfs (`overlay/etc/fstab`), so
+`/var/lib/aether-boot/original-order` — written on Ubuntu — simply does not exist
+on the AetherOS side. Anything the two systems must agree on has to live on a
+store both can read, and for this machine that is the USB ESP.
 
-On AetherOS `/var` is tmpfs (`overlay/etc/fstab`), so the record written from
-Ubuntu is **not visible** on the AetherOS side. The unit therefore treats the
-live `BootOrder` as the authority: if its first entry is an AetherOS entry, a
-persistent switch is in effect (that is also exactly what `mode` reports), and
-`ubuntu --persistent` rebuilds the restore order from the table:
+So a persistent arm writes a plain-text marker next to `BOOTX64.EFI`:
 
-- recorded order first (dead/duplicate indexes dropped), then
-- any entry that appeared since, minus AetherOS.
+```
+<esp>/aether-boot-mode
+  mode=persistent
+  original=0000,0001
+  armed_utc=2026-11-28T03:55:02Z
+```
 
-With no record at all that reduces to "internal disk first, AetherOS last", which
-is byte-identical to the original order whenever AetherOS was last to begin with
-(the normal Dell layout), and differs only when AetherOS sat in the middle — it
-then moves to the end, which is the safe shape anyway.
+Rules around it:
+
+- **Written before `BootOrder`, and the arm is refused if it cannot be written.**
+  A persistent switch the AetherOS side cannot see would never be undone, which
+  is precisely the failure this replaces.
+- **Read on a read-only mount.** `mode`, `status` and the restore decision never
+  have write access to the ESP.
+- **Deleted on a read-write mount held only for that one operation**, then
+  remounted read-only and unmounted.
+- **Absent means "not ours".** `BootOrder` starting with AetherOS *without* a
+  marker is the owner's choice (BIOS, or an arm that was already undone) and the
+  unit leaves the boot table untouched: no `BootOrder` write and no `BootNext`
+  write. `mode` reports that state as `owner`.
+- `/var/lib/aether-boot/original-order` is kept only as a convenience copy for
+  commands run on the same side (`--persistent`, `clear`). When both exist the
+  marker wins; a `BootOrder` entry named in the marker but since deleted is
+  dropped, and an entry that still exists is put back in its recorded place.
+
+The unit does the mount through `aether-boot-switch` (one implementation, and the
+same code runs on Ubuntu), so the ESP is mounted exactly once per decision and
+always unmounted again — `os-build/test/boot-switch-selftest.sh` records the
+`mount`/`umount` calls and asserts the `-o ro` mount plus the unmount.
 
 ## What the owner runs
 
@@ -182,6 +222,11 @@ sudo reboot                      # back on Ubuntu, order byte-identical
 aether-boot-switch ubuntu --persistent
 ```
 
+`--persistent` arms a marker on the AetherOS stick's ESP
+(`<esp>/aether-boot-mode`), so the stick must be plugged in and the ESP writable
+when it is run; if it is not, the command refuses and changes nothing. That is
+deliberate: an arm the AetherOS side cannot see would never be undone.
+
 Expected output (stable marker line, one per invocation):
 
 ```
@@ -211,8 +256,18 @@ and with a persistent switch armed:
 
 ```
   BootOrder   : 0003,0000,0001,0002
-  Mode        : persistent (BootOrder=0003,0000,0001,0002, original recorded: 0000,0001,0002)
-  Recorded    : 0000,0001,0002 (/var/lib/aether-boot/original-order)
+  Mode        : persistent (armed marker on the ESP, original 0000,0001,0002)
+  Marker      : present (aether-boot-mode)
+  Recorded    : 0000,0001,0002 (/var/lib/aether-boot/original-order, convenience copy)
+```
+
+and when AetherOS is first with no marker (the owner's choice):
+
+```
+  BootOrder   : 0003,0000,0001,0002
+  Mode        : owner (AetherOS first, no armed marker: left alone)
+  Marker      : absent (aether-boot-mode)
+AETHER_BOOT_SWITCH: next=none label=none current=0003 result=status mode=owner
 ```
 
 If the firmware does not report `BootOrder` at all, `status` says
@@ -266,6 +321,10 @@ Ubuntu target (`ubuntu`):
 | No verifiable `BootOrder`, no persistent mode | `--persistent` refuses (exit 1, `result=noop`) when the firmware does not report `BootOrder` |
 | Cannot strand the machine (default mode) | `BootNext` is consumed by firmware, so the worst case is one unexpected boot, then `BootOrder` |
 | Explicit escape hatch | `aether.boot=stay` on the cmdline or `/run/aether-boot-stay` stops the return for that boot (also in persistent mode) |
+| The arm must be visible to AetherOS | the ESP marker is written *before* `BootOrder`; if it cannot be written the arm is refused (`result=noop`, exit 1) and `BootOrder` is untouched |
+| The ESP is read-only unless it must be written | `mode`/`status`/the restore decision use an `-o ro` mount; the marker is removed on a read-write mount held only for that operation, then remounted `ro` and unmounted |
+| A `BootOrder` without a marker is never touched | `mode=owner` → the unit writes neither `BootOrder` nor `BootNext` |
+| A failed arm un-arms itself | if the `BootOrder` write is not confirmed the marker is deleted again, so the other side never sees a half-done arm |
 | `clear` cannot leave a switch armed | restores the recorded order, drops the record, drops `BootNext`; if the restore fails the record is kept and the command exits 4 |
 
 `efivarfs` entries are immutable, so the script never writes efivars directly;
@@ -313,6 +372,9 @@ Persistent cycle, step by step (`--persistent`):
 | `result=noop` + "does not report BootOrder" | firmware with no `BootOrder` variable | `--persistent` refuses before writing; one-shot mode still works | use the default mode |
 | `result=noop` + "no restore order can be derived" | AetherOS is the only entry, or already first with nothing else | nothing written (a switch that could not be undone is not made) | create the other entry first |
 | `result=failed` + "was not confirmed" | firmware refused `SetVariable` (RO efivars, firmware bug, fw password) | exit 4; `BootNext`/`BootOrder` re-read and rolled back | `aether-boot-switch status`; `aether-boot-switch clear` |
+| `result=noop` + "cannot write the armed marker" | ESP not writable/not present (stick unplugged, mounted read-only, permissions) | refuses to arm before touching `BootOrder` | plug the stick in, `sudo`, or set `AETHER_USB_PART` / `AETHER_ESP_DIR` |
+| `result=failed` + marker "could not be removed" | order restored but the ESP would not take the delete | order is correct, the marker stays, exit 4 | `sudo rm <esp>/aether-boot-mode` (or reboot AetherOS once more, which retries) |
+| unit logs "that is the owner's choice" | `BootOrder` starts with AetherOS and there is no marker | nothing is written, exit 0 | intended; use `aether-boot-switch ubuntu --persistent` to change it |
 | `result=failed` + "efibootmgr -c failed" | no space in NVRAM, or wrong disk | stops before touching `BootNext` | `efibootmgr -v`; remove stale entries with `efibootmgr -b XXXX -B` |
 | `result=failed` + "recorded order ... has no entry that still exists" | every index in the record was deleted | table untouched, record kept so it can be fixed by hand | `efibootmgr -v`, then `clear` or re-arm |
 | persistent restore "did not complete" in the unit log | order write refused on the AetherOS side too | the unit falls back to a one-shot `BootNext` return, so the machine still comes back | `efibootmgr -o <recorded order>` in firmware setup |
@@ -329,7 +391,7 @@ $ bash -n os-build/board/aetheros/overlay/usr/libexec/aether-boot-return.sh   # 
 $ bash -n os-build/test/boot-switch-selftest.sh                        # clean
 $ os-build/test/boot-switch-selftest.sh
 ...
-198 passed, 0 failed        (exit 0)
+245 passed, 0 failed        (exit 0)
 ```
 
 The harness covers, for the default mode: entry exists → write + read-back;
@@ -356,8 +418,18 @@ only entry → refused; `status` renders `mode=next|persistent|default` and the
 "not reported" firmware case; `clear` restores the order, drops the record and
 drops `BootNext`, and keeps the record (exit 4) when the restore fails; the unit
 drops a stale record on the non-persistent path; and the tmpfs case (record
-deleted, as AetherOS sees `/var/lib`) still restores byte for byte from the live
-table.
+deleted, as AetherOS sees `/var/lib`) still restores byte for byte from the ESP
+marker.
+
+For the ESP marker specifically: the arm writes `mode=persistent`,
+`original=<order>` and `armed_utc=<ts>`; two `status` reads leave it in place; the
+restore and `clear` remove it; a marker naming a deleted entry has it dropped; a
+marker whose entry is missing from `BootOrder` puts it back in its recorded
+place; a marker that cannot be deleted is reported honestly (exit 4, order still
+restored); an unwritable ESP refuses the arm with no `BootOrder` write at all;
+`BootOrder` starting with AetherOS and **no** marker produces zero writes and
+`mode=owner`; and a fake `mount`/`umount` pair proves the ESP is mounted `-o ro`
+for the decision and unmounted afterwards, with no needless `remount,rw`.
 
 Also exercised manually on macOS: the degraded path with no `efibootmgr`
 (`status` → exit 3 no-op, return unit → exit 0 no-op) and arm → status → unit

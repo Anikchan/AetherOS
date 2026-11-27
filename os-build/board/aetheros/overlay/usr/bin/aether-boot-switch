@@ -12,11 +12,17 @@
 #     boot.
 #
 #   BootOrder (opt-in, `--persistent`)
-#     Writes the target entry to the front of BootOrder and records the previous
-#     order in <state>/original-order, so AetherOS can survive a power loss in
-#     the middle of a test. It is not the default because if AetherOS dies
-#     before it restores the order, the machine keeps booting AetherOS.
-#     `ubuntu --persistent` restores the recorded order (byte for byte).
+#     Writes the target entry to the front of BootOrder and arms it by writing a
+#     marker on the ESP (<esp>/aether-boot-mode, mode/original/armed_utc), so
+#     AetherOS can survive a power loss in the middle of a test. It is not the
+#     default because if AetherOS dies before it restores the order, the machine
+#     keeps booting AetherOS. `ubuntu --persistent` restores the recorded order
+#     (byte for byte) and removes the marker.
+#
+#     The marker lives on the ESP because AetherOS keeps /var on tmpfs: a record
+#     under /var/lib written from Ubuntu is invisible there. A BootOrder that
+#     starts with AetherOS and carries NO marker is the owner's own choice and is
+#     never touched.
 #
 # The same file is the Ubuntu host helper (os-build/scripts/aether-boot-switch.sh
 # is a symlink to it) and the image binary used by aether-boot-return.service,
@@ -49,6 +55,8 @@
 #   AETHER_USB_PARTNUM   partition number for -p (default: from the device name)
 #   AETHER_USB_PARTUUID  ESP partition GUID (default: blkid PARTUUID)
 #   AETHER_STATE_DIR     original-order record dir (default /var/lib/aether-boot)
+#   AETHER_ESP_DIR       use this directory as the ESP instead of mounting it
+#   AETHER_ESP_MNT       mount point used when the ESP must be mounted
 #   AETHER_LOG           log file, "-" disables it (default /var/log/aether-boot.log)
 #   AETHER_RUN_DIR       state dir for the stay flag (default /run)
 
@@ -142,19 +150,22 @@ in_set() {  # in_set <needle> <space separated set>
 }
 
 # detect_mode — what will actually happen on the next boot.
+# MARKER_PRESENT is set by esp_marker_probe; call it first where it matters.
 detect_mode() {
     if [ -n "${BOOT_NEXT:-}" ]; then
         MODE=next
         return 0
     fi
+    if [ "$MARKER_PRESENT" = 1 ]; then
+        MODE=persistent
+        return 0
+    fi
     if [ -n "${BOOT_ORDER:-}" ] && [ -n "$AETHER_SET" ] &&
        in_set "$(first_index "$BOOT_ORDER")" "$AETHER_SET" &&
        [ -n "$(order_keep "$(order_drop "$BOOT_ORDER" "$AETHER_SET")")" ]; then
-        # The live order starts with an AetherOS entry, so the next boot is
-        # AetherOS whatever a record says. This is the authoritative signal:
-        # /var/lib on AetherOS is tmpfs, so the record written from Ubuntu is
-        # not visible there, but BootOrder is.
-        MODE=persistent
+        # AetherOS first without a marker: the owner set this on purpose (BIOS,
+        # or a persistent arm that was already undone). Never overridden.
+        MODE=owner
         return 0
     fi
     MODE=default
@@ -282,6 +293,139 @@ save_record() {
 
 drop_record() {
     rm -f "$ORDER_FILE" 2>/dev/null || true
+}
+
+# --- the armed marker on the ESP (the authority across the two systems) -----
+# AetherOS keeps /var on tmpfs, so a record written from Ubuntu is not visible
+# there. The ESP is the only store both systems see, so a persistent arm writes
+# a plain-text marker next to BOOTX64.EFI:
+#
+#   <esp>/aether-boot-mode
+#     mode=persistent
+#     original=0000,0001
+#     armed_utc=2026-11-28T03:55:02Z
+#
+# It is read on a read-only mount and removed on a read-write mount held only
+# for that one operation. No marker means "not our business".
+MARKER_NAME=aether-boot-mode
+MARKER_PRESENT=0
+MARKER_ORIGINAL=""
+ESP_DIR=""
+ESP_OWN_MOUNT=0
+ESP_REMOUNT_RW=0
+
+esp_ensure_ro() {
+    [ -n "$ESP_DIR" ] && return 0
+    if [ -n "${AETHER_ESP_DIR:-}" ]; then
+        [ -d "$AETHER_ESP_DIR" ] || return 1
+        ESP_DIR=$AETHER_ESP_DIR
+        return 0
+    fi
+    part=$(usb_part) || return 1
+    if command -v findmnt >/dev/null 2>&1; then
+        mp=$(findmnt -n -o TARGET "$part" 2>/dev/null) || mp=""
+        [ -n "$mp" ] && { ESP_DIR=$mp; return 0; }
+    fi
+    mnt=${AETHER_ESP_MNT:-/run/aether-esp}
+    mkdir -p "$mnt" 2>/dev/null || return 1
+    if mount -o ro "$part" "$mnt" 2>/dev/null || mount -t vfat -o ro "$part" "$mnt" 2>/dev/null; then
+        ESP_DIR=$mnt
+        ESP_OWN_MOUNT=1
+        return 0
+    fi
+    return 1
+}
+
+# Read-write, only for the marker write/delete. A remount is undone on release.
+esp_ensure_rw() {
+    esp_ensure_ro || return 1
+    [ -w "$ESP_DIR" ] && return 0
+    mount -o remount,rw "$ESP_DIR" 2>/dev/null || return 1
+    ESP_REMOUNT_RW=1
+    [ -w "$ESP_DIR" ] || return 1
+    return 0
+}
+
+esp_release() {
+    if [ "$ESP_REMOUNT_RW" = 1 ]; then
+        mount -o remount,ro "$ESP_DIR" 2>/dev/null || true
+        ESP_REMOUNT_RW=0
+    fi
+    if [ "$ESP_OWN_MOUNT" = 1 ]; then
+        umount "$ESP_DIR" 2>/dev/null || true
+        ESP_OWN_MOUNT=0
+    fi
+    ESP_DIR=""
+}
+
+# esp_marker_probe — sets MARKER_PRESENT (0/1) and MARKER_ORIGINAL.
+# An ESP that cannot be mounted reads as "no marker", which is never a reason to
+# write anything.
+esp_marker_probe() {
+    MARKER_PRESENT=0
+    MARKER_ORIGINAL=""
+    esp_ensure_ro || return 1
+    marker_file=$ESP_DIR/$MARKER_NAME
+    if [ -f "$marker_file" ]; then
+        MARKER_PRESENT=1
+        MARKER_ORIGINAL=$(sed -n 's/^original=//p' "$marker_file" 2>/dev/null | head -1 | tr -d '[:space:]')
+    fi
+    esp_release
+    return 0
+}
+
+# esp_marker_write <original order> — arm. Fails loudly on purpose: a persistent
+# switch the other side cannot see is exactly the bug this replaces.
+esp_marker_write() {
+    esp_ensure_rw || return 1
+    marker_file=$ESP_DIR/$MARKER_NAME
+    marker_tmp=$marker_file.tmp
+    {
+        printf 'mode=persistent\n'
+        printf 'original=%s\n' "$1"
+        printf 'armed_utc=%s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+    } >"$marker_tmp" 2>/dev/null || { rm -f "$marker_tmp" 2>/dev/null; esp_release; return 1; }
+    mv -f "$marker_tmp" "$marker_file" 2>/dev/null || { rm -f "$marker_tmp" 2>/dev/null; esp_release; return 1; }
+    esp_release
+    return 0
+}
+
+# esp_marker_delete — remove the marker; read-write only for this operation.
+esp_marker_delete() {
+    esp_ensure_ro || return 1
+    marker_file=$ESP_DIR/$MARKER_NAME
+    if [ ! -f "$marker_file" ]; then
+        esp_release
+        return 0
+    fi
+    if [ ! -w "$ESP_DIR" ] && ! esp_ensure_rw; then
+        esp_release
+        return 1
+    fi
+    rm -f "$marker_file" 2>/dev/null || { esp_release; return 1; }
+    esp_release
+    return 0
+}
+
+# marker_or_record — the order to restore: the ESP marker first (authority), then
+# the /var convenience copy. Sets RESTORE_ORDER and RESTORE_FROM (globals, so the
+# mount/EPS_DIR state stays in this shell).
+marker_or_record() {
+    RESTORE_ORDER=""
+    RESTORE_FROM=""
+    esp_marker_probe || true
+    if [ "$MARKER_PRESENT" = 1 ] && [ -n "$MARKER_ORIGINAL" ]; then
+        RESTORE_ORDER=$MARKER_ORIGINAL
+        RESTORE_FROM="the ESP marker ($MARKER_NAME)"
+        return 0
+    fi
+    rec=$(read_record)
+    if [ -n "$rec" ]; then
+        RESTORE_ORDER=$rec
+        RESTORE_FROM="$ORDER_FILE"
+        return 0
+    fi
+    return 1
 }
 
 # --- USB identity -----------------------------------------------------------
@@ -584,91 +728,103 @@ bootorder_unavailable() {
     exit 1
 }
 
-# arm_persistent — BootOrder := AetherOS, then the previous order verbatim.
+# arm_persistent — marker on the ESP, then BootOrder := AetherOS + the previous
+# order. The marker is written first and the arm is refused if it cannot be: an
+# arm the AetherOS side cannot see would never be undone.
 arm_persistent() {
     [ "$ORDER_SUPPORTED" = 1 ] || bootorder_unavailable
     cur=$BOOT_ORDER
-    rec=$(read_record)
+    rec=""
+    want=""
 
     if [ "$(first_index "$cur")" = "$AE_IDX" ]; then
-        # Already first (a previous persistent switch, or a manual efibootmgr -o).
-        if [ -z "$rec" ]; then
-            # No record, so nothing to restore to: derive one with AetherOS at the
-            # end, which is the only order that can end the persistent mode.
-            rec=$(order_merge "$(order_drop "$cur" "$AETHER_SET")" "$(comma_list "$AETHER_SET")")
-            rec=$(order_keep "$rec")
-            if [ -z "$rec" ] || [ "$(first_index "$rec")" = "$AE_IDX" ]; then
-                note_err "BootOrder starts with AetherOS and no restore order can be derived"
-                note_err "  (no other existing entry). Refusing: a persistent switch that cannot"
-                note_err "  be undone would keep this machine on the USB for ever."
-                detect_mode
-                mark "${BOOT_NEXT:-none}" "$(entry_label "$AE_IDX")" noop
-                exit 1
-            fi
-            save_record "$rec" || {
-                note_err "cannot write $ORDER_FILE; refusing to change BootOrder without a restore record."
-                detect_mode
-                mark "${BOOT_NEXT:-none}" "$(entry_label "$AE_IDX")" noop
-                exit 1
-            }
-            note "recorded the restore order: $rec"
+        # Already first. If the marker is ours, the arm is already complete.
+        if [ "$MARKER_PRESENT" = 1 ] && [ -n "$MARKER_ORIGINAL" ]; then
+            note "already armed (marker on the ESP); recorded order: $MARKER_ORIGINAL"
+            MODE=persistent
+            mark "${BOOT_NEXT:-none}" "$(entry_label "$AE_IDX")" already
+            exit 0
         fi
-        note "BootOrder already starts with $AE_IDX ($AETHER_LABEL); nothing to write."
-        MODE=persistent
-        mark "${BOOT_NEXT:-none}" "$(entry_label "$AE_IDX")" already
-        exit 0
+        # No marker: a manual order or a lost marker. Derive an order that can end
+        # the persistent mode (AetherOS at the end) instead of refusing outright.
+        rec=$(order_keep "$(order_merge "$(order_drop "$cur" "$AETHER_SET")" "$(comma_list "$AETHER_SET")")")
+        if [ -z "$rec" ] || [ "$(first_index "$rec")" = "$AE_IDX" ]; then
+            note_err "BootOrder starts with AetherOS and no restore order can be derived"
+            note_err "  (no other existing entry). Refusing: a persistent switch that cannot"
+            note_err "  be undone would keep this machine on the USB for ever."
+            detect_mode
+            mark "${BOOT_NEXT:-none}" "$(entry_label "$AE_IDX")" noop
+            exit 1
+        fi
+        note "derived the restore order: $rec"
+        want=$cur
+    else
+        rest=$(order_keep "$(order_drop "$cur" "$AETHER_SET")")
+        if [ -z "$rest" ]; then
+            note_err "BootOrder has no entry besides AetherOS"
+            note_err "  (current order: $cur). A persistent switch to an AetherOS-only order"
+            note_err "  could not be undone, so nothing was written."
+            detect_mode
+            mark "${BOOT_NEXT:-none}" "$(entry_label "$AE_IDX")" noop
+            exit 1
+        fi
+        rec=$cur
+        want=$(order_merge "$AE_IDX" "$rest")
     fi
 
-    rest=$(order_drop "$cur" "$AETHER_SET")
-    rest=$(order_keep "$rest")
-    if [ -z "$rest" ]; then
-        note_err "BootOrder has no entry besides AetherOS"
-        note_err "  (current order: $cur). A persistent switch to an AetherOS-only order"
-        note_err "  could not be undone, so nothing was written."
+    if ! esp_marker_write "$rec"; then
+        note_err "cannot write the armed marker ($MARKER_NAME) to the AetherOS ESP."
+        note_err "  A persistent switch that AetherOS cannot see would never be undone,"
+        note_err "  so nothing was armed and BootOrder is unchanged."
+        note_err "  Check that the stick is plugged in, or set AETHER_USB_PART / AETHER_ESP_DIR."
         detect_mode
         mark "${BOOT_NEXT:-none}" "$(entry_label "$AE_IDX")" noop
         exit 1
     fi
+    note "armed: marker written to the ESP ($MARKER_NAME), original order $rec"
+    # Convenience copy for this side only; the ESP marker is the authority.
+    save_record "$rec" || note "warning: could not write $ORDER_FILE (convenience copy only)."
 
-    # Record before the write: if the write half-applies, the order can be put
-    # back. The record is removed by the restore path, never by a failed arm.
-    save_record "$cur" || {
-        note_err "cannot write $ORDER_FILE (need root); refusing to change BootOrder"
-        note_err "  without a restore record. Nothing was changed."
-        detect_mode
-        mark "${BOOT_NEXT:-none}" "$(entry_label "$AE_IDX")" noop
-        exit 1
-    }
-    note "recorded the original BootOrder: $cur"
-
-    want=$(order_merge "$AE_IDX" "$rest")
     apply_order "$want" "$cur"
     arc=$?
     if [ "$arc" != 0 ]; then
+        if esp_marker_delete; then
+            note_err "  the marker was removed again: the arm did not take."
+        else
+            note_err "  the marker could not be removed; remove it by hand: <esp>/$MARKER_NAME"
+        fi
+        drop_record
         MODE=default
         [ "$arc" = 2 ] && MODE=unknown
         mark "${BOOT_NEXT:-none}" "$(entry_label "$AE_IDX")" failed
-        note_err "  The record is kept at $ORDER_FILE so the order can still be restored."
         exit 4
     fi
 
-    note "BootOrder -> $want (AetherOS first, previous order recorded)."
-    note "  Undo with: aether-boot-switch ubuntu --persistent   (or on the next AetherOS boot)"
-    MODE=persistent
-    mark "${BOOT_NEXT:-none}" "$(entry_label "$AE_IDX")" switched
+    if [ "$ORDER_CHANGED" = 1 ]; then
+        note "BootOrder -> $want (AetherOS first, original order on the ESP)."
+        note "  Undo with: aether-boot-switch ubuntu --persistent   (or on the next AetherOS boot)"
+        MODE=persistent
+        mark "${BOOT_NEXT:-none}" "$(entry_label "$AE_IDX")" switched
+    else
+        note "BootOrder already starts with $AE_IDX; only the marker was written."
+        MODE=persistent
+        mark "${BOOT_NEXT:-none}" "$(entry_label "$AE_IDX")" already
+    fi
     exit 0
 }
 
-# restore_persistent — put the recorded order back, byte for byte where possible.
+# restore_persistent <recorded order> <where the order came from>
+# Put the order back, then remove the marker (read-write only for that step).
 restore_persistent() {
     rec=$1
+    from=${2:-$ORDER_FILE}
     [ "$ORDER_SUPPORTED" = 1 ] || bootorder_unavailable
 
     want=$(restore_desired "$rec")
     if [ -z "$want" ]; then
-        note_err "the recorded order ($rec) has no entry that still exists in the boot table"
-        note_err "  (current order: ${BOOT_ORDER:-none}). Leaving BootOrder untouched; the record"
-        note_err "  is kept at $ORDER_FILE."
+        note_err "the recorded order ($rec, from $from) has no entry that still exists"
+        note_err "  (current order: ${BOOT_ORDER:-none}). Leaving BootOrder untouched; the"
+        note_err "  marker/record is kept so it can be repaired by hand."
         detect_mode
         mark "${BOOT_NEXT:-none}" none failed
         exit 4
@@ -679,18 +835,26 @@ restore_persistent() {
     if [ "$arc" != 0 ]; then
         MODE=persistent
         [ "$arc" = 2 ] && MODE=unknown
-        note_err "  The record is kept at $ORDER_FILE so the next boot can try again."
+        note_err "  The marker/record is kept so the next boot can try again."
         mark "${BOOT_NEXT:-none}" none failed
         exit 4
     fi
 
+    if ! esp_marker_delete; then
+        note_err "BootOrder restored to $want, but the marker ($MARKER_NAME) could not be"
+        note_err "  removed from the ESP. Remove it by hand: <esp>/$MARKER_NAME"
+        drop_record
+        MODE=persistent
+        mark "${BOOT_NEXT:-none}" none failed
+        exit 4
+    fi
     drop_record
     MODE=default
     if [ "$ORDER_CHANGED" = 1 ]; then
-        note "BootOrder restored to the recorded order: $want"
+        note "BootOrder restored to the recorded order: $want (from $from); marker removed."
         mark "${BOOT_NEXT:-none}" "$(entry_label "$(first_index "$want")")" restored
     else
-        note "BootOrder already equals the recorded order ($want); record removed."
+        note "BootOrder already equals the recorded order ($want); marker removed."
         mark "${BOOT_NEXT:-none}" "$(entry_label "$(first_index "$want")")" already
     fi
     exit 0
@@ -727,6 +891,7 @@ ubuntu_persistent_fresh() {
     aelist=$(order_drop "$aelist" "$idx")
     want=$(order_merge "$(order_merge "$idx" "$rest")" "$aelist")
     want=$(order_keep "$want")
+    drop_record   # no marker: any /var copy is stale by definition
 
     if [ "$want" = "$cur" ]; then
         note "BootOrder already starts with $idx; nothing written."
@@ -754,6 +919,7 @@ ubuntu_persistent_fresh() {
 cmd_status() {
     have_efibootmgr || no_tool
     load_table
+    esp_marker_probe || true
     detect_mode
     lbl=$(entry_label "${BOOT_NEXT:-}")
     [ -n "$lbl" ] || lbl=none
@@ -769,12 +935,15 @@ cmd_status() {
     fi
     case "$MODE" in
         next)       printf '  Mode        : BootNext=%s (one-shot; the firmware deletes it)\n' "$BOOT_NEXT" ;;
-        persistent) printf '  Mode        : persistent (BootOrder=%s, original recorded: %s)\n' \
-                            "$BOOT_ORDER" "$rec" ;;
+        persistent) printf '  Mode        : persistent (armed marker on the ESP, original %s)\n' \
+                            "${MARKER_ORIGINAL:-unknown}" ;;
+        owner)      printf '  Mode        : owner (AetherOS first, no armed marker: left alone)\n' ;;
         *)          printf '  Mode        : default (BootOrder governs)\n' ;;
     esac
+    printf '  Marker      : %s (%s)\n' \
+        "$([ "$MARKER_PRESENT" = 1 ] && echo present || echo absent)" "$MARKER_NAME"
     if [ -n "$rec" ]; then
-        printf '  Recorded    : %s (%s)\n' "$rec" "$ORDER_FILE"
+        printf '  Recorded    : %s (%s, convenience copy)\n' "$rec" "$ORDER_FILE"
     fi
     printf '  Entries     :\n'
     printf '%s\n' "$ENTRIES" | awk -F'\t' \
@@ -792,6 +961,7 @@ cmd_status() {
 cmd_mode() {
     have_efibootmgr || no_tool
     load_table
+    esp_marker_probe || true
     detect_mode
     printf 'AETHER_BOOT_MODE: %s\n' "$MODE"
     logline "$PROG: mode=$MODE"
@@ -824,7 +994,8 @@ cmd_clear() {
     bad=0
     did=0
 
-    rec=$(read_record)
+    marker_or_record || rec=""
+    rec=$RESTORE_ORDER
     if [ -n "$rec" ]; then
         if [ "$ORDER_SUPPORTED" != 1 ]; then
             note_err "a persistent record exists ($ORDER_FILE) but this firmware does not report"
@@ -833,22 +1004,33 @@ cmd_clear() {
         else
             want=$(restore_desired "$rec")
             if [ -z "$want" ]; then
-                note_err "the recorded order ($rec) has no entry that still exists;"
-                note_err "  BootOrder left untouched, record kept at $ORDER_FILE."
+                note_err "the recorded order ($rec, from $RESTORE_FROM) has no entry that"
+                note_err "  still exists; BootOrder left untouched, the marker is kept."
                 bad=1
             elif [ "${BOOT_ORDER:-}" = "$want" ]; then
-                drop_record
-                note "BootOrder already equals the recorded order ($want); record removed."
-                did=1
+                if esp_marker_delete; then
+                    drop_record
+                    note "BootOrder already equals the recorded order ($want); marker removed."
+                    did=1
+                else
+                    note_err "BootOrder is already correct but the ESP marker could not be removed."
+                    bad=1
+                fi
             else
                 apply_order "$want" "${BOOT_ORDER:-}"
                 arc=$?
                 if [ "$arc" = 0 ]; then
-                    drop_record
-                    note "BootOrder restored to $want; persistent record removed."
-                    did=1
+                    if esp_marker_delete; then
+                        drop_record
+                        note "BootOrder restored to $want; marker removed."
+                        did=1
+                    else
+                        note_err "BootOrder restored, but the ESP marker could not be removed."
+                        drop_record
+                        bad=1
+                    fi
                 else
-                    note_err "could not restore the recorded BootOrder; record kept for the next boot."
+                    note_err "could not restore the recorded BootOrder; marker kept for the next boot."
                     bad=1
                 fi
             fi
@@ -890,6 +1072,9 @@ cmd_aether() {
     ensure_usb_partuuid
     ensure_aether_entry
     if [ "$PERSISTENT" = 1 ]; then
+        # Read the marker first: an arm that is already there must not be
+        # re-derived and overwritten with a different restore order.
+        esp_marker_probe || true
         arm_persistent
     fi
     if [ "$ENTRY_CREATED" = 1 ]; then
@@ -903,9 +1088,8 @@ cmd_ubuntu() {
     load_table
     ensure_usb_partuuid
     if [ "$PERSISTENT" = 1 ]; then
-        rec=$(read_record)
-        if [ -n "$rec" ]; then
-            restore_persistent "$rec"
+        if marker_or_record; then
+            restore_persistent "$RESTORE_ORDER" "$RESTORE_FROM"
         fi
         ubuntu_persistent_fresh
     fi
