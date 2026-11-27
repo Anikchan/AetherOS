@@ -59,6 +59,15 @@ window.
    contract is implemented and tested headless; it has never been exercised
    against the real DRM backend).
 
+### Runtime libraries the image does not carry yet
+
+`grep -E "FONTCONFIG|FREETYPE|XKBCOMMON|DEJAVU|SLINT" os-build/buildroot/aetheros_defconfig`
+returns nothing except `BR2_PACKAGE_LIBINPUT=y`. The defconfig therefore has no
+`fontconfig`, `freetype`, `libxkbcommon` or bundled fonts, all of which the
+Slint shell and the compositor's keyboard handling need at runtime, and no Rust
+toolchain package at all. Those rows have to be added together with the binary
+recipe, or the shell will build and fail to start.
+
 ## Honest hardware status
 
 `P2` graphics, audio, sleep, battery, temperature and webcam were validated on
