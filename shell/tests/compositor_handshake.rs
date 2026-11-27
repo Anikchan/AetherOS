@@ -344,6 +344,7 @@ fn the_shell_creates_every_layer_surface_on_a_real_compositor() {
             "{name} must be mapped={expected}:\n{stdout}"
         );
     };
+    open("background", true);
     open("menubar", true);
     open("dock", true);
     open("launcher", false);
@@ -351,8 +352,29 @@ fn the_shell_creates_every_layer_surface_on_a_real_compositor() {
     open("control-center", false);
     assert!(
         stdout
-            .contains("AETHER_SHELL_LAYER_HOST_READY: surfaces=5 configured=5 mapped=2 painted=2"),
-        "two panels are up on a fresh session:\n{stdout}"
+            .contains("AETHER_SHELL_LAYER_HOST_READY: surfaces=6 configured=6 mapped=3 painted=3"),
+        "the wallpaper and two panels are up on a fresh session:\n{stdout}"
+    );
+    // The background is on the Background layer, covers the output and reserves
+    // nothing (exclusive zone -1).
+    assert!(
+        stdout.contains(
+            "AETHER_SHELL_LAYER_CREATED: name=background namespace=aether-shell-background \
+             layer=Background anchors=15 size=1920x1080 exclusive_zone=-1 margin_top=0 keyboard=0"
+        ),
+        "the wallpaper surface is a full-output Background surface:\n{stdout}"
+    );
+    assert!(
+        journal.contains(
+            "AETHER_COMPOSITOR_LAYER_SURFACE: namespace=aether-shell-background layer=Background"
+        ),
+        "the compositor created the background layer surface:\n{journal}"
+    );
+    assert!(
+        journal.contains(
+            "AETHER_COMPOSITOR_LAYER_CONFIGURE: namespace=aether-shell-background size=1920x1080"
+        ),
+        "the compositor configured the wallpaper at the output size:\n{journal}"
     );
     // The closed launcher has no surface pixels at all.
     assert!(
@@ -405,6 +427,44 @@ fn the_shell_creates_every_layer_surface_on_a_real_compositor() {
     let accent_right = (menubar_width - 40..menubar_width)
         .any(|x| (4..24).any(|y| accent_like(pixel(&menubar, menubar_width, x, y))));
     assert!(!accent_right, "the accent logo is only on the left");
+
+    // The wallpaper: opaque everywhere (no transparent holes for the compositor
+    // to show its clear colour through) and not the panel tint. The alpha is
+    // asserted on the exact ARGB bytes in `paint`'s unit test; the PNG dump
+    // carries the colour, so a transparent pixel would read as 0,0,0 here.
+    let (bg_width, bg_height, background) = read_png(&shots.join("layer-background.png"));
+    assert_eq!((bg_width, bg_height), (1920, 1080));
+    let holes = background
+        .iter()
+        .filter(|pixel| **pixel == [0, 0, 0])
+        .count();
+    assert_eq!(holes, 0, "the wallpaper is opaque everywhere");
+    let tint_pixels = background
+        .iter()
+        .filter(|pixel| near(**pixel, [12, 14, 18], 3))
+        .count();
+    assert!(
+        tint_pixels * 10 < background.len(),
+        "the wallpaper is not the menu-bar tint ({tint_pixels} tinted pixels)"
+    );
+    // It is the design gradient: dark blue, with the glows lifting the middle.
+    let corner = pixel(&background, bg_width, 0, 0);
+    let centre = pixel(&background, bg_width, bg_width / 2, bg_height / 2);
+    assert!(
+        corner[2] > corner[0],
+        "the top-left is blue-dominant: {corner:?}"
+    );
+    assert_ne!(corner, centre, "a gradient, not a flat fill");
+    assert_eq!(
+        pixel(&menubar, menubar_width, 100, 14),
+        pixel(&menubar, menubar_width, 100, 14),
+        "sanity: the panel sample is stable"
+    );
+    assert_ne!(
+        centre,
+        pixel(&menubar, menubar_width, 100, 14),
+        "the wallpaper differs from the panel strip"
+    );
 
     let (dock_width, dock_height, dock) = read_png(&shots.join("layer-dock.png"));
     assert_eq!((dock_width, dock_height), (720, 64));
@@ -503,6 +563,10 @@ fn an_opened_panel_is_mapped_painted_and_placed() {
     assert!(
         stdout.contains("AETHER_SHELL_LAYER_PAINT: name=launcher mapped=true buffer=640x420"),
         "the opened launcher is mapped and painted:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("AETHER_SHELL_LAYER_PAINT: name=background mapped=true buffer=1920x1080"),
+        "the wallpaper stays mapped under the overlay:\n{stdout}"
     );
     assert!(
         stdout.contains("AETHER_SHELL_LAYER_PAINT: name=menubar mapped=true"),
@@ -614,7 +678,7 @@ fn injected_keys_reach_the_shell_and_move_the_ring() {
     );
     // The ring moved on both Tabs, then Enter activated the focused item.
     assert!(
-        stdout.contains("AETHER_SHELL_ACTIVATE: surface=notifications index=0"),
+        stdout.contains("AETHER_SHELL_ACTIVATE: surface=notifications item=0"),
         "Enter activated the focused item:\n{stdout}"
     );
     // The compositor focused the launcher, and our marker says the same.
@@ -635,6 +699,102 @@ fn injected_keys_reach_the_shell_and_move_the_ring() {
     // Off-by-8 guard: evdev 15 read as an XKB-minus-8 code would log 7.
     assert!(!stdout.contains("evdev=7"), "{stdout}");
     assert!(!stdout.contains("evdev=20"), "{stdout}");
+
+    let _ = fs::remove_dir_all(&shots);
+}
+
+/// The socket pointer path, end to end: the compositor's test hook moves the
+/// pointer into the dock tile and clicks it, the shell routes the event into the
+/// scene, and the tile's handler activates the app.
+///
+/// The click lands at output (861, 1048), i.e. surface-local (261, 32) on the
+/// dock surface (placed at 600,1016) — the centre of the first pinned tile.
+#[test]
+fn an_injected_click_on_the_dock_activates_its_tile() {
+    let Some(binary) = compositor_binary() else {
+        println!("AETHER_SHELL_HANDSHAKE_SKIPPED: no aether-compositor binary");
+        return;
+    };
+    let compositor = CompositorProcess::start_with(
+        &binary,
+        "ptr",
+        &[("AETHER_COMPOSITOR_INJECT_POINTER", "x=861,y=1048,button=1")],
+    );
+    let shots = temp_dir("shots-pointer");
+    let _ = fs::remove_dir_all(&shots);
+    let output = connect_for(&compositor.runtime_dir, &shots, None, 1500);
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    let journal = compositor.log();
+    if std::env::var_os("AETHER_SHELL_TEST_LOG").is_some() {
+        println!("--- aether-shell --connect ---\n{stdout}\n{stderr}");
+        println!("--- compositor journal ---\n{journal}");
+    }
+    assert!(
+        output.status.success(),
+        "the shell host failed\nstdout:\n{stdout}\njournal:\n{journal}"
+    );
+    assert!(
+        stdout.contains("seat=keyboard+pointer"),
+        "the seat advertises a pointer and the shell binds it:\n{stdout}"
+    );
+
+    // The compositor delivered the click to the dock surface at the tile.
+    for marker in [
+        "AETHER_COMPOSITOR_POINTER: surface=aether-shell-dock x=261 y=32 event=enter",
+        "AETHER_COMPOSITOR_POINTER: surface=aether-shell-dock x=261 y=32 event=button",
+    ] {
+        assert!(
+            journal.contains(marker),
+            "the compositor delivered {marker}:\n{journal}"
+        );
+    }
+    assert!(
+        journal.contains(
+            "AETHER_COMPOSITOR_POINTER_INJECTION: backend=headless x=861 y=1048 button=1"
+        ),
+        "the injection hook ran:\n{journal}"
+    );
+
+    // The shell saw the pointer on the dock, in surface-local coordinates. The
+    // button code is whatever the compositor put on the wire: the protocol's
+    // BTN_LEFT (272) or the injection hook's `button=1`; both mean left.
+    let pressed = stdout
+        .lines()
+        .find(|line| {
+            line.starts_with("AETHER_SHELL_POINTER: surface=aether-shell-dock x=261 y=32 button=")
+                && line.contains("state=press")
+        })
+        .unwrap_or_else(|| panic!("no press marker for the dock tile:\n{stdout}"));
+    assert!(
+        pressed.ends_with("state=press window=861,1048"),
+        "the press landed at the tile in window coordinates: {pressed}"
+    );
+    assert!(
+        pressed.contains("button=272 ") || pressed.contains("button=1 "),
+        "a left click: {pressed}"
+    );
+    assert!(
+        stdout.lines().any(|line| {
+            line.starts_with("AETHER_SHELL_POINTER: surface=aether-shell-dock x=261 y=32 button=")
+                && line.contains("state=release")
+        }),
+        "the release followed the press:\n{stdout}"
+    );
+    // ... and the tile's handler activated the first pinned app.
+    assert!(
+        stdout.contains("AETHER_SHELL_ACTIVATE: surface=dock item=aether-files"),
+        "the dock click activated its tile:\n{stdout}"
+    );
+    // The pointer counters moved, and the activation repainted.
+    let run = stdout
+        .lines()
+        .find(|line| line.starts_with("AETHER_SHELL_LAYER_RUN: "))
+        .unwrap_or_else(|| panic!("no run summary:\n{stdout}"));
+    assert!(
+        !run.contains("pointers=0 "),
+        "pointer events were routed: {run}"
+    );
 
     let _ = fs::remove_dir_all(&shots);
 }

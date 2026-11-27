@@ -587,6 +587,11 @@ impl LayerHost {
                     continue;
                 }
                 if slot.mapped && slot.buffer_size() == want && !first {
+                    // The wallpaper never changes with shell state, so it is
+                    // committed once and left alone.
+                    if slot.request.layer == 0 {
+                        continue;
+                    }
                     // Nothing painted this frame and the surface is already
                     // correct: do not touch it (one commit per frame maximum).
                     if !painted || !painter.touched(&slot.request) {
@@ -642,7 +647,13 @@ impl LayerHost {
         let mut scratch = std::mem::take(&mut self.scratch);
         let (width, height) = {
             let painter = self.painter.as_ref().ok_or("the painter was not created")?;
-            painter.write_surface(&request, scale, &mut scratch)?
+            if request.layer == 0 {
+                // Background layer: the design wallpaper at output size. It does
+                // not depend on shell state, so it is painted once.
+                painter.write_wallpaper(scale, &mut scratch)
+            } else {
+                painter.write_surface(&request, scale, &mut scratch)?
+            }
         };
         if let Some(buffer) = self.state.slots[index].buffer.as_ref() {
             buffer.write(&scratch)?;
@@ -861,7 +872,8 @@ impl LayerHost {
 /// Whether a panel is on screen for the current overlay state.
 pub fn panel_open(name: &str, overlay: Overlay) -> bool {
     match name {
-        "menubar" | "dock" => true,
+        // The wallpaper is the desktop: always mapped, under everything else.
+        "background" | "menubar" | "dock" => true,
         "launcher" => overlay == Overlay::Launcher,
         "notifications" => overlay == Overlay::Notifications,
         "control-center" => overlay == Overlay::ControlCenter,

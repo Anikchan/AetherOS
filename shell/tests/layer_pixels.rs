@@ -153,10 +153,32 @@ fn frames_repaint_on_change_and_respect_the_motion_settings() {
         "the text-scale change repaints the menu bar"
     );
 
-    // Per-surface copy cost (crop + ARGB packing) for every planned surface.
+    // The wallpaper surface: the design gradient at output size, opaque
+    // everywhere (the compositor must never see a hole in it).
+    let mut wallpaper = Vec::new();
+    let started = Instant::now();
+    let (bg_width, bg_height) = painter.write_wallpaper(1, &mut wallpaper);
+    let background_ms = started.elapsed().as_secs_f64() * 1000.0;
+    assert_eq!((bg_width, bg_height), (1920, 1080));
+    assert_eq!(wallpaper.len(), 1920 * 1080 * 4);
+    assert!(
+        wallpaper.chunks_exact(4).all(|pixel| pixel[3] == 0xff),
+        "the wallpaper is opaque everywhere (alpha 255)"
+    );
+    assert!(
+        wallpaper
+            .chunks_exact(4)
+            .all(|pixel| pixel[..3] != [0, 0, 0]),
+        "the wallpaper has no transparent/palette holes"
+    );
+
+    // Per-surface copy cost (crop + ARGB packing) for every chrome surface.
     let mut scratch = Vec::new();
-    let mut surface_ms = Vec::new();
+    let mut surface_ms = vec![("background", background_ms)];
     for request in plan() {
+        if request.layer == 0 {
+            continue; // the wallpaper is painted, not cropped
+        }
         let started = Instant::now();
         painter
             .write_surface(&request, 1, &mut scratch)
@@ -218,7 +240,16 @@ fn frames_repaint_on_change_and_respect_the_motion_settings() {
         painter.frames()
     );
     let mut scratch = Vec::new();
+    let started = Instant::now();
+    let _ = painter.write_wallpaper(1, &mut scratch);
+    println!(
+        "AETHER_SHELL_PAINT_SURFACE: size=1280x800 surface=background ms={:.3}",
+        started.elapsed().as_secs_f64() * 1000.0
+    );
     for request in plan() {
+        if request.layer == 0 {
+            continue;
+        }
         let started = Instant::now();
         painter
             .write_surface(&request, 1, &mut scratch)

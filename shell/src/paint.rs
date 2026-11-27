@@ -188,6 +188,72 @@ impl LayerPainter {
         Ok((buffer_width as u32, buffer_height as u32))
     }
 
+    /// The design wallpaper at the canvas size (× `scale`), as premultiplied
+    /// ARGB bytes (`B, G, R, A` little-endian).
+    ///
+    /// [`Wallpaper`] in `shell/ui/surfaces.slint` is a 155° three-stop gradient
+    /// (#0B1220 → #0E1116 → #101725) with two soft glows; the background layer
+    /// surface needs it without the desktop preview (and without painting the
+    /// wallpaper behind every panel, which would cover the windows under a
+    /// floating dock). Painting it here keeps the chrome surfaces transparent
+    /// outside their panels and gives the background surface one opaque frame.
+    ///
+    /// [`Wallpaper`]: ../ui/surfaces.slint
+    pub fn write_wallpaper(&self, scale: i32, out: &mut Vec<u8>) -> (u32, u32) {
+        let scale = scale.max(1);
+        let width = self.size.0 * scale as u32;
+        let height = self.size.1 * scale as u32;
+        out.clear();
+        out.resize((width as usize) * (height as usize) * 4, 0xff);
+
+        // Row-invariant parts of the gradient: `t` is a linear function of the
+        // pixel position, so the per-pixel work is two multiply-adds plus the
+        // two glows (whose falloff needs no square root).
+        let (w, h) = (width.max(1) as f32, height.max(1) as f32);
+        let angle = 155f32.to_radians();
+        let (dx, dy) = (angle.sin(), -angle.cos());
+        let extent = dx.abs() * 0.5 + dy.abs() * 0.5;
+        // `px`/`py` are already normalised to 0..1, so the axis projection
+        // needs no size factor (dividing by the size made the gradient flat).
+        let slope_x = dx / (2.0 * extent);
+        let slope_y = dy / (2.0 * extent);
+        let (rx1, ry1) = (0.23, 0.29);
+        let (rx2, ry2) = (0.19, 0.24);
+        let inv_w = 1.0 / w;
+        let inv_h = 1.0 / h;
+
+        for y in 0..height {
+            let py = y as f32 * inv_h;
+            let base_y = (py - 0.5) * slope_y + 0.5;
+            let row = (y as usize) * (width as usize);
+            for x in 0..width {
+                let px = x as f32 * inv_w;
+                let t = (base_y + (px - 0.5) * slope_x).clamp(0.0, 1.0);
+                let mut colour = wallpaper_gradient(t);
+                colour = glow(
+                    colour,
+                    ((px - 0.31) / rx1, (py - 0.41) / ry1),
+                    (0x1C, 0x3D, 0x7A),
+                    0.33,
+                );
+                colour = glow(
+                    colour,
+                    ((px - 0.77) / rx2, (py - 0.66) / ry2),
+                    (0x6C, 0x4C, 0xE6),
+                    0.20,
+                );
+                let offset = (row + x as usize) * 4;
+                // Premultiplied and fully opaque, so the channel order is just
+                // B, G, R with A = 255.
+                out[offset] = colour.2;
+                out[offset + 1] = colour.1;
+                out[offset + 2] = colour.0;
+                out[offset + 3] = 0xff;
+            }
+        }
+        (width, height)
+    }
+
     /// The composed canvas as `Rgbx8888` bytes (alpha forced opaque), for the
     /// evidence dump the integration test reads.
     pub fn canvas_rgbx(&self) -> Vec<u8> {
@@ -202,15 +268,122 @@ impl LayerPainter {
     }
 }
 
+/// One wallpaper pixel (RGB) at `(x, y)` of a `width × height` frame.
+///
+/// Mirrors `Wallpaper` in `shell/ui/surfaces.slint`: the 155° base gradient plus
+/// its two glows, blended in the same order.
+pub fn wallpaper_pixel(x: u32, y: u32, width: u32, height: u32) -> (u8, u8, u8) {
+    let (w, h) = (width.max(1) as f32, height.max(1) as f32);
+    let (px, py) = (x as f32 / w, y as f32 / h);
+    let angle = 155f32.to_radians();
+    let (dx, dy) = (angle.sin(), -angle.cos());
+    let extent = dx.abs() * 0.5 + dy.abs() * 0.5;
+    let t = (((px - 0.5) * dx + (py - 0.5) * dy) / (2.0 * extent) + 0.5).clamp(0.0, 1.0);
+    let colour = wallpaper_gradient(t);
+    let colour = glow(
+        colour,
+        ((px - 0.31) / 0.23, (py - 0.41) / 0.29),
+        (0x1C, 0x3D, 0x7A),
+        0.33,
+    );
+    glow(
+        colour,
+        ((px - 0.77) / 0.19, (py - 0.66) / 0.24),
+        (0x6C, 0x4C, 0xE6),
+        0.20,
+    )
+}
+
+/// The 155° three-stop gradient of `Wallpaper` at position `t` (0..1).
+fn wallpaper_gradient(t: f32) -> (u8, u8, u8) {
+    // #0B1220 0 %, #0E1116 45 %, #101725 100 %.
+    const STOPS: [(f32, (u8, u8, u8)); 3] = [
+        (0.0, (0x0B, 0x12, 0x20)),
+        (0.45, (0x0E, 0x11, 0x16)),
+        (1.0, (0x10, 0x17, 0x25)),
+    ];
+    if t <= STOPS[0].0 {
+        return STOPS[0].1;
+    }
+    for pair in STOPS.windows(2) {
+        let (from, to) = (pair[0], pair[1]);
+        if t <= to.0 {
+            let local = (t - from.0) / (to.0 - from.0).max(f32::EPSILON);
+            return mix(from.1, to.1, local);
+        }
+    }
+    STOPS[2].1
+}
+
+fn mix(from: (u8, u8, u8), to: (u8, u8, u8), t: f32) -> (u8, u8, u8) {
+    let blend = |a: u8, b: u8| (a as f32 + (b as f32 - a as f32) * t).round() as u8;
+    (
+        blend(from.0, to.0),
+        blend(from.1, to.1),
+        blend(from.2, to.2),
+    )
+}
+
+/// An elliptical tint with `normalised` offsets from its centre, fading to
+/// nothing at the unit circle (the `.slint` glows are blurred rectangles).
+/// Squared-distance falloff: smooth, and no square root per pixel.
+fn glow(
+    base: (u8, u8, u8),
+    normalised: (f32, f32),
+    tint: (u8, u8, u8),
+    strength: f32,
+) -> (u8, u8, u8) {
+    let d2 = normalised.0 * normalised.0 + normalised.1 * normalised.1;
+    if d2 >= 1.0 {
+        return base;
+    }
+    let fade = 1.0 - d2;
+    mix(base, tint, strength * fade * fade)
+}
+
 #[cfg(test)]
 mod tests {
+    use super::*;
     use crate::host::plan;
+
+    #[test]
+    fn the_wallpaper_is_opaque_and_is_not_the_panel_tint() {
+        // The `.slint` `Wallpaper` and the chrome tint are different surfaces;
+        // the background must never be the palette fallback (all zero) or the
+        // menu-bar glass tint (#0C0E12 premultiplied).
+        let (w, h) = (1920u32, 1080u32);
+        let mut min = (255u8, 255u8, 255u8);
+        let mut max = (0u8, 0u8, 0u8);
+        for y in 0..h {
+            for x in 0..w {
+                let pixel = wallpaper_pixel(x, y, w, h);
+                min = (min.0.min(pixel.0), min.1.min(pixel.1), min.2.min(pixel.2));
+                max = (max.0.max(pixel.0), max.1.max(pixel.1), max.2.max(pixel.2));
+                assert!(
+                    pixel != (12, 14, 18),
+                    "the wallpaper is not the menu-bar tint at {x},{y}"
+                );
+            }
+        }
+        assert!(min != max, "the wallpaper is a gradient, not a flat fill");
+        assert!(
+            min.0 < 0x20 && max.2 > 0x30,
+            "it spans the design's dark blues"
+        );
+        // Top-left and bottom-right differ along the 155° axis.
+        assert_ne!(
+            wallpaper_pixel(0, 0, w, h),
+            wallpaper_pixel(w - 1, h - 1, w, h)
+        );
+    }
 
     #[test]
     fn surfaces_are_placed_where_the_anchors_say() {
         let output = (1920, 1080);
         let plan = plan();
         let find = |name: &str| plan.iter().find(|request| request.name == name).unwrap();
+        assert_eq!(find("background").placement(output), (0, 0));
+        assert_eq!(find("background").negotiate(output), (1920, 1080));
         assert_eq!(find("menubar").placement(output), (0, 0));
         assert_eq!(find("dock").placement(output), (600, 1016));
         assert_eq!(find("launcher").placement(output), (640, 330));

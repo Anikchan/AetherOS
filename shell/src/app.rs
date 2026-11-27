@@ -727,6 +727,7 @@ impl ShellController {
     // ------------------------------------------------------------- handlers ---
 
     fn dock_chosen(&self, id: &str) {
+        self.note_activation("dock", id);
         self.state.borrow_mut().activate_from_dock(id);
         self.spawn_if_enabled(id);
         self.sync();
@@ -834,6 +835,7 @@ impl ShellController {
     }
 
     fn accept_search(&self, index: usize) {
+        self.note_activation("launcher", &index.to_string());
         let hit = {
             let mut state = self.state.borrow_mut();
             state.search_selected = index.min(state.search_results.len().saturating_sub(1));
@@ -1586,17 +1588,20 @@ impl ShellController {
         out
     }
 
+    /// `AETHER_SHELL_ACTIVATE: surface=<s> item=<id>` — which handler ran, for
+    /// the host journal (keyboard Enter/Space and pointer clicks alike).
+    fn note_activation(&self, surface: &str, item: &str) {
+        self.log.borrow_mut().push(format!(
+            "AETHER_SHELL_ACTIVATE: surface={surface} item={item}"
+        ));
+    }
+
     /// Enter/Space on the focused item: the same handlers the pointer uses.
     ///
-    /// Logged as `AETHER_SHELL_ACTIVATE` so the host journal shows what the key
-    /// activated, not just that it was handled.
+    /// Each handler logs `AETHER_SHELL_ACTIVATE` itself, so a click and a key
+    /// press over the same item produce the same marker.
     fn activate_focus(&self) {
         let focus = self.focus();
-        self.log.borrow_mut().push(format!(
-            "AETHER_SHELL_ACTIVATE: surface={} index={}",
-            focus.surface.as_str(),
-            focus.index
-        ));
         match focus.surface {
             Surface::Menubar => self.activate_menubar(focus.index),
             Surface::Dock => {
@@ -1619,6 +1624,7 @@ impl ShellController {
     }
 
     fn activate_menubar(&self, index: usize) {
+        self.note_activation("menubar", &index.to_string());
         let menus = menus_for();
         if index == kbdnav::MENU_LOGO {
             self.request_overlay(Overlay::Settings);
@@ -1655,6 +1661,7 @@ impl ShellController {
     }
 
     fn activate_control_center(&self, index: usize) {
+        self.note_activation("control-center", &index.to_string());
         use kbdnav::control_center as item;
         match index {
             item::WIFI => {
@@ -1697,6 +1704,7 @@ impl ShellController {
     }
 
     fn activate_notification(&self, index: usize) {
+        self.note_activation("notifications", &index.to_string());
         if index == kbdnav::NOTIFICATIONS_CLEAR_ALL {
             self.state.borrow_mut().clear_notifications();
             self.sync();

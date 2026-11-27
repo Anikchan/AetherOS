@@ -80,11 +80,15 @@ impl PointerEvent {
     }
 }
 
-/// Slint's button for a Linux input button code.
+/// Slint's button for a `wl_pointer.button` value.
+///
+/// The protocol carries the Linux input button code (`BTN_LEFT` = 0x110 = 272),
+/// but test hooks and some tools pass the X11/evdev-injection convention `1` =
+/// left, `2` = middle, `3` = right, so both spellings are accepted.
 pub fn slint_button(button: u32) -> PointerEventButton {
     match button {
-        BTN_RIGHT => PointerEventButton::Right,
-        BTN_MIDDLE => PointerEventButton::Middle,
+        BTN_RIGHT | 3 => PointerEventButton::Right,
+        BTN_MIDDLE | 2 => PointerEventButton::Middle,
         _ => PointerEventButton::Left,
     }
 }
@@ -177,9 +181,13 @@ mod tests {
 
     #[test]
     fn buttons_map_to_slint_buttons() {
+        // Protocol codes (`BTN_*`) and the injected 1/2/3 convention agree.
         assert_eq!(slint_button(BTN_LEFT), PointerEventButton::Left);
         assert_eq!(slint_button(BTN_RIGHT), PointerEventButton::Right);
         assert_eq!(slint_button(BTN_MIDDLE), PointerEventButton::Middle);
+        assert_eq!(slint_button(1), PointerEventButton::Left);
+        assert_eq!(slint_button(2), PointerEventButton::Middle);
+        assert_eq!(slint_button(3), PointerEventButton::Right);
         assert_eq!(slint_button(0x999), PointerEventButton::Left);
     }
 }

@@ -100,6 +100,25 @@ pub fn specs_at(text_scale: f32) -> Vec<LayerSurfaceSpec> {
     let panel_width = |base: i32| grow(base, 140.0);
 
     vec![
+        // The desktop itself. A full-output surface on the Background layer so
+        // the first boot shows the design wallpaper instead of whatever the
+        // compositor clears to; `exclusive_zone: -1` means "ignore my exclusive
+        // zone, cover the whole output" (layer-shell's negative value), and
+        // `keyboard: None` means it never takes input.
+        LayerSurfaceSpec {
+            name: "background",
+            namespace: "aether-shell-background",
+            layer: Layer::Background,
+            anchor_top: true,
+            anchor_bottom: true,
+            anchor_left: true,
+            anchor_right: true,
+            width: 0,
+            height: 0,
+            exclusive_zone: -1,
+            margin_top: 0,
+            keyboard: Keyboard::None,
+        },
         LayerSurfaceSpec {
             name: "menubar",
             namespace: "aether-shell-menubar",
@@ -181,6 +200,7 @@ pub fn specs_at(text_scale: f32) -> Vec<LayerSurfaceSpec> {
 /// The shell surfaces the acceptance harness must see bound and configured.
 pub fn required_namespaces() -> &'static [&'static str] {
     &[
+        "aether-shell-background",
         "aether-shell-menubar",
         "aether-shell-dock",
         "aether-shell-launcher",
@@ -206,6 +226,38 @@ mod tests {
     }
 
     #[test]
+    fn the_background_covers_the_output_on_the_background_layer() {
+        let specs = specs();
+        let background = specs.iter().find(|spec| spec.name == "background").unwrap();
+        assert_eq!(background.namespace, "aether-shell-background");
+        assert_eq!(background.layer, Layer::Background);
+        assert!(
+            background.anchor_top
+                && background.anchor_bottom
+                && background.anchor_left
+                && background.anchor_right,
+            "anchored to all four edges"
+        );
+        assert_eq!(
+            (background.width, background.height),
+            (0, 0),
+            "fills the output"
+        );
+        assert_eq!(
+            background.exclusive_zone, -1,
+            "covers the output, reserves nothing"
+        );
+        assert_eq!(background.keyboard, Keyboard::None, "never takes input");
+        assert_eq!(
+            specs.first().map(|spec| spec.name),
+            Some("background"),
+            "the background is created first so it sits under the chrome"
+        );
+        // It is part of the surface contract the harness checks.
+        assert!(required_namespaces().contains(&"aether-shell-background"));
+    }
+
+    #[test]
     fn panel_geometry_follows_the_text_scale() {
         let specs = specs_at(1.5);
         let find = |name: &str| specs.iter().find(|spec| spec.name == name).unwrap();
@@ -222,9 +274,30 @@ mod tests {
         assert_eq!(find("control-center").margin_top, 42);
         // The scale is clamped to 100–200 %, so a bogus value cannot make the
         // shell ask for a surface bigger than the design.
-        assert_eq!(specs_at(9.0).iter().find(|spec| spec.name == "menubar").unwrap().height, 56);
-        assert_eq!(specs_at(0.2).iter().find(|spec| spec.name == "menubar").unwrap().height, 28);
-        assert_eq!(specs_at(f32::NAN).iter().find(|spec| spec.name == "menubar").unwrap().height, 28);
+        assert_eq!(
+            specs_at(9.0)
+                .iter()
+                .find(|spec| spec.name == "menubar")
+                .unwrap()
+                .height,
+            56
+        );
+        assert_eq!(
+            specs_at(0.2)
+                .iter()
+                .find(|spec| spec.name == "menubar")
+                .unwrap()
+                .height,
+            28
+        );
+        assert_eq!(
+            specs_at(f32::NAN)
+                .iter()
+                .find(|spec| spec.name == "menubar")
+                .unwrap()
+                .height,
+            28
+        );
     }
 
     #[test]
@@ -237,7 +310,11 @@ mod tests {
             );
         }
         let launcher = specs.iter().find(|spec| spec.name == "launcher").unwrap();
-        assert_eq!(launcher.keyboard, Keyboard::Exclusive, "the launcher is modal");
+        assert_eq!(
+            launcher.keyboard,
+            Keyboard::Exclusive,
+            "the launcher is modal"
+        );
         // The panels are always mapped, so taking the keyboard exclusively
         // would stop every window from receiving typing.
         for name in ["notifications", "control-center"] {
