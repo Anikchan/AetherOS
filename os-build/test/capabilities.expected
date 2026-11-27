@@ -1,0 +1,110 @@
+# AetherOS image capabilities — the tool contract the acceptance harness codes
+# against.  Checked by `os-build/test/capabilities.sh --check` in CI (the
+# buildroot job, against the unpacked squashfs) and self-tested on every push.
+#
+#   present <tool>   the image must have it; a missing one fails CI.
+#   absent  <tool>   no script may depend on it.  Guard with 'command -v' or use
+#                    a different mechanism; if it ever appears, CI notes it.
+#
+# Provenance: 2026-11-27 P2 run 3 on the Dell
+# (docs/2026/11/27/results/logs/p2-run3-aether-test.log), plus every command
+# /root/test.sh executes in a successful run.  Do not add a 'present' line
+# without evidence: the point of this file is that it is true.
+#
+# Regenerate on a real image and review the diff:
+#   os-build/test/capabilities.sh --write /tmp/capabilities.new
+
+# --- shell and text processing the harness itself is built from ---
+present sh
+present awk
+present sed
+present grep
+present cat
+present head
+present tail
+present tr
+present cut
+present sort
+present uniq
+present wc
+present tee
+present find
+present ls
+present mkdir
+present rm
+present cp
+present mv
+present ln
+present mktemp
+present chmod
+present stat
+present printf
+present echo
+present date
+present dirname
+present basename
+present seq
+present sleep
+present sync
+present uname
+present hostname
+present id
+present stty
+present touch
+present du
+present df
+present free
+present dmesg
+present tar
+present sha256sum
+
+# --- process inspection: pidof and ps, never pgrep ---
+present ps
+present pidof
+present kill
+
+# --- storage and networking (P1-T03, P1-T04, P2-T03) ---
+present mount
+present umount
+present ip
+present udhcpc
+present wget
+present wpa_supplicant
+present iw
+present bluetoothctl
+
+# --- systemd (P1-T02, P2-T04) ---
+present systemctl
+present journalctl
+
+# --- hardware validation (P2-T01..P2-T05, P3-T02) ---
+present upower
+present lspci
+present lsusb
+present libinput
+present aplay
+present arecord
+present speaker-test
+present amixer
+present pipewire
+# WirePlumber was silently dropped from the image until 2026-11-27 (it needs
+# Lua >= 5.3); keep it 'present' so the drop can never come back unnoticed.
+present wireplumber
+present wpctl
+present glxinfo
+present vulkaninfo
+present Xwayland
+present sshd
+
+# --- deliberately absent: scripts must never infer a negative from these ---
+# busybox built without CONFIG_PGREP: `pgrep X || "X not running"` was a false
+# negative for 3 hours of P2 debugging (pid 271 was running the whole time).
+absent pgrep
+# busybox built without CONFIG_SCRIPT: transcript capture recorded nothing.
+absent script
+
+# TODO(verify on the next image build): pkill.  /root/test.sh stops a stale
+# wpa_supplicant with `pkill -f ... 2>/dev/null`; if the image lacks it that
+# line is a silent no-op.  Confirm with `capabilities.sh --root <rootfs>` and
+# either move it here as 'absent' (then guard the call site) or list it
+# 'present'.

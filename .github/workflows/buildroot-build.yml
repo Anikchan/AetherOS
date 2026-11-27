@@ -28,7 +28,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential libncurses-dev rsync wget file bc git libelf-dev mtools \
-            qemu-system-x86 expect ovmf grub-pc-bin grub-efi-amd64-bin grub-common parted
+            qemu-system-x86 expect ovmf grub-pc-bin grub-efi-amd64-bin grub-common parted squashfs-tools
       - name: Clone Buildroot (pinned)
         run: git clone --depth 1 --branch 2025.11 https://gitlab.com/buildroot.org/buildroot.git os-build/buildroot/buildroot
       - name: Configure
@@ -39,11 +39,50 @@ jobs:
           make linux-menuconfig >/dev/null 2>&1 || true
           grep -q "^CONFIG_PSI=y" output/build/linux-*/.config 2>/dev/null || \
             echo "WARN: CONFIG_PSI not confirmed yet (checked again after build)"
+      - name: Defconfig drop guard — every requested symbol must survive
+        # WirePlumber teaches the lesson: BR2_PACKAGE_WIREPLUMBER=y needs a Lua
+        # >= 5.3 provider, and with none kconfig deletes the symbol outright —
+        # no warning, no '# ... is not set', and an image without a PipeWire
+        # session manager. This compares the defconfig's intent with the
+        # generated .config and fails on anything that vanished.
+        run: |
+          bash os-build/scripts/check-defconfig-drop.sh \
+            os-build/buildroot/buildroot/output/.config \
+            os-build/buildroot/aetheros_defconfig
       - name: Build
         timeout-minutes: 90
         run: |
           cd os-build/buildroot/buildroot
           make -j"$(nproc)"
+      - name: Image capability contract — assert the tool list (P2 lesson)
+        # The image has no `pgrep` and no `script`; the acceptance harness assumed
+        # both. Unpack the rootfs (no boot needed) and diff it against
+        # os-build/test/capabilities.expected. The full probe is published so the
+        # manifest can be corrected from evidence, not memory.
+        run: |
+          ROOT=/tmp/aether-rootfs
+          rm -rf "$ROOT"
+          unsquashfs -no-progress -d "$ROOT" \
+            os-build/buildroot/buildroot/output/images/rootfs.squashfs > /dev/null
+          # Evidence first: these artifacts are what the manifest gets corrected
+          # from when the assertion below fails.
+          bash os-build/test/capabilities.sh --root "$ROOT" > capabilities-actual.txt
+          bash os-build/test/capabilities.sh --root "$ROOT" --json > capabilities-actual.json
+          bash os-build/test/capabilities.sh --root "$ROOT" --applets > capabilities-applets.txt
+          {
+            echo "## AetherOS image capabilities"
+            echo '```'
+            cat capabilities-actual.txt
+            echo '```'
+            echo "### busybox applets ($(wc -l < capabilities-applets.txt))"
+            echo '```'
+            tr '\n' ' ' < capabilities-applets.txt
+            echo
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          # …then the assertion. A missing required tool fails the job, and the
+          # artifacts above say exactly which tools the image really has.
+          bash os-build/test/capabilities.sh --root "$ROOT" --check os-build/test/capabilities.expected
       - name: Report image sizes and check budgets (P1-T06)
         run: |
           cd os-build/buildroot/buildroot/output/images
@@ -104,4 +143,7 @@ jobs:
             boot-test.log
             boot-uefi.log
             boot-bios.log
+            capabilities-actual.txt
+            capabilities-actual.json
+            capabilities-applets.txt
           retention-days: 7

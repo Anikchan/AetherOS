@@ -47,8 +47,72 @@ jobs:
       - name: Build
         run: cargo build --workspace
 
-      - name: Test
-        run: cargo test --workspace
+      # Linux parity (2026-11-27): the same suite was green on the macOS dev
+      # host and red on this runner — a Landlock test that assumed rule order, a
+      # compositor test that assumed client 0 (XWayland is a client too), a
+      # powerd fixture that read the runner's AC adapter, and a seccomp arch
+      # check that killed every syscall. Two things follow:
+      #   1. run every target, not just the default set (`--all-targets`);
+      #   2. publish a summary that names the failing tests, because a red job
+      #      with a 3000-line log costs an evening to attribute.
+      - name: Test (workspace, all targets — Linux parity)
+        run: |
+          # --all-targets excludes doctests, which the old `cargo test --workspace`
+          # did run, so both passes are kept.
+          rc=0
+          cargo test --workspace --all-targets 2>&1 | tee /tmp/cargo-test.log || rc=$?
+          cargo test --workspace --doc 2>&1 | tee -a /tmp/cargo-test.log || rc=$?
+          exit $rc
+
+      - name: Test summary (Linux parity)
+        # Runs even when the suite fails: the summary is the evidence. Failing
+        # tests are annotated (`::error`) and listed with their captured output.
+        if: always()
+        run: bash os-build/scripts/check-test-summary.sh /tmp/cargo-test.log --annotations >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Defconfig drop guard (silent kconfig drops)
+        # BR2_PACKAGE_WIREPLUMBER=y was silently dropped for lack of Lua, and
+        # the image shipped without a PipeWire session manager. The guard proves
+        # itself here; the real defconfig/.config pair is checked by the
+        # buildroot-build job, which actually runs `make defconfig`.
+        run: bash os-build/scripts/check-defconfig-drop.sh --self-test
+
+      - name: Image capability contract (self-test, then static scan)
+        # The image has no `pgrep` and no `script`. A check that says "X is not
+        # running" because the tool is missing is a lie, so the tool list is a
+        # contract (os-build/test/capabilities.expected) and scripts are scanned
+        # against it.
+        run: |
+          bash -n os-build/test/capabilities.sh
+          bash os-build/test/capabilities.sh --self-test
+          bash os-build/scripts/check-image-capabilities.sh --self-test
+          bash os-build/scripts/check-image-capabilities.sh --strict
+
+      - name: Kernel feature probe (Landlock / seccomp)
+        # If the sandbox tests skip, this says why: the tests gate on the kernel
+        # actually having the ABI, and a silent skip is indistinguishable from a
+        # pass in the log.
+        run: |
+          cargo run -q -p aether-sandbox --bin aether-landlock -- --probe --json | tee /tmp/landlock-probe.json || true
+          uname -r
+          grep -E '^(Seccomp|NoNewPrivs):' /proc/self/status || true
+
+      - name: Host-gated tests announce their skips
+        # The kernel-dependent tests print "skipped: …" through eprintln!, which
+        # cargo swallows unless the test fails. --nocapture forces the sentence
+        # into the log and into the summary, so "the sandbox tests are green"
+        # can never quietly mean "the sandbox tests never ran".
+        run: |
+          set +e
+          cargo test -p aether-sandbox --test landlock_enforce --test seccomp_enforce -- --nocapture 2>&1 | tee /tmp/host-gated.log
+          rc=${PIPESTATUS[0]}
+          {
+            echo "## Host-gated suites (Landlock / seccomp)"
+            echo '```'
+            grep -E "skipped" /tmp/host-gated.log || echo "no skips: every assertion in these suites ran on this kernel"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit $rc
 
       - name: Compositor smoke test (P3-T01)
         run: |
