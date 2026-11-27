@@ -117,3 +117,32 @@ is implemented.
   working tree.
 - DA-AC-09/10 (launch time, idle cost) and the on-device clipboard still need
   the device/host; nothing here changes those gates.
+
+## 5. Flaky test fixed — `aether-files` navigation sandbox (2026-11-28)
+
+CI's new guards caught `navigation_tests::back_and_forward_track_history_in_both_directions`
+failing about **1 run in 30** with
+`Io { path: ".../aether-files-nav-<pid>-<nanos>", kind: NotFound }`.
+
+Root cause: the test sandbox in `apps/files/src/lib.rs` named its directory
+`aether-files-nav-<pid>-<now.as_nanos()>`. macOS clocks are microsecond-granular
+(values end in `000`), so two tests running in parallel inside the same test
+binary can sample the same timestamp, get the same path, and the first test's
+trailing `remove_dir_all` deletes the second test's tree mid-run.
+
+| File | Change |
+| --- | --- |
+| `apps/files/src/lib.rs` | `sandbox()` now appends a process-wide `AtomicUsize` counter to the name and creates the root with `fs::create_dir`, retrying on `AlreadyExists`; a new `cleanup(&Path)` helper ignores an already-removed tree. Assertions are unchanged. |
+
+Verification (this host, 2026-11-28):
+
+| Check | Command | Result |
+| --- | --- | --- |
+| Old scheme collision probe (64 threads × 5000 `now().as_nanos()` samples, old `pid-nanos` naming) | `rustc -O nav_collide.rs && ./nav_collide` | 190 462 / 320 000 samples produced a duplicate name (≈60% collision rate per sample; only the narrow test-overlap window makes it ≈1/30 in the suite) |
+| New sandbox, repeat run | `for i in $(seq 1 30); do LIBRARY_PATH=/opt/homebrew/lib cargo test -q -p aether-files --lib; done` | 30/30 green, 0 failures |
+| Whole crate once | `LIBRARY_PATH=/opt/homebrew/lib cargo test -q -p aether-files` | 14 lib + 1 headless UI + 0 doc tests, all green |
+| Lint | `cargo clippy -q -p aether-files --all-targets` | no warnings in the touched region (one pre-existing `needless_borrow` in `tests/ui.rs`) |
+
+Before: ≈3.3% failure rate (1/30 per CI observation, mechanism confirmed by the
+collision probe). After: 0/30.
+

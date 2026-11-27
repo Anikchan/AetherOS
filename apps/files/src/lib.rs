@@ -766,20 +766,39 @@ fn build_demo_tree(root: &Path) -> Result<(), std::io::Error> {
 mod navigation_tests {
     use super::*;
 
+    /// Unique sandbox root. macOS clocks are microsecond-granular, so the
+    /// timestamp alone can repeat between tests running in parallel in one
+    /// process; the counter disambiguates and `create_dir` retries if another
+    /// process happens to pick the same path.
     fn sandbox() -> (PathBuf, FilesState) {
-        let root = std::env::temp_dir().join(format!(
-            "aether-files-nav-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        std::fs::create_dir_all(root.join("A")).unwrap();
-        std::fs::create_dir_all(root.join("B")).unwrap();
+        static SANDBOX_COUNTER: std::sync::atomic::AtomicUsize =
+            std::sync::atomic::AtomicUsize::new(0);
+        let root = loop {
+            let candidate = std::env::temp_dir().join(format!(
+                "aether-files-nav-{}-{}-{}",
+                std::process::id(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos(),
+                SANDBOX_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+            ));
+            match std::fs::create_dir(&candidate) {
+                Ok(()) => break candidate,
+                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                Err(e) => panic!("create sandbox {}: {e}", candidate.display()),
+            }
+        };
+        std::fs::create_dir(root.join("A")).unwrap();
+        std::fs::create_dir(root.join("B")).unwrap();
         let sandbox = Sandbox::new(&root).unwrap();
         let root = sandbox.root().to_path_buf();
         (root.clone(), FilesState::root(sandbox))
+    }
+
+    /// Tear the sandbox down; a tree that is already gone is fine.
+    fn cleanup(root: &Path) {
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]
@@ -803,7 +822,7 @@ mod navigation_tests {
         assert_eq!(state.cwd, root.join("B"), "forward returns to B");
         assert!(state.back.len() == 2);
 
-        let _ = std::fs::remove_dir_all(root);
+        cleanup(&root);
     }
 
     #[test]
@@ -815,6 +834,6 @@ mod navigation_tests {
         state.open(&root.join("A")).ok();
         state.open(&root.join("B")).unwrap();
         assert!(state.forward.is_empty(), "forward clears on a new navigation");
-        let _ = std::fs::remove_dir_all(root);
+        cleanup(&root);
     }
 }
