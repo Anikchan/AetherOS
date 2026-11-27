@@ -35,6 +35,22 @@ blocker instead of stopping the whole run.
 | `apps` | `apps/**` | Finish the remaining P4 app gaps and make the launcher actually start an app under the host (headless), with tests. |
 | `testci` | `.github/workflows/**`, `os-build/test/**`, `os-build/scripts/ci-local.sh` | CI quality: Linux parity job, no-silent-drop guard for defconfig entries, capability checks (`pidof`, `pgrep`, `script`) and the acceptance harness script. |
 | `sandbox` | `apps/sandbox/**` | Harden the seccomp filter: fuzz/simulate the BPF evaluator, verify Landlock ruleset translation, close the Linux-only gaps that the arch-inversion bug revealed. |
+| `boot-switch` | `os-build/scripts/aether-boot-switch.sh`, `os-build/board/aetheros/overlay/usr/**`, `.../etc/systemd/system/aether-boot-return.service`, `os-build/test/boot-switch-selftest.sh` | **Owner requirement (added 00:25 IST, top priority):** Ubuntu sets the next UEFI boot to the USB; AetherOS sets it back to Ubuntu on every boot, so `reboot` alone ping-pongs between the two with no F12. One-shot `BootNext`, never BootOrder; no-op and clear message when a target entry is missing; `aether.boot=stay` escape hatch. |
+
+## Owner requirement added during the run (00:25 IST)
+
+**Automatic boot switching.** From Ubuntu, one command must set the next boot to
+the USB (AetherOS); from AetherOS, the boot must set the next boot back to the
+internal disk (Ubuntu) automatically, so an image can be rebuilt, flashed and
+tested by rebooting twice with no manual firmware menu.
+
+- Mechanism: UEFI `BootNext` (one-shot), written with `efibootmgr`; `BootOrder`
+  is never rewritten.
+- Safety: verify every write by reading it back; no-op with a message when the
+  other entry does not exist; `aether.boot=stay` on the kernel command line (or
+  `/run/aether-boot-stay`) disables the automatic return for that boot.
+- Boot-switch session owns the implementation; `ui-image` owns the
+  `BR2_PACKAGE_EFIBOOTMGR=y` line and the `multi-user.target.wants` symlink.
 
 ## Sequencing
 
