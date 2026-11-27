@@ -5,7 +5,7 @@ share one window-system/render state:
 
 | Backend | What it does | Where it runs |
 |---|---|---|
-| `headless` | Two synthetic `wl_output`s (1920×1080 @ scale 1, 2880×1800 @ scale 1.5), no rendering, no input | macOS dev host, CI runners, any run without a GPU |
+| `headless` | Two synthetic `wl_output`s (1920×1080 @ scale 1, 2880×1800 @ scale 1.5), no rendering, no input (a seat exists only for test key injection, see below) | macOS dev host, CI runners, any run without a GPU |
 | `drm` | DRM/KMS page flips on the primary plane via GBM + EGL/GLES, libinput on a libseat udev seat | the target machine (Intel/AMD GPU), needs `--features drm` |
 
 ## Backend selection
@@ -86,6 +86,47 @@ build.
   created by the backend; pointer motion does hit-testing (Top/Overlay layer
   surfaces first, then windows, topmost first), a click moves keyboard focus,
   and the client cursor surface is drawn as a software cursor.
+- **Layer-surface keyboard focus**: `zwlr_layer_shell_v1` can ask for the
+  keyboard, but smithay never assigns focus for layer surfaces, so the
+  compositor does it on the first commit that maps the surface:
+  `exclusive` takes the keyboard unconditionally (launcher overlay), `on_demand`
+  only when nothing else holds it (an always-mapped panel must never steal
+  typing from a focused window), and `none` never takes it. Focus changes are
+  logged with the interactivity and namespace (see the marker list).
+
+## Test-only: headless key injection
+
+The headless backend has no input device, so a key can never reach a client's
+`wl_keyboard` there — which is exactly the path the shell's keyboard handling
+needs to be proven against. For tests only:
+
+```sh
+AETHER_COMPOSITOR_BACKEND=headless \
+AETHER_COMPOSITOR_INJECT_KEYS=15,28,57 \
+  ./target/debug/aether-compositor
+```
+
+The variable is a comma-separated list of **evdev** keycodes. When it is set and
+non-empty the headless backend:
+
+1. creates a `wl_seat` with a keyboard and a pointer (there is no device to do it
+   otherwise) and logs `AETHER_COMPOSITOR_SEAT: name=seat-0 keyboard=true
+   pointer=true`, then `AETHER_COMPOSITOR_KEY_INJECTION: backend=headless
+   keys=<n> evdev=<list>`;
+2. replays the keycodes one per frame interval into whatever surface currently
+   holds keyboard focus, as a press+release pair, logging
+   `AETHER_COMPOSITOR_KEY_INJECTED: evdev=<n> focus=<surface|none>`.
+
+`wl_keyboard.key` carries the evdev code (the xkb keycode minus 8), so a client
+that wants an XKB keysym adds 8 — the value the variable lists is the value the
+client sees. Nothing is consumed until a client surface has mapped, so the
+keycodes are not spent before the seat has a focus.
+
+This is **test plumbing, not a feature**: the DRM backend ignores the variable,
+the image never sets it, and an unset variable leaves the headless backend
+exactly as before (no `wl_seat` global at all). Acceptance:
+`tests/p3_t12_seat_focus.rs` (exclusive layer focus, `on_demand` and `none` never
+taking focus, and the injected key arriving on the client's `wl_keyboard`).
 
 ## Glass shader passes (P3-T05)
 
@@ -190,6 +231,9 @@ AETHER_COMPOSITOR_DRM_HOTPLUG: added|removed|changed id=<dev_t>
 AETHER_COMPOSITOR_DRM_STATS: frames_queued=… vblanks=… direct_frames=…
 AETHER_COMPOSITOR_SEAT: name=seat-0 keyboard=true pointer=true
 AETHER_COMPOSITOR_SEAT_FOCUS: surface=yes|none
+AETHER_COMPOSITOR_SEAT_FOCUS: surface=exclusive|on_demand layer=<namespace>
+AETHER_COMPOSITOR_KEY_INJECTION: backend=headless keys=<n> evdev=<list>   (test-only)
+AETHER_COMPOSITOR_KEY_INJECTED: evdev=<n> focus=surface|none              (test-only)
 AETHER_COMPOSITOR_INPUT: backend=libinput seat=<name>
 AETHER_COMPOSITOR_INPUT_KEY / _INPUT_BUTTON: …
 ```

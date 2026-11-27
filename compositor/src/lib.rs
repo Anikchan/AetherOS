@@ -116,6 +116,8 @@ use smithay::delegate_output;
 use smithay::delegate_seat;
 use smithay::delegate_shm;
 use smithay::delegate_xdg_shell;
+use smithay::backend::input::KeyState;
+use smithay::input::keyboard::{FilterResult, Keycode};
 use smithay::input::pointer::CursorImageStatus;
 use smithay::input::{Seat, SeatHandler, SeatState};
 use smithay::output::{Mode, Output, PhysicalProperties, Scale, Subpixel};
@@ -150,7 +152,8 @@ use smithay::xwayland::{XWayland, XWaylandEvent};
 use smithay::xwayland::xwm::{X11Surface, X11Wm, XwmHandler, XwmId};
 use smithay::wayland::output::{OutputHandler, OutputManagerState};
 use smithay::wayland::shell::wlr_layer::{
-    Anchor, Layer, LayerSurface, LayerSurfaceCachedState, WlrLayerShellHandler, WlrLayerShellState,
+    Anchor, KeyboardInteractivity, Layer, LayerSurface, LayerSurfaceCachedState,
+    WlrLayerShellHandler, WlrLayerShellState,
 };
 use smithay::wayland::shell::xdg::{
     PopupSurface, PositionerState, ShellClient, ToplevelSurface, XdgShellHandler, XdgShellState,
@@ -161,6 +164,8 @@ mod glass;
 /// P3-T05 GLES side of the glass pipeline: plan → shader stages + uniforms.
 pub mod glass_shader;
 mod hang;
+/// Test-only headless key injection (`AETHER_COMPOSITOR_INJECT_KEYS`).
+pub mod inject;
 mod scanout;
 mod scheduling;
 mod wm;
@@ -266,6 +271,10 @@ pub struct AetherCompositor {
     /// `AETHER_COMPOSITOR_LAYER_DAMAGE`, so the marker is printed once per
     /// placement instead of once per committed frame.
     reported_layer_placement: HashMap<ObjectId, Rect>,
+    /// Layer surfaces that have already committed a buffer, so the keyboard
+    /// grant for `exclusive`/`on_demand` happens once per map and not on every
+    /// frame the client draws.
+    mapped_layer_surfaces: HashSet<ObjectId>,
     /// P3-T04 window-management model: floating/snap/tile + workspaces.
     /// Layer surfaces (shell chrome) are deliberately *not* managed here.
     pub wm: WorkspaceManager,
@@ -314,6 +323,11 @@ pub struct AetherCompositor {
     /// P3-T09: DRM/KMS backend state when running on hardware.
     #[cfg(all(target_os = "linux", feature = "drm"))]
     pub drm: Option<backend::drm::DrmBackend>,
+    /// Test-only (headless): evdev keycodes still to inject, in order.
+    inject_keys: Vec<u32>,
+    /// Test-only (headless): earliest instant the next key may be injected, so
+    /// the replay is paced to the frame interval instead of bursting.
+    inject_at: Option<Instant>,
     pub mapped: bool,
     pub shutdown_at: Option<Instant>,
     pub deadline: Option<Instant>,
@@ -380,6 +394,7 @@ impl AetherCompositor {
             surface_scales: HashMap::new(),
             scaled_surfaces: HashSet::new(),
             reported_layer_placement: HashMap::new(),
+            mapped_layer_surfaces: HashSet::new(),
             // Replaced with the primary output's logical size once outputs are
             // added below.
             wm: WorkspaceManager::new(0, 0),
@@ -405,6 +420,8 @@ impl AetherCompositor {
             serials: SerialCounter::new(),
             #[cfg(all(target_os = "linux", feature = "drm"))]
             drm: None,
+            inject_keys: Vec::new(),
+            inject_at: None,
             mapped: false,
             shutdown_at: None,
             deadline: None,
@@ -518,6 +535,9 @@ impl AetherCompositor {
     /// answers the `wl_surface.frame` callbacks for that frame, and lets the
     /// tier policy react to the modelled frame cost.
     pub fn frame_tick(&mut self) {
+        // Test-only: headless key replay runs on the frame clock, so it is paced
+        // even when no damage means no frame is presented.
+        self.inject_tick();
         let Some(frame) = self.begin_frame() else {
             return;
         };
@@ -906,6 +926,158 @@ impl AetherCompositor {
         for (_, output) in translated {
             self.frames.add_damage(output);
         }
+    }
+
+    /// Give the keyboard to a layer surface that asked for it, once, when it
+    /// maps (first commit with a buffer).
+    ///
+    /// `zwlr_layer_surface_v1` keyboard interactivity is the client's request,
+    /// not an action: smithay never assigns focus for layer surfaces, so the
+    /// compositor has to. Policy:
+    ///
+    /// - `exclusive` takes the keyboard unconditionally (launcher overlays);
+    /// - `on_demand` takes it only when nothing else holds it, so an
+    ///   always-mapped panel can never steal typing from a focused toplevel;
+    /// - `none` never takes it.
+    ///
+    /// Focus changes are reported by [`SeatHandler::focus_changed`], which adds
+    /// the interactivity and namespace, e.g.
+    /// `AETHER_COMPOSITOR_SEAT_FOCUS: surface=exclusive layer=aether-shell-launcher`.
+    fn update_layer_focus(&mut self, surface: &WlSurface, has_buffer: bool) {
+        if !has_buffer {
+            return;
+        }
+        if !self
+            .layer_surfaces
+            .iter()
+            .any(|entry| entry.surface.wl_surface() == surface)
+        {
+            return;
+        }
+        // Only on the first commit that draws the surface: later frames must not
+        // re-grab the keyboard from whatever the user focused.
+        if !self.mapped_layer_surfaces.insert(surface.id()) {
+            return;
+        }
+        let interactivity = layer_interactivity(surface);
+        let Some(seat) = self.seat.clone() else {
+            return;
+        };
+        let Some(keyboard) = seat.get_keyboard() else {
+            return;
+        };
+        let take = match interactivity {
+            KeyboardInteractivity::Exclusive => true,
+            // `on_demand`: only when the keyboard is free.
+            KeyboardInteractivity::OnDemand => keyboard.current_focus().is_none(),
+            KeyboardInteractivity::None => false,
+        };
+        if take {
+            let serial = self.serials.next_serial();
+            keyboard.set_focus(self, Some(surface.clone()), serial);
+        }
+    }
+
+    /// Test-only, headless: replay one queued evdev keycode into the seat.
+    ///
+    /// Enabled by [`crate::inject::INJECT_KEYS_ENV`]; the DRM backend never
+    /// queues keys. One key is delivered per frame interval, and nothing is
+    /// consumed until a client surface has mapped, so the keycodes are not spent
+    /// before the seat has a focus. Each key is sent as a press+release pair to
+    /// the focused `wl_keyboard` and logged as
+    /// `AETHER_COMPOSITOR_KEY_INJECTED: evdev=<n> focus=<surface|none>`.
+    pub fn inject_tick(&mut self) {
+        if self.inject_keys.is_empty() || !self.mapped {
+            return;
+        }
+        let now = Instant::now();
+        if let Some(at) = self.inject_at {
+            if now < at {
+                return;
+            }
+        }
+        let Some(seat) = self.seat.clone() else {
+            return;
+        };
+        let Some(keyboard) = seat.get_keyboard() else {
+            return;
+        };
+        let evdev = self.inject_keys.remove(0);
+        self.inject_at = Some(now + self.frames.interval());
+        // The seat takes XKB keycodes (evdev + 8) while smithay's `wl_keyboard`
+        // forwards `keycode - 8`, so the client sees the evdev value the
+        // environment variable lists.
+        let keycode = Keycode::new(evdev + 8);
+        let time = self.started.elapsed().as_millis() as u32;
+        let serial = self.serials.next_serial();
+        keyboard.input::<(), _>(
+            self,
+            keycode,
+            KeyState::Pressed,
+            serial,
+            time,
+            |_, _, _| FilterResult::Forward,
+        );
+        let serial = self.serials.next_serial();
+        keyboard.input::<(), _>(
+            self,
+            keycode,
+            KeyState::Released,
+            serial,
+            time,
+            |_, _, _| FilterResult::Forward,
+        );
+        println!(
+            "AETHER_COMPOSITOR_KEY_INJECTED: evdev={evdev} focus={}",
+            if keyboard.current_focus().is_some() {
+                "surface"
+            } else {
+                "none"
+            }
+        );
+    }
+
+    /// Test-only, headless: read `AETHER_COMPOSITOR_INJECT_KEYS`, create the
+    /// seat the headless backend does not have, and queue the keycodes.
+    ///
+    /// Does nothing when the variable is unset, so the default headless backend
+    /// still advertises no `wl_seat` at all. Called from `run_headless` only.
+    pub fn enable_key_injection(&mut self, dh: &DisplayHandle) {
+        let Ok(value) = std::env::var(inject::INJECT_KEYS_ENV) else {
+            return;
+        };
+        let keys = inject::parse_keys(&value);
+        if keys.is_empty() {
+            eprintln!(
+                "aether-compositor: {}={value} contains no evdev keycodes; key injection disabled",
+                inject::INJECT_KEYS_ENV
+            );
+            return;
+        }
+        if self.seat.is_none() {
+            // There is no input device in the headless backend, so the seat has
+            // to be created explicitly for the injected keys to have a
+            // destination (and for the client to receive `wl_keyboard`).
+            let mut seat: Seat<Self> = self.seat_state.new_wl_seat(dh, "seat-0");
+            if let Err(err) = seat.add_keyboard(Default::default(), 200, 25) {
+                eprintln!(
+                    "aether-compositor: headless add_keyboard failed ({err:?}); key injection disabled"
+                );
+                return;
+            }
+            seat.add_pointer();
+            self.seat = Some(seat);
+            println!("AETHER_COMPOSITOR_SEAT: name=seat-0 keyboard=true pointer=true");
+        }
+        println!(
+            "AETHER_COMPOSITOR_KEY_INJECTION: backend=headless keys={} evdev={}",
+            keys.len(),
+            keys.iter()
+                .map(u32::to_string)
+                .collect::<Vec<_>>()
+                .join(",")
+        );
+        self.inject_keys = keys;
     }
 
     /// Logical rect a layer surface is drawn at on its output: the negotiated
@@ -1370,6 +1542,11 @@ impl CompositorHandler for AetherCompositor {
             self.damage_whole_surface(surface);
         }
 
+        // Shell chrome can ask for the keyboard (`zwlr_layer_surface_v1`
+        // `keyboard_interactivity`); smithay never assigns focus for layer
+        // surfaces, so the compositor does it on the first mapped commit.
+        self.update_layer_focus(surface, has_buffer);
+
         self.configure_layer_surface(surface);
 
         // P3-T08: shell chrome commits feed the commit-freshness watchdog.
@@ -1641,14 +1818,35 @@ impl SeatHandler for AetherCompositor {
         &mut self.seat_state
     }
 
-    /// P3-T09: keyboard focus evidence for the DRM backend.
+    /// P3-T09: keyboard focus evidence for the DRM backend and for the headless
+    /// seat created by key injection. A layer surface reports its keyboard
+    /// interactivity and namespace, so the shell can assert that its exclusive
+    /// launcher really got the keyboard:
+    /// `AETHER_COMPOSITOR_SEAT_FOCUS: surface=exclusive layer=<namespace>`.
     fn focus_changed(&mut self, _seat: &Seat<Self>, focused: Option<&WlSurface>) {
-        if self.seat.is_some() {
-            println!(
-                "AETHER_COMPOSITOR_SEAT_FOCUS: surface={}",
-                if focused.is_some() { "yes" } else { "none" }
-            );
+        if self.seat.is_none() {
+            return;
         }
+        let label = match focused {
+            None => "surface=none".to_string(),
+            Some(surface) => match self
+                .layer_surfaces
+                .iter()
+                .find(|entry| entry.surface.wl_surface() == surface)
+            {
+                Some(entry) => {
+                    let kind = match layer_interactivity(surface) {
+                        KeyboardInteractivity::Exclusive => "exclusive",
+                        KeyboardInteractivity::OnDemand => "on_demand",
+                        KeyboardInteractivity::None => "none",
+                    };
+                    format!("surface={kind} layer={}", entry.namespace)
+                }
+                // A toplevel (or the XWayland root): the marker stays as it was.
+                None => "surface=yes".to_string(),
+            },
+        };
+        println!("AETHER_COMPOSITOR_SEAT_FOCUS: {label}");
     }
 
     /// P3-T09: remember the client cursor surface; the DRM backend draws it as
@@ -1793,6 +1991,10 @@ fn run_headless() -> Result<(), String> {
 
     let mut state = AetherCompositor::new(&dh);
     state.deadline = Some(Instant::now() + OVERALL_TIMEOUT);
+    // Test-only: `AETHER_COMPOSITOR_INJECT_KEYS` gives the headless backend a
+    // seat with a keyboard and replays evdev keycodes into it (see
+    // `inject`). Unset (the default, and every other test) → no seat at all.
+    state.enable_key_injection(&dh);
 
     // XWayland (and smithay's prepare_x11_sockets) bind Unix sockets under
     // /tmp/.X11-unix; that directory is not always present on minimal CI images
@@ -1989,6 +2191,20 @@ fn run_headless() -> Result<(), String> {
 
 // globals for display pointer and timed_out
 static DISPLAY_PTR: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// Read a layer surface's requested keyboard interactivity.
+///
+/// Kept as a free function so [`SeatHandler::focus_changed`] and
+/// `update_layer_focus` read the same (committed) state.
+fn layer_interactivity(surface: &WlSurface) -> KeyboardInteractivity {
+    with_states(surface, |states| {
+        states
+            .cached_state
+            .get::<LayerSurfaceCachedState>()
+            .current()
+            .keyboard_interactivity
+    })
+}
 
 /// Translate one layer surface's damage from surface-local logical coordinates
 /// into output logical coordinates.

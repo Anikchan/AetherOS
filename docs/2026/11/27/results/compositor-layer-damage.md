@@ -251,3 +251,10 @@ New tests:
    above). Layer surfaces are composed by the DRM element list, not the frost
    chain, so this is expected — but a hardware run should confirm the dock is
    actually drawn (it is a plain element, not a frosted one).
+
+## 6. Follow-up in this round
+
+The keyboard half of the shell's layer-shell contract (focus for
+`keyboard_interactivity = exclusive` and headless key injection for tests) landed
+after this file: see `docs/2026/11/27/results/compositor-seat-focus-injection.md`.
+
