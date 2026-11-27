@@ -1587,8 +1587,16 @@ impl ShellController {
     }
 
     /// Enter/Space on the focused item: the same handlers the pointer uses.
+    ///
+    /// Logged as `AETHER_SHELL_ACTIVATE` so the host journal shows what the key
+    /// activated, not just that it was handled.
     fn activate_focus(&self) {
         let focus = self.focus();
+        self.log.borrow_mut().push(format!(
+            "AETHER_SHELL_ACTIVATE: surface={} index={}",
+            focus.surface.as_str(),
+            focus.index
+        ));
         match focus.surface {
             Surface::Menubar => self.activate_menubar(focus.index),
             Surface::Dock => {

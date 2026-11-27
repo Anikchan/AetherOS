@@ -64,10 +64,14 @@ fn temp_config_root() -> PathBuf {
     ))
 }
 
-/// Press one key the way the compositor delivers it: evdev keycode on the
-/// wire plus the XKB modifier mask.
+/// Press one key the way the compositor delivers it: the evdev keycode on the
+/// wire (no `+8`) plus the XKB modifier mask.
 fn press(controller: &ShellController, evdev: u32, modifiers: u32) -> KeyEvent {
-    keys::dispatch(controller, keys::KeyInput::from_wire(evdev + 8, modifiers))
+    keys::dispatch(
+        controller,
+        keys::KeyInput::from_wire(evdev, modifiers),
+        None,
+    )
 }
 
 #[test]
@@ -102,13 +106,17 @@ fn keys_reach_the_shell_through_the_wire_path() {
             "the focus ring is drawn after the first key"
         );
         assert_eq!(
-            event.focus,
+            event.ring,
             Surface::Dock,
-            "the marker reports the new focus"
+            "the marker reports the new focus ring"
         );
-        assert!(event
-            .line()
-            .starts_with("AETHER_SHELL_KEY: evdev=15 keysym=0xff09 binding=tab handled=true"));
+        assert_eq!(
+            event.surface, None,
+            "no layer surface in this in-process path"
+        );
+        assert!(event.line().starts_with(
+            "AETHER_SHELL_KEY: evdev=15 keysym=0xff09 binding=tab handled=true focus=none ring=dock"
+        ));
 
         // --- Right: KEY_RIGHT (evdev 106) moves inside the dock -------------
         let items = controller.keyboard_counts()[1].1;

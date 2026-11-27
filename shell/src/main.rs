@@ -234,6 +234,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 &controller,
                 std::time::Duration::from_millis(hold_ms),
                 |event| println!("{}", event.line()),
+                |line| println!("{line}"),
+                |line| println!("{line}"),
             )?;
             let report = host.report();
             print!("{}", report.summary());

@@ -59,6 +59,12 @@ struct CompositorProcess {
 
 impl CompositorProcess {
     fn start(binary: &Path, tag: &str) -> Self {
+        Self::start_with(binary, tag, &[])
+    }
+
+    /// Start the compositor with extra environment (test hooks such as
+    /// `AETHER_COMPOSITOR_INJECT_KEYS`).
+    fn start_with(binary: &Path, tag: &str, env: &[(&str, &str)]) -> Self {
         let runtime_dir = temp_dir(tag);
         let _ = fs::remove_dir_all(&runtime_dir);
         fs::create_dir_all(&runtime_dir).expect("create runtime dir");
@@ -67,7 +73,11 @@ impl CompositorProcess {
 
         let log = fs::File::create(runtime_dir.join("compositor.log")).expect("create log");
         let err = fs::File::create(runtime_dir.join("compositor.err")).expect("create stderr log");
-        let child = Command::new(binary)
+        let mut command = Command::new(binary);
+        for (key, value) in env {
+            command.env(key, value);
+        }
+        let child = command
             .env("XDG_RUNTIME_DIR", &runtime_dir)
             .env("AETHER_COMPOSITOR_BACKEND", "headless")
             // The default grace (3 s after the first mapped surface) is shorter
@@ -121,11 +131,22 @@ impl Drop for CompositorProcess {
 /// Run the shipped shell host against `runtime_dir`/`wayland-0`, dumping one
 /// PNG per painted surface into `shots`.
 fn connect(runtime_dir: &Path, shots: &Path, act: Option<&str>) -> std::process::Output {
+    connect_for(runtime_dir, shots, act, 300)
+}
+
+/// Same, with an explicit hold: the injected-key test needs time for the
+/// compositor to replay its keys.
+fn connect_for(
+    runtime_dir: &Path,
+    shots: &Path,
+    act: Option<&str>,
+    hold_ms: u64,
+) -> std::process::Output {
     let mut command = Command::new(env!("CARGO_BIN_EXE_aether-shell"));
     command.args([
         "--connect",
         "--hold-ms",
-        "300",
+        &hold_ms.to_string(),
         "--frames-out",
         shots.to_str().unwrap(),
     ]);
@@ -522,6 +543,99 @@ fn an_opened_panel_is_mapped_painted_and_placed() {
         )),
         "the compositor placed the launcher at {x},{y}:\n{journal}"
     );
+    let _ = fs::remove_dir_all(&shots);
+}
+
+/// The socket keyboard path, end to end: the compositor's test hook replays
+/// evdev 15, 15, 28 (Tab, Tab, Enter) into whatever surface holds the keyboard.
+/// The launcher overlay takes `exclusive` keyboard interactivity, so it is the
+/// surface that receives them; the shell must report the evdev code unshifted,
+/// move its focus ring twice, then activate.
+///
+/// This is also the regression test for the off-by-8: `wl_keyboard.key.key` is
+/// the evdev code, so injecting 15 must log `evdev=15`, never `evdev=7`.
+#[test]
+fn injected_keys_reach_the_shell_and_move_the_ring() {
+    let Some(binary) = compositor_binary() else {
+        println!("AETHER_SHELL_HANDSHAKE_SKIPPED: no aether-compositor binary");
+        return;
+    };
+    let compositor = CompositorProcess::start_with(
+        &binary,
+        "handshake-keys",
+        &[("AETHER_COMPOSITOR_INJECT_KEYS", "15,15,28")],
+    );
+    let shots = temp_dir("shots-keys");
+    let _ = fs::remove_dir_all(&shots);
+    let output = connect_for(&compositor.runtime_dir, &shots, Some("launcher"), 2500);
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    let journal = compositor.log();
+    if std::env::var_os("AETHER_SHELL_TEST_LOG").is_some() {
+        println!("--- aether-shell --connect ---\n{stdout}\n{stderr}");
+        println!("--- compositor journal ---\n{journal}");
+    }
+    assert!(
+        output.status.success(),
+        "the shell host failed\nstdout:\n{stdout}\njournal:\n{journal}"
+    );
+
+    // The seat exists (created by the injection hook) with a keyboard and a
+    // pointer: this is the shell's `wl_pointer` binding over a real socket.
+    assert!(
+        stdout.contains("seat=keyboard+pointer"),
+        "the host binds both seat capabilities:\n{stdout}"
+    );
+
+    // Three keys, in order, each attributed to the surface that received it.
+    let keys: Vec<&str> = stdout
+        .lines()
+        .filter(|line| line.starts_with("AETHER_SHELL_KEY: "))
+        .collect();
+    assert_eq!(
+        keys.len(),
+        3,
+        "three keys were injected and handled:\n{stdout}"
+    );
+    assert_eq!(
+        keys[0],
+        "AETHER_SHELL_KEY: evdev=15 keysym=0xff09 binding=tab handled=true \
+         focus=aether-shell-launcher ring=control-center"
+    );
+    assert_eq!(
+        keys[1],
+        "AETHER_SHELL_KEY: evdev=15 keysym=0xff09 binding=tab handled=true \
+         focus=aether-shell-launcher ring=notifications"
+    );
+    assert_eq!(
+        keys[2],
+        "AETHER_SHELL_KEY: evdev=28 keysym=0xff0d binding=enter handled=true \
+         focus=aether-shell-launcher ring=notifications"
+    );
+    // The ring moved on both Tabs, then Enter activated the focused item.
+    assert!(
+        stdout.contains("AETHER_SHELL_ACTIVATE: surface=notifications index=0"),
+        "Enter activated the focused item:\n{stdout}"
+    );
+    // The compositor focused the launcher, and our marker says the same.
+    assert!(
+        journal.contains(
+            "AETHER_COMPOSITOR_SEAT_FOCUS: surface=exclusive layer=aether-shell-launcher"
+        ),
+        "the exclusive launcher took the keyboard:\n{journal}"
+    );
+    for evdev in [15, 15, 28] {
+        assert!(
+            journal.contains(&format!(
+                "AETHER_COMPOSITOR_KEY_INJECTED: evdev={evdev} focus=surface"
+            )),
+            "evdev {evdev} was injected into the focused surface:\n{journal}"
+        );
+    }
+    // Off-by-8 guard: evdev 15 read as an XKB-minus-8 code would log 7.
+    assert!(!stdout.contains("evdev=7"), "{stdout}");
+    assert!(!stdout.contains("evdev=20"), "{stdout}");
+
     let _ = fs::remove_dir_all(&shots);
 }
 

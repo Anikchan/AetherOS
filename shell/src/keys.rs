@@ -1,16 +1,16 @@
 //! XKB keysym → shell action, the one path keyboard input takes (F1 SHL-18).
 //!
-//! A `wl_keyboard.key` event carries an **evdev keycode on the wire**
-//! (`evdev + 8`) plus the XKB modifier state from the matching
-//! `wl_keyboard.modifiers` event. The compositor's libinput → xkbcommon path
-//! produces keysyms from its keymap; this module is the shell's side of that
-//! contract: keycode → keysym → [`ShellController::handle_key`] (or
-//! `handle_shortcut` when Super is held), the same entry points the Slint
-//! surfaces call.
+//! `wl_keyboard.key.key` is the **evdev keycode** itself — no offset. A keysym
+//! comes from running the XKB keycode, `evdev + 8` ([`xkb_keycode`]), through
+//! the keymap; this module carries the default `us` layout so the host can map
+//! the keys the shell owns without a keymap round trip. The rest of the chain is
+//! the shell's side of the contract: keycode → keysym →
+//! [`ShellController::handle_key`] (or `handle_shortcut` when Super is held), the
+//! same entry points the Slint surfaces call.
 //!
 //! [`crate::wayland`] feeds the events it reads off `wl_keyboard` into
-//! [`dispatch`], and `shell/tests/keyboard_wire.rs` drives [`dispatch`] with
-//! wire keycodes, so the test and the host run one code path. Keys the shell
+//! [`dispatch`], and `shell/tests/keyboard_wire.rs` drives [`dispatch`] with the
+//! same evdev values, so the test and the host run one code path. Keys the shell
 //! does not own return `handled = false` and are left for the focused app.
 
 use crate::kbdnav::Surface;
@@ -21,8 +21,16 @@ pub const MOD_SHIFT: u32 = 1 << 0;
 /// `wl_keyboard.modifiers.mods_depressed` bit for Mod4 (Super).
 pub const MOD_MOD4: u32 = 1 << 6;
 
-/// `wl_keyboard.key.key` = evdev keycode + this offset.
-pub const WL_KEYCODE_OFFSET: u32 = 8;
+/// XKB keycodes are evdev codes plus this offset (`evdev + 8`). The offset is
+/// *not* on the wire: `wl_keyboard.key.key` is the evdev code.
+pub const XKB_KEYCODE_OFFSET: u32 = 8;
+
+/// XKB keycode for an evdev key (`evdev + 8`). A keysym is
+/// `keymap(xkb_keycode(evdev))`; [`BINDINGS`] is that map for the default
+/// `us` layout.
+pub fn xkb_keycode(evdev: u32) -> u32 {
+    evdev + XKB_KEYCODE_OFFSET
+}
 
 /// XKB keysym values (`xkbcommon-keysyms.h`) the shell binds.
 pub const XKB_ESCAPE: u32 = 0xff1b;
@@ -177,17 +185,18 @@ pub const BINDINGS: &[Binding] = &[
 /// One key press, in the terms `wl_keyboard` delivers it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct KeyInput {
-    /// evdev keycode (wire keycode minus [`WL_KEYCODE_OFFSET`]).
+    /// evdev keycode, exactly as `wl_keyboard.key.key` carries it.
     pub evdev: u32,
     pub shift: bool,
     pub super_key: bool,
 }
 
 impl KeyInput {
-    /// `wl_keyboard.key.key` + `wl_keyboard.modifiers.mods_depressed`.
-    pub fn from_wire(wire_keycode: u32, mods_depressed: u32) -> KeyInput {
+    /// `wl_keyboard.key.key` (the evdev code, not `evdev + 8`) plus
+    /// `wl_keyboard.modifiers.mods_depressed`.
+    pub fn from_wire(keycode: u32, mods_depressed: u32) -> KeyInput {
         KeyInput {
-            evdev: wire_keycode.saturating_sub(WL_KEYCODE_OFFSET),
+            evdev: keycode,
             shift: mods_depressed & MOD_SHIFT != 0,
             super_key: mods_depressed & MOD_MOD4 != 0,
         }
@@ -203,22 +212,28 @@ pub struct KeyEvent {
     /// Binding name handed to the controller (`tab`, `shift+tab`, `super+space`).
     pub binding: Option<String>,
     pub handled: bool,
-    /// Focus after the event, so the host log shows the move.
-    pub focus: Surface,
+    /// Layer surface that holds `wl_keyboard` focus, i.e. the one the
+    /// compositor sent the key to (`None` when the host has not been told).
+    pub surface: Option<&'static str>,
+    /// The shell's own focus ring after the event, so the log shows the move.
+    pub ring: Surface,
 }
 
 impl KeyEvent {
-    /// `AETHER_SHELL_KEY: …` marker line.
+    /// `AETHER_SHELL_KEY: …` marker line. `focus=` is the surface that received
+    /// the key (it matches the compositor's `SEAT_FOCUS … layer=`); `ring=` is
+    /// the shell's focus ring after the event.
     pub fn line(&self) -> String {
         format!(
-            "AETHER_SHELL_KEY: evdev={} keysym={} binding={} handled={} focus={}",
+            "AETHER_SHELL_KEY: evdev={} keysym={} binding={} handled={} focus={} ring={}",
             self.evdev,
             self.keysym
                 .map(|keysym| format!("0x{keysym:04x}"))
                 .unwrap_or_else(|| "none".to_string()),
             self.binding.as_deref().unwrap_or("none"),
             self.handled,
-            self.focus.as_str()
+            self.surface.unwrap_or("none"),
+            self.ring.as_str()
         )
     }
 }
@@ -250,7 +265,11 @@ pub fn binding(evdev: u32, shift: bool) -> Option<String> {
 /// controller entry point the Slint surfaces use. Super+<key> goes to
 /// `handle_shortcut` (Super+Space opens the launcher, Super+L locks, …);
 /// everything else goes to `handle_key`.
-pub fn dispatch(controller: &ShellController, input: KeyInput) -> KeyEvent {
+pub fn dispatch(
+    controller: &ShellController,
+    input: KeyInput,
+    surface: Option<&'static str>,
+) -> KeyEvent {
     let keysym = keysym(input.evdev, input.shift);
     let name = binding(input.evdev, input.shift);
     let (binding, handled) = match name {
@@ -270,7 +289,8 @@ pub fn dispatch(controller: &ShellController, input: KeyInput) -> KeyEvent {
         keysym,
         binding,
         handled,
-        focus: controller.focus().surface,
+        surface,
+        ring: controller.focus().surface,
     }
 }
 
@@ -279,16 +299,33 @@ mod tests {
     use super::*;
 
     #[test]
-    fn wire_keycodes_offset_to_evdev() {
-        let input = KeyInput::from_wire(23, MOD_SHIFT);
-        assert_eq!(input.evdev, 15, "wl_keyboard sends evdev + 8");
+    fn the_wire_carries_the_evdev_code_not_the_xkb_code() {
+        // `wl_keyboard.key.key` is the evdev code: an injected evdev 15 stays 15
+        // here (it used to be read as 15 - 8 = 7, shifting every key).
+        let input = KeyInput::from_wire(15, MOD_SHIFT);
+        assert_eq!(input.evdev, 15);
         assert!(input.shift);
         assert!(!input.super_key);
+        assert_eq!(KeyInput::from_wire(28, 0).evdev, 28);
         assert!(
-            KeyInput::from_wire(133, MOD_MOD4).super_key,
+            KeyInput::from_wire(125, MOD_MOD4).super_key,
             "Super is Mod4"
         );
-        assert_eq!(KeyInput::from_wire(4, 0).evdev, 0, "a bogus code saturates");
+        // A keymap is indexed with the XKB keycode: evdev + 8.
+        assert_eq!(xkb_keycode(15), 23);
+        assert_eq!(xkb_keycode(1), 9);
+    }
+
+    #[test]
+    fn injected_evdev_codes_map_to_the_expected_keysyms() {
+        // The three codes the compositor's headless injection replays.
+        assert_eq!(keysym(15, false), Some(XKB_TAB), "evdev 15 (KEY_TAB)");
+        assert_eq!(keysym(28, false), Some(XKB_RETURN), "evdev 28 (KEY_ENTER)");
+        assert_eq!(keysym(1, false), Some(XKB_ESCAPE), "evdev 1 (KEY_ESC)");
+        assert_eq!(binding(15, false).as_deref(), Some("tab"));
+        assert_eq!(binding(28, false).as_deref(), Some("enter"));
+        assert_eq!(binding(1, false).as_deref(), Some("escape"));
+        assert_eq!(keysym(7, false), None, "7 is not a key the shell owns");
     }
 
     #[test]
@@ -319,27 +356,30 @@ mod tests {
     }
 
     #[test]
-    fn a_key_event_line_names_the_move() {
+    fn a_key_event_line_names_the_surface_and_the_ring() {
         let event = KeyEvent {
             evdev: 15,
             keysym: Some(XKB_TAB),
             binding: Some("tab".into()),
             handled: true,
-            focus: Surface::Dock,
+            surface: Some("aether-shell-launcher"),
+            ring: Surface::ControlCenter,
         };
         assert_eq!(
             event.line(),
-            "AETHER_SHELL_KEY: evdev=15 keysym=0xff09 binding=tab handled=true focus=dock"
+            "AETHER_SHELL_KEY: evdev=15 keysym=0xff09 binding=tab handled=true \
+             focus=aether-shell-launcher ring=control-center"
         );
         let unowned = KeyEvent {
             evdev: 113,
             keysym: None,
             binding: None,
             handled: false,
-            focus: Surface::Menubar,
+            surface: None,
+            ring: Surface::Menubar,
         };
         assert!(unowned
             .line()
-            .contains("keysym=none binding=none handled=false"));
+            .contains("keysym=none binding=none handled=false focus=none"));
     }
 }

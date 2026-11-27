@@ -33,8 +33,8 @@ use std::time::{Duration, Instant};
 use slint::platform::software_renderer::PremultipliedRgbaColor;
 
 use wayland_client::protocol::{
-    wl_buffer, wl_compositor, wl_keyboard, wl_output, wl_registry, wl_seat, wl_shm, wl_shm_pool,
-    wl_surface,
+    wl_buffer, wl_compositor, wl_keyboard, wl_output, wl_pointer, wl_registry, wl_seat, wl_shm,
+    wl_shm_pool, wl_surface,
 };
 use wayland_client::{Connection, Dispatch, EventQueue, Proxy, QueueHandle, WEnum};
 use wayland_protocols_wlr::layer_shell::v1::client::{zwlr_layer_shell_v1, zwlr_layer_surface_v1};
@@ -44,6 +44,7 @@ use crate::host::{self, HostRequest, KEYBOARD_EXCLUSIVE, KEYBOARD_ON_DEMAND};
 use crate::keys::{self, KeyInput};
 use crate::model::Overlay;
 use crate::paint::LayerPainter;
+use crate::pointer::{PointerEvent, PointerKind, PointerRouter};
 
 /// A committed SHM buffer, its file and pool.
 struct ShmBuffer {
@@ -112,6 +113,31 @@ struct HostState {
     keys: Vec<(u32, u32)>,
     modifiers: u32,
     keyboard: bool,
+    /// Layer surface the compositor gave the keyboard to (slot index), from
+    /// `wl_keyboard.enter` / `leave`.
+    key_focus: Option<usize>,
+    /// Pointer events waiting to be routed into the scene.
+    pointers: Vec<RawPointer>,
+    pointer: bool,
+    /// Slot the pointer is over, and its last surface-local position.
+    pointer_slot: Option<usize>,
+    pointer_pos: (f64, f64),
+}
+
+impl HostState {
+    /// Record the pointer over a slot at a local position.
+    fn set_pointer(&mut self, slot: usize, local: (f64, f64)) {
+        self.pointer_slot = Some(slot);
+        self.pointer_pos = local;
+    }
+}
+
+/// One `wl_pointer` event, already resolved to a slot and local coordinates.
+#[derive(Debug, Clone, Copy)]
+struct RawPointer {
+    slot: usize,
+    local: (f64, f64),
+    kind: PointerKind,
 }
 
 /// What the host created for one surface.
@@ -160,6 +186,8 @@ pub struct HostReport {
     pub output: (i32, i32),
     pub scale: i32,
     pub keyboard: bool,
+    /// The seat advertises a pointer (the headless seat from key injection does).
+    pub pointer: bool,
     pub surfaces: Vec<SurfaceReport>,
 }
 
@@ -189,7 +217,12 @@ impl HostReport {
             self.output.0,
             self.output.1,
             self.scale,
-            if self.keyboard { "keyboard" } else { "none" }
+            match (self.keyboard, self.pointer) {
+                (true, true) => "keyboard+pointer",
+                (true, false) => "keyboard",
+                (false, true) => "pointer",
+                (false, false) => "none",
+            }
         );
         for surface in &self.surfaces {
             out.push_str(&format!(
@@ -273,13 +306,22 @@ pub struct RunStats {
     pub unmaps: u64,
     /// Key presses routed to the shell.
     pub keys: u64,
+    /// Pointer events routed into the scene.
+    pub pointers: u64,
+    /// Layer surface that held the keyboard at the end of the run.
+    pub focus: Option<&'static str>,
 }
 
 impl RunStats {
     pub fn summary_line(&self) -> String {
         format!(
-            "AETHER_SHELL_LAYER_RUN: paints={} commits={} unmaps={} keys={}",
-            self.paints, self.commits, self.unmaps, self.keys
+            "AETHER_SHELL_LAYER_RUN: paints={} commits={} unmaps={} keys={} pointers={} focus={}",
+            self.paints,
+            self.commits,
+            self.unmaps,
+            self.keys,
+            self.pointers,
+            self.focus.unwrap_or("unknown")
         )
     }
 }
@@ -371,7 +413,9 @@ impl LayerHost {
             let seat_name = global_name(&state, "wl_seat");
             let seat = registry.bind::<wl_seat::WlSeat, _, _>(seat_name, version, &qh, ());
             seat.get_keyboard(&qh, ());
+            seat.get_pointer(&qh, ());
             state.keyboard = true;
+            state.pointer = true;
         }
         // One more roundtrip so the outputs' name/scale events and the seat
         // capabilities are in before the first surface is created.
@@ -632,6 +676,8 @@ impl LayerHost {
         controller: &ShellController,
         duration: Duration,
         mut on_key: impl FnMut(&keys::KeyEvent),
+        mut on_pointer: impl FnMut(&str),
+        mut on_log: impl FnMut(&str),
     ) -> Result<RunStats, String> {
         let deadline = Instant::now() + duration;
         let mut stats = RunStats::default();
@@ -639,19 +685,39 @@ impl LayerHost {
         // timer in the interactive host: it dirties the scene at most once a
         // minute, never once per frame.
         let mut last_tick = Instant::now();
+        let mut router = PointerRouter::new();
+        // Only the controller lines produced from here on are published.
+        let mut log_seen = controller.log.borrow().len();
         // First frame: map the panels that are open (menu bar and dock at
         // startup) and paint them.
         if self.present(controller)? {
             stats.paints += 1;
         }
         loop {
-            self.queue
-                .dispatch_pending(&mut self.state)
-                .map_err(|error| format!("Wayland dispatch failed: {error:?}"))?;
+            // A round trip both flushes our commits and *reads* the socket, so
+            // input the compositor queued since the last frame is dispatched
+            // before the keys are drained. (`dispatch_pending` alone only
+            // drains what a previous read already buffered.)
+            self.roundtrip()?;
+            let focus = self.keyboard_focus();
             for input in self.take_keys() {
-                let event = keys::dispatch(controller, input);
+                // `focus` is the surface the compositor sent the key to; it is
+                // what the marker reports, not the shell's focus ring.
+                let event = keys::dispatch(controller, input, focus);
                 stats.keys += 1;
                 on_key(&event);
+            }
+            for event in self.take_pointers() {
+                let line = router.route(controller.ui(), event);
+                stats.pointers += 1;
+                on_pointer(&line);
+            }
+            {
+                let log = controller.log.borrow();
+                for line in &log[log_seen.min(log.len())..] {
+                    on_log(line);
+                }
+                log_seen = log.len();
             }
             if self.present(controller)? {
                 stats.paints += 1;
@@ -670,6 +736,7 @@ impl LayerHost {
         let _ = self.roundtrip();
         stats.commits = self.commits;
         stats.unmaps = self.unmaps;
+        stats.focus = Some(self.keyboard_focus().unwrap_or("none"));
         Ok(stats)
     }
 
@@ -695,6 +762,7 @@ impl LayerHost {
             output,
             scale,
             keyboard: self.state.keyboard,
+            pointer: self.state.pointer,
             surfaces: self
                 .state
                 .slots
@@ -751,6 +819,32 @@ impl LayerHost {
         std::mem::take(&mut self.state.keys)
             .into_iter()
             .map(|(key, modifiers)| KeyInput::from_wire(key, modifiers))
+            .collect()
+    }
+
+    /// Namespace of the layer surface the compositor gave the keyboard to
+    /// (`wl_keyboard.enter`). Matches `AETHER_COMPOSITOR_SEAT_FOCUS … layer=`.
+    pub fn keyboard_focus(&self) -> Option<&'static str> {
+        self.state
+            .key_focus
+            .and_then(|index| self.state.slots.get(index))
+            .map(|slot| slot.request.namespace)
+    }
+
+    /// Pointer events the compositor delivered, in surface-local coordinates.
+    pub fn take_pointers(&mut self) -> Vec<PointerEvent> {
+        let (output, _) = self.output;
+        std::mem::take(&mut self.state.pointers)
+            .into_iter()
+            .filter_map(|raw| {
+                let slot = self.state.slots.get(raw.slot)?;
+                Some(PointerEvent {
+                    surface: slot.request.namespace,
+                    local: raw.local,
+                    placement: slot.request.placement(output),
+                    kind: raw.kind,
+                })
+            })
             .collect()
     }
 
@@ -996,6 +1090,95 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for HostState {
             wl_keyboard::Event::Modifiers { mods_depressed, .. } => {
                 state.modifiers = mods_depressed;
             }
+            wl_keyboard::Event::Enter { surface, .. } => {
+                state.key_focus = slot_of(state, &surface);
+            }
+            wl_keyboard::Event::Leave { surface, .. } => {
+                if state.key_focus == slot_of(state, &surface) {
+                    state.key_focus = None;
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+/// Slot index of one of our `wl_surface`s.
+fn slot_of(state: &HostState, surface: &wl_surface::WlSurface) -> Option<usize> {
+    state
+        .slots
+        .iter()
+        .position(|slot| slot.wl_surface.id() == surface.id())
+}
+
+impl Dispatch<wl_pointer::WlPointer, ()> for HostState {
+    fn event(
+        state: &mut Self,
+        _proxy: &wl_pointer::WlPointer,
+        event: wl_pointer::Event,
+        _data: &(),
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+    ) {
+        // Pointer coordinates are surface-local *logical* pixels, which is what
+        // the scene wants once the surface's placement is added.
+        match event {
+            wl_pointer::Event::Enter {
+                surface,
+                surface_x,
+                surface_y,
+                ..
+            } => {
+                if let Some(slot) = slot_of(state, &surface) {
+                    state.set_pointer(slot, (surface_x, surface_y));
+                    state.pointers.push(RawPointer {
+                        slot,
+                        local: (surface_x, surface_y),
+                        kind: PointerKind::Enter,
+                    });
+                }
+            }
+            wl_pointer::Event::Motion {
+                surface_x,
+                surface_y,
+                ..
+            } => {
+                if let Some(slot) = state.pointer_slot {
+                    state.set_pointer(slot, (surface_x, surface_y));
+                    state.pointers.push(RawPointer {
+                        slot,
+                        local: (surface_x, surface_y),
+                        kind: PointerKind::Motion,
+                    });
+                }
+            }
+            wl_pointer::Event::Button {
+                button,
+                state: button_state,
+                ..
+            } => {
+                let kind = match button_state {
+                    WEnum::Value(wl_pointer::ButtonState::Pressed) => PointerKind::Press(button),
+                    _ => PointerKind::Release(button),
+                };
+                if let Some(slot) = state.pointer_slot {
+                    state.pointers.push(RawPointer {
+                        slot,
+                        local: state.pointer_pos,
+                        kind,
+                    });
+                }
+            }
+            wl_pointer::Event::Leave { surface, .. } => {
+                if let Some(slot) = slot_of(state, &surface) {
+                    state.pointers.push(RawPointer {
+                        slot,
+                        local: state.pointer_pos,
+                        kind: PointerKind::Leave,
+                    });
+                }
+                state.pointer_slot = None;
+            }
             _ => {}
         }
     }
@@ -1013,6 +1196,7 @@ impl Dispatch<wl_seat::WlSeat, ()> for HostState {
         if let wl_seat::Event::Capabilities { capabilities } = event {
             if let WEnum::Value(capabilities) = capabilities {
                 state.keyboard = capabilities.contains(wl_seat::Capability::Keyboard);
+                state.pointer = capabilities.contains(wl_seat::Capability::Pointer);
             }
         }
     }
