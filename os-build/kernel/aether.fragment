@@ -112,10 +112,20 @@ CONFIG_SND_HDA_CODEC_HDMI=y
 CONFIG_SND_USB_AUDIO=y
 
 # --- Wireless (P2-T03): cfg80211/mac80211 + common drivers ---
-CONFIG_CFG80211=y
-CONFIG_MAC80211=y
+# P2 hardware run 3 (docs/2026/11/27/results/p2-hardware-validation-run3.md):
+# with cfg80211 built in, reg.c's regulatory_init_db() runs from a
+# late_initcall (net/wireless/reg.c: late_initcall(regulatory_init_db)), i.e.
+# before the squashfs root is mounted, so request_firmware("regulatory.db")
+# returns -ENOENT ("Direct firmware load for regulatory.db failed with error
+# -2") and the regdomain stays world ("country 00", passive scan).
+# As a module the same code runs from regulatory_init() at module load
+# (#ifdef MODULE branch) - after systemd-udev is up and /lib/firmware is
+# readable - and MODULE_FIRMWARE("regulatory.db") lets depmod/udev order it.
+CONFIG_CFG80211=m
+CONFIG_MAC80211=m
 CONFIG_RFKILL=y
-CONFIG_IWLWIFI=y
+# iwlwifi depends on CFG80211, so it must follow it to the module side.
+CONFIG_IWLWIFI=m
 # ath10k must be a module so udev loads it after the rootfs is mounted;
 # as a built-in it probes before rootfs and cannot read the firmware.
 CONFIG_ATH10K=m
@@ -142,8 +152,22 @@ CONFIG_MFD_INTEL_LPSS_ACPI=y
 CONFIG_MFD_INTEL_LPSS_PCI=y
 CONFIG_I2C_DESIGNWARE_CORE=y
 CONFIG_I2C_DESIGNWARE_PLATFORM=y
-CONFIG_I2C_HID=y
-CONFIG_I2C_HID_ACPI=y
+# P2 run 3: the touchpad (`\_SB.PC00.I2C1.TPD0`, HID DLL09D9 / PNP0C50, on PCI
+# 00:15.1) enumerated as an i2c client but i2c-hid refused it with
+# "HID over i2c has not been provided an Int IRQ" (-EINVAL): there was no
+# gpiochip in the whole system, so the ACPI GpioInt behind the touchpad IRQ
+# could not be resolved (i2c-core-base.c resolves it at probe time and collapses
+# non-defer errors to client->irq = 0; i2c-hid-core.c then rejects the device).
+# INT34C5 is ACPI `\_SB.GPI0` on this machine and is handled by
+# pinctrl-tigerlake (PINCTRL_INTEL, GPIOLIB, GPIOLIB_IRQCHIP are selected).
+# PINCTRL is a menuconfig that the x86_64 defconfig leaves off, and without it
+# no pin/GPIO controller driver is even visible to Kconfig.
+CONFIG_PINCTRL=y
+CONFIG_PINCTRL_TIGERLAKE=y
+# i2c-hid as modules so the probe happens after the built-in GPIO/pinctrl
+# controllers are registered. Driver: i2c-hid-acpi (04F3:3147 -> hid-multitouch).
+CONFIG_I2C_HID=m
+CONFIG_I2C_HID_ACPI=m
 # Webcam: USB Video Class
 CONFIG_MEDIA_SUPPORT=y
 CONFIG_MEDIA_CAMERA_SUPPORT=y
