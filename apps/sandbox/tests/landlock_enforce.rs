@@ -135,3 +135,87 @@ fn ruleset_allows_granted_paths_and_denies_others() {
 
     let _ = fs::remove_dir_all(dir);
 }
+
+#[test]
+fn read_write_wins_over_read_only_for_the_same_path() {
+    // Kernel-level proof of the rule normalization: a path passed both `--rw`
+    // and `--ro` must end up writable, whichever argument comes first.
+    let probe = Command::new(SHIM).arg("--probe").output().unwrap();
+    if !cfg!(target_os = "linux") || !probe.status.success() {
+        eprintln!("skipped: Landlock unavailable on this host");
+        return;
+    }
+
+    for (tag, first, second) in [
+        ("rw-then-ro", "--rw", "--ro"),
+        ("ro-then-rw", "--ro", "--rw"),
+    ] {
+        let dir = temp_dir(tag);
+        let output = Command::new(SHIM)
+            .args(["--ro", "/usr", "--ro", "/bin", "--ro", "/lib", "--ro", "/lib64"])
+            .arg(first)
+            .arg(&dir)
+            .arg(second)
+            .arg(&dir)
+            .arg("--")
+            .arg("/bin/sh")
+            .arg("-c")
+            .arg(format!("printf inside > '{}/written.txt'", dir.display()))
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{tag}: the path must stay writable: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(
+            fs::read_to_string(dir.join("written.txt")).unwrap_or_default(),
+            "inside",
+            "{tag}: the duplicate rule must not downgrade to read-only"
+        );
+        let _ = fs::remove_dir_all(dir);
+    }
+}
+
+#[test]
+fn a_missing_rule_path_refuses_the_launch() {
+    // `shim_arguments` keeps a rule for a path that no longer exists, so the
+    // launcher and the shim always agree on one rule set. The shim then fails
+    // closed when it cannot open the path instead of running the app with a
+    // silently different ruleset. On hosts without Landlock the refusal is the
+    // same exit code for the same reason (fail-closed), so only the Linux
+    // stderr assertion below is kernel-dependent.
+    let dir = temp_dir("missing-rule");
+    let marker = dir.join("ran");
+    let program = dir.join("app");
+    fs::write(&program, format!("#!/bin/sh\ntouch {}\n", marker.display())).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&program, fs::Permissions::from_mode(0o755)).unwrap();
+    }
+
+    let missing = "/nonexistent/aether/sandbox/path";
+    let output = Command::new(SHIM)
+        .args(["--ro", "/usr", "--ro", missing])
+        .arg("--")
+        .arg(&program)
+        .output()
+        .unwrap();
+    assert_eq!(
+        output.status.code(),
+        Some(REFUSED),
+        "a rule the kernel cannot open must refuse the launch"
+    );
+    assert!(!marker.exists(), "the program must not run");
+    let probe = Command::new(SHIM).arg("--probe").output().unwrap();
+    if cfg!(target_os = "linux") && probe.status.success() {
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains(missing),
+            "the refusal names the path it could not open: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    let _ = fs::remove_dir_all(dir);
+}

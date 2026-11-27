@@ -155,6 +155,28 @@ impl LandlockRule {
     }
 }
 
+/// Collapse duplicate paths and keep the widest grant.
+///
+/// The profile builder and the shim parser both go through this, so a path that
+/// is listed read-only *and* read-write ends up read-write in the arguments the
+/// launcher emits and in the ruleset the shim applies. Without it, the answer
+/// depended on which rule came first.
+fn normalize(rules: &mut Vec<LandlockRule>) {
+    rules.sort_by(|a, b| a.path.cmp(&b.path));
+    // `dedup_by` hands the later element first and the kept one second; the
+    // widest grant wins and the duplicate is dropped.
+    rules.dedup_by(|later, kept| {
+        if later.path == kept.path {
+            if later.writable() {
+                kept.access = READ_WRITE.to_vec();
+            }
+            true
+        } else {
+            false
+        }
+    });
+}
+
 /// The ruleset derived from a sandbox profile.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct LandlockPolicy {
@@ -174,20 +196,9 @@ impl LandlockPolicy {
         for device in &profile.devices {
             rules.push(LandlockRule::read_only(device.clone()));
         }
-        // A path listed read-only and writable stays writable.
-        rules.sort_by(|a, b| a.path.cmp(&b.path));
-        // `dedup_by` hands the later element first and the kept one second;
-        // the widest grant wins.
-        rules.dedup_by(|later, kept| {
-            if later.path == kept.path {
-                if later.writable() {
-                    kept.access = READ_WRITE.to_vec();
-                }
-                true
-            } else {
-                false
-            }
-        });
+        // A path listed read-only and writable stays writable, and duplicates
+        // are collapsed, so the shim receives exactly one rule per path.
+        normalize(&mut rules);
         Self { rules }
     }
 
@@ -390,11 +401,11 @@ pub fn parse_shim_args(args: &[String]) -> Result<ShimInvocation, String> {
                     .get(index + 1)
                     .filter(|value| !value.is_empty())
                     .ok_or_else(|| "-- needs a program to run".to_string())?;
-                let mut cleaned = policy;
-                cleaned.rules.sort_by(|a, b| a.path.cmp(&b.path));
-                cleaned.rules.dedup_by(|a, b| a.path == b.path);
+                // Same normalization as the launcher side: one rule per path,
+                // and read-write wins over read-only whatever the order.
+                normalize(&mut policy.rules);
                 return Ok(ShimInvocation {
-                    policy: cleaned,
+                    policy,
                     seccomp,
                     program: PathBuf::from(program),
                     args: args[index + 2..].to_vec(),
@@ -407,7 +418,13 @@ pub fn parse_shim_args(args: &[String]) -> Result<ShimInvocation, String> {
 }
 
 /// Build the shim argument list for a plan.
+///
+/// The list is normalized first, so a hand-built policy with duplicate paths or
+/// a path granted both ways still produces the one canonical rule the shim
+/// expects (and read-write wins).
 pub fn shim_arguments(policy: &LandlockPolicy, program: &Path) -> Vec<String> {
+    let mut policy = policy.clone();
+    normalize(&mut policy.rules);
     let mut args = Vec::new();
     for rule in &policy.rules {
         args.push(if rule.writable() { "--rw" } else { "--ro" }.to_string());
@@ -420,8 +437,11 @@ pub fn shim_arguments(policy: &LandlockPolicy, program: &Path) -> Vec<String> {
 
 #[cfg(target_os = "linux")]
 mod sys {
-    //! Raw Landlock syscalls (numbers are the generic 444/445/446 used on every
-    //! architecture; `libc` does not expose the constants yet).
+    //! Raw Landlock syscalls. The numbers are the generic table values 444/445/446
+    //! used on every architecture AetherOS supports; they match
+    //! `libc::SYS_landlock_create_ruleset` and friends in libc 0.2.191, but are
+    //! spelled out because the dependency allows older 0.2.x releases that
+    //! predate those constants.
 
     use std::ffi::CString;
     use std::io;
@@ -447,6 +467,10 @@ mod sys {
     struct PathBeneathAttr {
         allowed_access: u64,
         parent_fd: i32,
+        /// Explicit padding: the kernel copies `sizeof(struct)` bytes, so the
+        /// four bytes between the fd and the end must be initialized rather
+        /// than left as whatever the stack held.
+        _pad: u32,
     }
 
     pub fn probe() -> LandlockStatus {
@@ -489,15 +513,18 @@ mod sys {
         for (path, access) in &plan.rules {
             let opened = open_path(path);
             let Ok(parent_fd) = opened else {
+                // Read errno before `close`, which could clobber it.
+                let reason = io::Error::last_os_error().to_string();
                 unsafe { libc::close(ruleset) };
                 return Err(crate::enforce::SandboxError::LandlockRule {
                     path: path.display().to_string(),
-                    reason: io::Error::last_os_error().to_string(),
+                    reason,
                 });
             };
             let rule = PathBeneathAttr {
                 allowed_access: *access,
                 parent_fd,
+                _pad: 0,
             };
             let ret = unsafe {
                 libc::syscall(
@@ -605,6 +632,105 @@ mod tests {
             .find(|rule| rule.path == Path::new("/data/app"))
             .unwrap();
         assert!(app.writable());
+    }
+
+    #[test]
+    fn normalize_keeps_the_widest_grant_in_any_order() {
+        for writable_first in [false, true] {
+            let mut rules = if writable_first {
+                vec![
+                    LandlockRule::read_write("/data/app"),
+                    LandlockRule::read_only("/data/app"),
+                ]
+            } else {
+                vec![
+                    LandlockRule::read_only("/data/app"),
+                    LandlockRule::read_write("/data/app"),
+                ]
+            };
+            rules.push(LandlockRule::read_only("/usr"));
+            rules.push(LandlockRule::read_only("/usr"));
+            normalize(&mut rules);
+            assert_eq!(rules.len(), 2, "duplicates are collapsed");
+            assert_eq!(rules[0].path, PathBuf::from("/data/app"));
+            assert!(rules[0].writable(), "read-write wins (order {writable_first})");
+            assert_eq!(rules[0].access, READ_WRITE.to_vec());
+            assert_eq!(rules[1].path, PathBuf::from("/usr"));
+            assert!(!rules[1].writable());
+        }
+    }
+
+    #[test]
+    fn shim_parser_widens_and_collapses_like_the_profile_builder() {
+        for order in [
+            vec!["--ro", "/data/app", "--rw", "/data/app"],
+            vec!["--rw", "/data/app", "--ro", "/data/app"],
+            vec!["--ro", "/data/app", "--ro", "/data/app", "--rw", "/data/app"],
+        ] {
+            let mut args: Vec<String> = order.iter().map(|arg| arg.to_string()).collect();
+            args.extend(["--".to_string(), "/bin/app".to_string()]);
+            let invocation =
+                parse_shim_args(&args).unwrap_or_else(|error| panic!("{order:?}: {error}"));
+            assert_eq!(invocation.policy.rules.len(), 1, "{order:?}");
+            assert!(invocation.policy.rules[0].writable(), "{order:?}");
+            assert_eq!(invocation.policy.rules[0].access, READ_WRITE.to_vec());
+        }
+
+        let args: Vec<String> = [
+            "--ro", "/usr", "--ro", "/usr", "--ro", "/etc", "--ro", "/usr", "--", "/bin/app",
+        ]
+        .iter()
+        .map(|arg| arg.to_string())
+        .collect();
+        let invocation = parse_shim_args(&args).unwrap();
+        let paths: Vec<String> = invocation
+            .policy
+            .rules
+            .iter()
+            .map(|rule| rule.path.display().to_string())
+            .collect();
+        assert_eq!(paths, vec!["/etc", "/usr"]);
+    }
+
+    #[test]
+    fn shim_arguments_are_normalized_even_for_a_hand_built_policy() {
+        let policy = LandlockPolicy {
+            rules: vec![
+                LandlockRule::read_only("/usr"),
+                LandlockRule::read_only("/data/app"),
+                LandlockRule::read_write("/data/app"),
+                LandlockRule::read_only("/usr"),
+            ],
+        };
+        let args = shim_arguments(&policy, Path::new("/bin/app"));
+        assert_eq!(args, vec!["--rw", "/data/app", "--ro", "/usr", "--", "/bin/app"]);
+    }
+
+    #[test]
+    fn a_rule_for_a_missing_path_is_still_emitted() {
+        // Documented choice: neither the profile nor `shim_arguments` filters on
+        // existence. bwrap's binds skip missing sources (bwrap rejects them),
+        // but the Landlock rule is kept so the launcher and the shim agree on
+        // one ruleset. The shim then fails closed when it cannot open the path
+        // (`LandlockRule`, exit 126) instead of starting the app with a
+        // silently different rule set.
+        let missing = PathBuf::from("/nonexistent/aether/sandbox/path");
+        let profile = SandboxProfile {
+            file_read: vec![missing.clone()],
+            file_write: Vec::new(),
+            network: false,
+            devices: Vec::new(),
+            home: PathBuf::from("/data/app"),
+        };
+        let policy = LandlockPolicy::from_profile(&profile);
+        assert_eq!(policy.rules.len(), 1);
+        assert_eq!(policy.rules[0].path, missing);
+        assert_eq!(
+            shim_arguments(&policy, Path::new("/bin/app")),
+            vec!["--ro", "/nonexistent/aether/sandbox/path", "--", "/bin/app"]
+        );
+        let plan = plan(&LandlockStatus::Available { abi: 3 }, &policy).unwrap();
+        assert_eq!(plan.rule_count(), 1, "the plan does not drop missing paths");
     }
 
     #[test]

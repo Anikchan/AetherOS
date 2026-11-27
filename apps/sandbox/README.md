@@ -48,6 +48,16 @@ was built for, so a filter can never be bypassed by running foreign-architecture
 code. It then compares `seccomp_data.nr` against every denial and returns
 `EPERM` for a match; anything else is allowed.
 
+The program is hand-built, so it is also checked before it reaches the kernel:
+`SeccompPlan::verify_encoding()` walks every branch and fails the plan (and the
+launch) when a jump does not land on the instruction the builder intended, and
+`SeccompPlan::evaluate()` runs the program the way the kernel would, on any
+host. The unit tests evaluate every denial on both architectures, the syscalls an
+app cannot live without (`read`/`write`/`execve`/`mmap`/`clone`/`exit`), foreign
+`AUDIT_ARCH_*` values, and truncated or malformed programs; a truncated stream
+fails closed with `SECCOMP_RET_KILL_PROCESS`. The syscall-number table is
+cross-checked against `libc::SYS_*` on a Linux host of each architecture.
+
 The policy is default-allow with a curated deny list (`DENIED`), because a
 strict allowlist would break ordinary applications; the deny list covers the
 syscalls that escape a sandbox (see the table above). Each denial carries a
@@ -94,6 +104,22 @@ aether-landlock [--seccomp] --ro /usr --rw /data/app -- /data/app/bin/app
   (for example an emulator using `personality`) need an explicit exception
   (`SeccompPolicy::without`), which is not yet surfaced in the manifest.
 - Seccomp cannot filter by path or argument; Landlock and the mount set cover
-  those. Syscall-number tables must be kept in sync with new kernels; a wrong
-  number is caught by the Linux integration test (a filtered `/bin/cat` run)
-  but not by the unit tests.
+  those. The syscall-number table is cross-checked against `libc::SYS_*` in the
+  Linux CI job (`tests/syscall_table.rs`); that test compiles to zero tests on
+  the macOS dev host, where the numbers are only checked for internal
+  consistency and exercised through the evaluator.
+
+## Rule normalization (Landlock)
+
+A path may appear in `file_read`, `file_write` and `devices` more than once
+(e.g. a picked file inside the app folder). `LandlockPolicy::from_profile` and
+the shim's argument parser both normalize the rule list through the same
+function: duplicates are collapsed and **read-write wins**, whatever the order.
+The launcher therefore passes one rule per path, and a hand-written
+`aether-landlock --ro DIR --rw DIR` invocation behaves the same way.
+
+A rule for a path that does not exist is **kept**, not silently skipped: bwrap
+skips the bind (it rejects a missing source), but the Landlock rule stays so the
+launcher and the shim agree on one rule set, and the shim then fails closed when
+it cannot open the path (exit 126, program never run). The alternative —
+dropping it — would start the app with a ruleset nobody reviewed.

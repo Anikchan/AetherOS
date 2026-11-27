@@ -184,6 +184,26 @@ pub struct SeccompInsn {
     pub k: u32,
 }
 
+/// Classic BPF jumps are relative to the instruction after the jump.
+fn jump_target(pc: usize, insn: &SeccompInsn, taken: bool) -> usize {
+    pc + 1 + usize::from(if taken { insn.jt } else { insn.jf })
+}
+
+/// Fetch the instruction a branch must land on, or explain that it left the
+/// program (the kernel rejects such a program as well).
+fn instruction<'a>(
+    insns: &'a [SeccompInsn],
+    index: usize,
+    origin: &str,
+) -> Result<&'a SeccompInsn, String> {
+    insns.get(index).ok_or_else(|| {
+        format!(
+            "{origin} jumps to instruction {index}, past the end of the {} instruction program",
+            insns.len()
+        )
+    })
+}
+
 /// The program the kernel will run for every syscall.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SeccompPlan {
@@ -196,6 +216,104 @@ pub struct SeccompPlan {
 impl SeccompPlan {
     pub fn denied_count(&self) -> usize {
         self.denied.len()
+    }
+
+    /// Check the whole program: every instruction is one this crate knows how
+    /// to encode, and every conditional jump lands where the builder intended.
+    ///
+    /// [`plan`] runs this before returning, so an encoding mistake (the class of
+    /// bug that shipped an inverted arch check and killed every syscall of every
+    /// app) fails the launch with an error on **every** host, including one that
+    /// cannot install a seccomp filter. The check is structural rather than a
+    /// copy of the builder's index arithmetic: it starts from the documented
+    /// header, then follows each comparison's taken and fall-through targets.
+    pub fn verify_encoding(&self) -> Result<(), String> {
+        let insns = &self.instructions;
+        let expected = 5 + self.denied.len() * 2;
+        if insns.len() != expected {
+            return Err(format!(
+                "the program has {} instructions, expected {expected} (5 header/footer plus 2 per denial)",
+                insns.len()
+            ));
+        }
+        for (index, insn) in insns.iter().enumerate() {
+            if !matches!(insn.code, BPF_LD_W_ABS | BPF_JMP_JEQ_K | BPF_RET_K) {
+                return Err(format!(
+                    "instruction {index} uses the opcode {:#x}, which this crate does not emit",
+                    insn.code
+                ));
+            }
+        }
+
+        // Header: load arch, compare it, kill when it differs, load nr.
+        let load_arch = instruction(insns, 0, "the arch load")?;
+        if load_arch.code != BPF_LD_W_ABS || load_arch.k != DATA_ARCH_OFFSET {
+            return Err("the program does not start by loading seccomp_data.arch".into());
+        }
+        let arch_jump = instruction(insns, 1, "the arch check")?;
+        if arch_jump.code != BPF_JMP_JEQ_K || arch_jump.k != self.arch.audit_arch() {
+            return Err(format!(
+                "the arch check does not compare against {:#x}",
+                self.arch.audit_arch()
+            ));
+        }
+        let matched = instruction(
+            insns,
+            jump_target(1, arch_jump, true),
+            "the arch check's taken branch",
+        )?;
+        if matched.code != BPF_LD_W_ABS || matched.k != DATA_NR_OFFSET {
+            return Err("a matching architecture must reach the seccomp_data.nr load".into());
+        }
+        let foreign = instruction(
+            insns,
+            jump_target(1, arch_jump, false),
+            "the arch check's fall-through",
+        )?;
+        if foreign.code != BPF_RET_K || foreign.k != RET_KILL_PROCESS {
+            return Err("a foreign architecture must fall into RET_KILL_PROCESS".into());
+        }
+
+        for (position, (name, number)) in self.denied.iter().enumerate() {
+            let base = 4 + position * 2;
+            let comparison = instruction(insns, base, name)?;
+            if comparison.code != BPF_JMP_JEQ_K {
+                return Err(format!("the denial of {name} is not a comparison"));
+            }
+            if comparison.k != *number as u32 {
+                return Err(format!(
+                    "the denial of {name} compares against {}, but its table entry is {number}",
+                    comparison.k
+                ));
+            }
+            if jump_target(base, comparison, true) != base + 1 {
+                return Err(format!(
+                    "the denial of {name} does not land on its own EPERM return"
+                ));
+            }
+            if jump_target(base, comparison, false) != base + 2 {
+                return Err(format!(
+                    "the denial of {name} does not fall through to the next instruction"
+                ));
+            }
+            let denied = instruction(insns, jump_target(base, comparison, true), name)?;
+            if denied.code != BPF_RET_K || denied.k != ret_errno(DENY_ERRNO) {
+                return Err(format!("{name} does not return EPERM when it matches"));
+            }
+            let next = instruction(insns, jump_target(base, comparison, false), name)?;
+            if position + 1 == self.denied.len() {
+                if next.code != BPF_RET_K || next.k != RET_ALLOW {
+                    return Err(format!(
+                        "a syscall outside the deny list (checked after {name}) must be allowed"
+                    ));
+                }
+            } else if next.code != BPF_JMP_JEQ_K {
+                return Err(format!(
+                    "the denial of {name} does not continue to the next comparison"
+                ));
+            }
+        }
+        Ok(())
     }
 
     /// Run the program the way the kernel would, for one syscall.
@@ -295,14 +413,23 @@ pub fn plan(policy: &SeccompPolicy, arch: SeccompArch) -> Result<SeccompPlan, Sa
         k: RET_ALLOW,
     });
 
-    Ok(SeccompPlan {
+    let plan = SeccompPlan {
         arch,
         denied: resolved
             .iter()
             .map(|(denial, number)| (denial.name, *number))
             .collect(),
         instructions,
-    })
+    };
+    // Never hand the kernel a program whose branches do not land where the
+    // builder intended: the arch-inversion bug was invisible to a compile test
+    // and only showed up as every syscall being killed on the target kernel.
+    plan.verify_encoding().map_err(|error| {
+        SandboxError::SeccompFailed(format!(
+            "the generated seccomp program is inconsistent ({error}); the app will not start"
+        ))
+    })?;
+    Ok(plan)
 }
 
 /// Kernel support as reported by the running system.
@@ -329,6 +456,11 @@ pub fn probe() -> SeccompStatus {
     };
     #[cfg(target_os = "linux")]
     {
+        // Both markers are optimistic: `/proc/self/status` always carries a
+        // `Seccomp:` line and `actions_avail` implies filter support. That is
+        // deliberate — the authoritative check is the `prctl(PR_SET_SECCOMP)`
+        // in `install`, and the shim refuses to exec when it fails. A false
+        // negative here would only block launches the kernel could enforce.
         let kernel_support = std::path::Path::new("/proc/sys/kernel/seccomp/actions_avail")
             .exists()
             || std::fs::read_to_string("/proc/self/status")
@@ -602,6 +734,238 @@ mod tests {
                 denial.x86_64 >= 0 || denial.aarch64 >= 0,
                 "{} has no syscall number",
                 denial.name
+            );
+        }
+    }
+
+    /// Syscalls an app must always be able to make, so a filter that kills or
+    /// denies them breaks every app (the Dell's inverted arch check did exactly
+    /// that). Numbers from the kernel UAPI tables.
+    fn innocuous(arch: SeccompArch) -> Vec<u32> {
+        let numbers: &[i64] = match arch {
+            SeccompArch::X86_64 => &[
+                0, 1, 2, 3, 5, 8, 9, 10, 11, 12, 13, 16, 17, 20, 35, 39, 41, 42, 56, 57, 59, 60,
+                61, 62, 63, 72, 79, 80, 202, 228, 231, 257, 262, 302, 318,
+            ],
+            SeccompArch::Aarch64 => &[
+                17, 23, 25, 29, 49, 56, 57, 59, 62, 63, 64, 66, 67, 79, 80, 93, 94, 98, 101, 113,
+                129, 134, 160, 172, 198, 203, 214, 215, 220, 221, 222, 226, 261, 278,
+            ],
+        };
+        numbers.iter().map(|number| *number as u32).collect()
+    }
+
+    #[test]
+    fn every_denied_syscall_is_denied_and_innocuous_ones_are_allowed() {
+        for arch in [SeccompArch::X86_64, SeccompArch::Aarch64] {
+            let plan = plan(&standard_policy(), arch).unwrap();
+            let audit = arch.audit_arch();
+            // The plan is the table resolved for this architecture: nothing is
+            // silently dropped and nothing is invented.
+            let expected: Vec<(&'static str, i64)> = DENIED
+                .iter()
+                .filter(|denial| arch.number(denial) >= 0)
+                .map(|denial| (denial.name, arch.number(denial)))
+                .collect();
+            assert_eq!(plan.denied, expected, "{} resolves the table", arch.label());
+
+            for (name, number) in &plan.denied {
+                assert_eq!(
+                    plan.evaluate(audit, *number as u32),
+                    ret_errno(DENY_ERRNO),
+                    "{name} (#{number}) must be denied on {}",
+                    arch.label()
+                );
+            }
+            for number in innocuous(arch) {
+                assert!(
+                    !plan.denied.iter().any(|(_, denied)| *denied as u32 == number),
+                    "syscall {number} is innocuous and must not be in the deny list"
+                );
+                assert_eq!(
+                    plan.evaluate(audit, number),
+                    RET_ALLOW,
+                    "innocuous syscall {number} must be allowed on {}",
+                    arch.label()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_foreign_architecture_kills_every_syscall() {
+        // AUDIT_ARCH_I386: the compat personality. Not a filter target, so it
+        // must be killed rather than allowed.
+        const AUDIT_ARCH_I386: u32 = 0x4000_0003;
+        for arch in [SeccompArch::X86_64, SeccompArch::Aarch64] {
+            let plan = plan(&standard_policy(), arch).unwrap();
+            let foreign = match arch {
+                SeccompArch::X86_64 => SeccompArch::Aarch64.audit_arch(),
+                SeccompArch::Aarch64 => SeccompArch::X86_64.audit_arch(),
+            };
+            let mut probes: Vec<u32> = plan.denied.iter().map(|(_, n)| *n as u32).collect();
+            probes.extend(innocuous(arch));
+            probes.push(u32::MAX);
+            for audit in [foreign, AUDIT_ARCH_I386, 0] {
+                for number in &probes {
+                    assert_eq!(
+                        plan.evaluate(audit, *number),
+                        RET_KILL_PROCESS,
+                        "audit arch {audit:#x} must never run on a {} filter (syscall {number})",
+                        arch.label()
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn pseudo_random_syscall_numbers_agree_with_the_deny_list() {
+        // Property: for a matching architecture the program never kills; it
+        // returns EPERM exactly for the listed numbers and allows everything
+        // else. A wrong jump offset or a duplicated entry breaks this.
+        let mut seed: u32 = 0x5eed_1234;
+        for arch in [SeccompArch::X86_64, SeccompArch::Aarch64] {
+            let plan = plan(&standard_policy(), arch).unwrap();
+            let audit = arch.audit_arch();
+            let (mut denied, mut allowed) = (0usize, 0usize);
+            for _ in 0..2_000 {
+                seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+                let number = seed % 512;
+                let listed = plan.denied.iter().any(|(_, n)| *n as u32 == number);
+                let action = plan.evaluate(audit, number);
+                if listed {
+                    denied += 1;
+                    assert_eq!(action, ret_errno(DENY_ERRNO), "listed syscall {number}");
+                } else {
+                    allowed += 1;
+                    assert_eq!(action, RET_ALLOW, "unlisted syscall {number}");
+                }
+            }
+            assert!(denied > 0 && allowed > 0, "the sample covers both outcomes");
+        }
+    }
+
+    #[test]
+    fn malformed_instruction_streams_fail_closed() {
+        let base = plan(&standard_policy(), SeccompArch::X86_64).unwrap();
+        let audit = SeccompArch::X86_64.audit_arch();
+        let unlisted = u32::MAX;
+
+        let empty = SeccompPlan {
+            arch: base.arch,
+            denied: base.denied.clone(),
+            instructions: Vec::new(),
+        };
+        assert_eq!(empty.evaluate(audit, 0), RET_KILL_PROCESS);
+        assert!(empty.verify_encoding().is_err());
+
+        // Truncated: the final allow is missing, so a syscall that is not
+        // denied walks off the end.
+        let mut truncated = base.clone();
+        truncated.instructions.pop();
+        assert_eq!(truncated.evaluate(audit, unlisted), RET_KILL_PROCESS);
+        assert!(truncated.verify_encoding().is_err());
+
+        // Unknown opcode: the kernel would reject the program at load time.
+        let mut unknown = base.clone();
+        unknown.instructions[6].code = 0x99;
+        assert_eq!(unknown.evaluate(audit, unlisted), RET_KILL_PROCESS);
+        assert!(unknown.verify_encoding().is_err());
+
+        // A load from an offset that is not seccomp_data.nr/arch.
+        let mut bogus_load = base.clone();
+        bogus_load.instructions[3].k = 8;
+        assert_eq!(bogus_load.evaluate(audit, unlisted), RET_KILL_PROCESS);
+        assert!(bogus_load.verify_encoding().is_err());
+
+        // A jump past the end of the program.
+        let mut overrun = base.clone();
+        overrun.instructions[1].jt = 200;
+        assert_eq!(overrun.evaluate(audit, 0), RET_KILL_PROCESS);
+        assert!(overrun.verify_encoding().is_err());
+
+        // A jump that skips a comparison, so one denial would never match.
+        let mut skip = base.clone();
+        skip.instructions[4].jf = 3;
+        assert_eq!(
+            skip.evaluate(audit, 165),
+            ret_errno(DENY_ERRNO),
+            "the mount comparison itself still matches"
+        );
+        assert_eq!(
+            skip.evaluate(audit, 166),
+            RET_ALLOW,
+            "umount2 is skipped by the widened fall-through"
+        );
+        assert!(
+            skip.verify_encoding().is_err(),
+            "a denial that cannot be reached must fail verification"
+        );
+    }
+
+    #[test]
+    fn verification_catches_the_historical_inverted_arch_check() {
+        let mut plan = plan(&standard_policy(), SeccompArch::X86_64).unwrap();
+        // The bug that shipped: a matching architecture skipped the *allow*
+        // path and fell into the kill, so the app died on its first syscall.
+        plan.instructions[1].jt = 0;
+        plan.instructions[1].jf = 1;
+        assert_eq!(
+            plan.evaluate(SeccompArch::X86_64.audit_arch(), 0),
+            RET_KILL_PROCESS,
+            "the inverted check kills the first syscall"
+        );
+        assert!(
+            plan.verify_encoding().is_err(),
+            "verify_encoding must reject the inverted arch check"
+        );
+    }
+
+    #[test]
+    fn verification_rejects_a_wrong_number_or_a_wrong_default() {
+        let base = plan(&standard_policy(), SeccompArch::X86_64).unwrap();
+        let mut wrong_number = base.clone();
+        wrong_number.instructions[4].k += 1;
+        assert!(wrong_number.verify_encoding().is_err());
+
+        let mut wrong_default = base.clone();
+        let last = wrong_default.instructions.len() - 1;
+        wrong_default.instructions[last].k = ret_errno(DENY_ERRNO);
+        assert!(wrong_default.verify_encoding().is_err());
+
+        let mut wrong_deny_action = base.clone();
+        wrong_deny_action.instructions[5].k = RET_ALLOW;
+        assert!(wrong_deny_action.verify_encoding().is_err());
+
+        for arch in [SeccompArch::X86_64, SeccompArch::Aarch64] {
+            plan(&standard_policy(), arch)
+                .unwrap()
+                .verify_encoding()
+                .unwrap_or_else(|error| panic!("{}: {error}", arch.label()));
+        }
+    }
+
+    #[test]
+    fn deny_table_has_unique_names_and_numbers() {
+        let mut names: Vec<&str> = DENIED.iter().map(|denial| denial.name).collect();
+        names.sort_unstable();
+        names.dedup();
+        assert_eq!(names.len(), DENIED.len(), "duplicate name in DENIED");
+        for arch in [SeccompArch::X86_64, SeccompArch::Aarch64] {
+            let mut numbers: Vec<i64> = DENIED
+                .iter()
+                .map(|denial| arch.number(denial))
+                .filter(|number| *number >= 0)
+                .collect();
+            numbers.sort_unstable();
+            numbers.dedup();
+            let expected = DENIED.iter().filter(|d| arch.number(d) >= 0).count();
+            assert_eq!(
+                numbers.len(),
+                expected,
+                "duplicate syscall number for {}",
+                arch.label()
             );
         }
     }

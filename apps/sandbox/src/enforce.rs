@@ -133,18 +133,15 @@ impl Enforcer {
     ///
     /// Every layer must be available and enforceable; otherwise this returns an
     /// error and **nothing is started**. There is no fallback to a weaker
-    /// sandbox and no unsandboxed exec.
+    /// sandbox and no unsandboxed exec: the return value is a `Command` only
+    /// when all four checks (bwrap, user namespaces, Landlock, seccomp) passed.
     pub fn command_strict(
         &self,
         profile: &SandboxProfile,
         entry: &Path,
         shim: &Path,
     ) -> Result<Command, SandboxError> {
-        if !self.capabilities.landlock {
-            return Err(SandboxError::LandlockUnavailable(
-                "Landlock is not enabled on this kernel; the app will not start unsandboxed".into(),
-            ));
-        }
+        self.require_strict_layers(&crate::seccomp::probe())?;
         let landlock_policy = crate::landlock::LandlockPolicy::from_profile(profile);
         crate::landlock::plan(&crate::landlock::probe(), &landlock_policy)?;
         let arch = crate::seccomp::SeccompArch::current().ok_or_else(|| {
@@ -155,6 +152,45 @@ impl Enforcer {
         })?;
         crate::seccomp::plan(&crate::seccomp::standard_policy(), arch)?;
         self.shim_command(profile, entry, shim, true)
+    }
+
+    /// The strict-launch gate, in order: namespace tool, user namespaces,
+    /// Landlock, seccomp. Any missing layer is an error naming that layer, and
+    /// on `Err` no `Command` exists, so nothing can be spawned.
+    ///
+    /// `seccomp` is passed in so a test can prove the seccomp branch on a host
+    /// whose kernel cannot install a filter.
+    fn require_strict_layers(
+        &self,
+        seccomp: &crate::seccomp::SeccompStatus,
+    ) -> Result<(), SandboxError> {
+        if self.capabilities.bwrap.is_none() {
+            return Err(SandboxError::Unavailable(
+                "bubblewrap (bwrap) is not installed; a strict launch needs the namespace layer. The app will not start."
+                    .into(),
+            ));
+        }
+        if !self.capabilities.user_namespaces {
+            return Err(SandboxError::Unavailable(
+                "user namespaces are disabled (kernel.unprivileged_userns_clone=0); the app will not start unsandboxed."
+                    .into(),
+            ));
+        }
+        if !self.capabilities.landlock {
+            return Err(SandboxError::LandlockUnavailable(
+                "Landlock is not enabled on this kernel; the app will not start unsandboxed".into(),
+            ));
+        }
+        if !seccomp.available {
+            return Err(SandboxError::SeccompUnavailable(format!(
+                "{}; the app will not start unsandboxed",
+                seccomp
+                    .reason
+                    .as_deref()
+                    .unwrap_or("seccomp filtering is unavailable")
+            )));
+        }
+        Ok(())
     }
 
     /// Wrap the entry point with the launch shim inside the namespace sandbox.
@@ -523,6 +559,135 @@ mod tests {
         assert!(args[shim + 1..].iter().any(|arg| arg == "--"), "no entry separator in {args:?}");
         assert_eq!(args.last().unwrap(), &entry.to_string_lossy());
         assert!(args[..shim].contains(&"--unshare-user".to_string()));
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    /// Every layer the strict launch needs, for the gate tests.
+    fn all_layers() -> SandboxCapabilities {
+        SandboxCapabilities {
+            bwrap: Some(PathBuf::from("/usr/bin/bwrap")),
+            user_namespaces: true,
+            landlock: true,
+        }
+    }
+
+    fn seccomp_status(available: bool) -> crate::seccomp::SeccompStatus {
+        crate::seccomp::SeccompStatus {
+            available,
+            arch: Some("x86_64".into()),
+            denials: if available {
+                crate::seccomp::DENIED.len()
+            } else {
+                0
+            },
+            reason: if available {
+                None
+            } else {
+                Some("the host cannot install a seccomp filter".into())
+            },
+        }
+    }
+
+    #[test]
+    fn strict_launch_refuses_each_missing_layer_by_name() {
+        let cases: [(&str, SandboxCapabilities, bool); 4] = [
+            (
+                "bwrap",
+                SandboxCapabilities {
+                    bwrap: None,
+                    ..all_layers()
+                },
+                true,
+            ),
+            (
+                "user namespaces",
+                SandboxCapabilities {
+                    user_namespaces: false,
+                    ..all_layers()
+                },
+                true,
+            ),
+            (
+                "Landlock",
+                SandboxCapabilities {
+                    landlock: false,
+                    ..all_layers()
+                },
+                true,
+            ),
+            ("seccomp", all_layers(), false),
+        ];
+        for (layer, capabilities, seccomp_available) in cases {
+            let enforcer = Enforcer::with_bwrap("/usr/bin/bwrap", capabilities);
+            match enforcer.require_strict_layers(&seccomp_status(seccomp_available)) {
+                Err(error) => {
+                    let message = error.to_string();
+                    assert!(
+                        message.to_lowercase().contains(&layer.to_lowercase()),
+                        "the {layer} refusal must name the layer: {message}"
+                    );
+                }
+                Ok(()) => panic!("a missing {layer} layer must refuse the launch"),
+            }
+        }
+        // With all four layers the gate opens; the launch itself still needs a
+        // valid entry point, which `command_strict` checks later.
+        let enforcer = Enforcer::with_bwrap("/usr/bin/bwrap", all_layers());
+        assert!(enforcer.require_strict_layers(&seccomp_status(true)).is_ok());
+    }
+
+    #[test]
+    fn command_strict_is_all_or_nothing_on_this_host() {
+        let dir = temp_dir("strict");
+        let app = dir.join("app-data");
+        fs::create_dir_all(&app).unwrap();
+        let entry = dir.join("app");
+        // If a launch were ever executed without a layer, this marker appears.
+        let marker = dir.join("ran");
+        fs::write(&entry, format!("#!/bin/sh\ntouch {}\n", marker.display())).unwrap();
+
+        // Landlock missing: refused, and no Command exists to spawn.
+        let enforcer = Enforcer::with_bwrap(
+            "/usr/bin/bwrap",
+            SandboxCapabilities {
+                bwrap: Some(PathBuf::from("/usr/bin/bwrap")),
+                user_namespaces: true,
+                landlock: false,
+            },
+        );
+        assert!(matches!(
+            enforcer.command_strict(
+                &profile(false, &app),
+                &entry,
+                Path::new(crate::landlock::SHIM_PATH)
+            ),
+            Err(SandboxError::LandlockUnavailable(_))
+        ));
+        assert!(!marker.exists(), "a refused strict launch runs nothing");
+
+        // The live probe agrees: a strict launch either gets every layer or is
+        // refused. There is no namespace-only third outcome.
+        let capabilities = SandboxCapabilities::detect();
+        let expected_ok = capabilities.usable()
+            && capabilities.landlock
+            && crate::seccomp::probe().available
+            && crate::landlock::probe().is_available();
+        let bwrap = capabilities
+            .bwrap
+            .clone()
+            .unwrap_or_else(|| PathBuf::from("/usr/bin/bwrap"));
+        let enforcer = Enforcer::with_bwrap(bwrap, capabilities);
+        let strict = enforcer.command_strict(
+            &profile(false, &app),
+            &entry,
+            Path::new(crate::landlock::SHIM_PATH),
+        );
+        assert_eq!(
+            strict.is_ok(),
+            expected_ok,
+            "strict launch is refused unless every layer is available"
+        );
+        assert!(!marker.exists(), "no strict launch check executes the entry point");
         let _ = fs::remove_dir_all(dir);
     }
 }
