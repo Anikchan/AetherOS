@@ -193,7 +193,7 @@ app only needs `libwayland-client.so.0` and fontconfig, both on `ubuntu-latest`.
 | `cargo test -p aether-shell` | **179 passed, 0 failed** (re-run after the shell session committed its layer-paint work; the earlier `cannot find function specs` compile error was their uncommitted tree) |
 | `cargo test -p aether-shell -p aether-files` (one build graph, so `slint` unifies to `backend-winit, backend-winit-wayland, …, std`) | **196 passed, 0 failed** — the shell's UI/render tests still select `i-slint-backend-testing` and pass with winit compiled into the same `slint` rlib |
 | `./target/debug/aether-files --render /tmp/...` (also `aether-text`, `aether-calculator`) | PNGs written, same sizes/markers as before |
-| Linux cross-check: `RUST_FONTCONFIG_DLOPEN`/stub `fontconfig.pc` + `rustup run stable cargo check --target x86_64-unknown-linux-gnu -p aether-files` | `Finished dev profile` — winit's Wayland path, sctk, softbuffer and slint's backend selector compile for Linux |
+| Linux cross-check: stub `fontconfig.pc` (no Linux sysroot) + `rustup run stable cargo check --target x86_64-unknown-linux-gnu -p aether-files` | `Finished dev profile` — winit's Wayland path, sctk, softbuffer and slint's backend selector compile for Linux |
 
 The Linux cross-check needs two workarounds on this host because there is no
 Linux sysroot:
