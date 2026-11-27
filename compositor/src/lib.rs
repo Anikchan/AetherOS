@@ -1414,7 +1414,17 @@ impl XdgShellHandler for AetherCompositor {
         if let Some(output) = output {
             self.assign_surface(&wl_surface, &output);
         }
-        println!("AETHER_COMPOSITOR_XDG_TOPLEVEL: output={output_name}");
+        // P3-T08 correlation: the watchdog identifies clients by their index in
+        // `watched_clients`, and the index depends on connection order (XWayland
+        // is a client too). Name the client in the marker so a test or a log
+        // reader can follow one client instead of assuming it is client 0.
+        let client_id = self
+            .watched_clients
+            .iter()
+            .position(|known| known == &surface.client())
+            .map(|index| index.to_string())
+            .unwrap_or_else(|| "unwatched".to_string());
+        println!("AETHER_COMPOSITOR_XDG_TOPLEVEL: output={output_name} client={client_id}");
         self.toplevels.push(surface.clone());
 
         // P3-T04: register the toplevel with the window manager as a floating

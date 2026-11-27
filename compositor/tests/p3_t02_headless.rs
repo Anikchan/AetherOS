@@ -442,7 +442,7 @@ fn two_outputs_layer_shell_and_xdg_toplevel() {
         "layer surface configured at its logical size:\n{log}"
     );
     assert!(
-        log.contains("AETHER_COMPOSITOR_XDG_TOPLEVEL: output=aether-headless-0"),
+        log.contains("AETHER_COMPOSITOR_XDG_TOPLEVEL: output=aether-headless-0 client="),
         "xdg toplevel created on the primary output:\n{log}"
     );
     assert!(

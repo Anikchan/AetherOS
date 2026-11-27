@@ -199,16 +199,21 @@ fn responsive_app_is_pinged() {
     }
 
     let log = fs::read_to_string(runtime_dir.join("compositor.log")).expect("compositor log");
+    // The watchdog numbers clients by connect order, and the compositor may
+    // have other clients (XWayland on Linux). Ask the compositor which one owns
+    // this toplevel instead of assuming client 0.
+    let client = toplevel_client(&runtime_dir);
     assert!(
-        log.contains("AETHER_COMPOSITOR_PING: client=0"),
-        "no ping sent:\n{log}"
+        log.contains(&format!("AETHER_COMPOSITOR_PING: client={client}")),
+        "no ping sent to client {client}:\n{log}"
     );
     assert!(
-        log.contains("AETHER_COMPOSITOR_PONG: client=0") && log.contains("recovered=false"),
-        "responsive client did not pong:\n{log}"
+        log.contains(&format!("AETHER_COMPOSITOR_PONG: client={client}"))
+            && log.contains("recovered=false"),
+        "responsive client {client} did not pong:\n{log}"
     );
     assert!(
-        !log.contains("state=not_responding"),
+        !log.contains(&format!("AETHER_COMPOSITOR_APP_STATE: client={client} state=not_responding")),
         "a responsive client must not be marked hung:\n{log}"
     );
     // Frame-gap logger: with a 0 ms threshold any damaged frame is a gap.
@@ -254,9 +259,12 @@ fn hung_app_is_marked_not_responding_and_recovers() {
     // unanswered in the socket.
     std::thread::sleep(Duration::from_millis(1200));
 
+    // Client ids follow connect order (XWayland is a client too), so read the
+    // id this toplevel belongs to from the compositor's own marker.
+    let client = toplevel_client(&runtime_dir);
     let log = wait_for_log(
         &runtime_dir,
-        "AETHER_COMPOSITOR_APP_STATE: client=0 state=not_responding",
+        &format!("AETHER_COMPOSITOR_APP_STATE: client={client} state=not_responding"),
         Duration::from_secs(5),
     );
     assert!(
@@ -273,7 +281,7 @@ fn hung_app_is_marked_not_responding_and_recovers() {
     }
     let log = wait_for_log(
         &runtime_dir,
-        "AETHER_COMPOSITOR_APP_STATE: client=0 state=responsive recovered=true",
+        &format!("AETHER_COMPOSITOR_APP_STATE: client={client} state=responsive recovered=true"),
         Duration::from_secs(5),
     );
     if std::env::var_os("AETHER_COMPOSITOR_TEST_LOG").is_some() {
@@ -349,6 +357,28 @@ fn shell_watchdog_reports_a_stalled_shell() {
 fn connect(runtime_dir: &Path) {
     std::env::set_var("XDG_RUNTIME_DIR", runtime_dir);
     std::env::set_var("WAYLAND_DISPLAY", "wayland-0");
+}
+
+/// Client id the compositor assigned to this test's xdg toplevel.
+///
+/// The watchdog numbers clients by connect order, and on Linux the compositor
+/// starts XWayland, which takes a slot. Read the id from the compositor's own
+/// marker instead of assuming client 0.
+fn toplevel_client(runtime_dir: &Path) -> String {
+    let log = wait_for_log(
+        runtime_dir,
+        "AETHER_COMPOSITOR_XDG_TOPLEVEL:",
+        Duration::from_secs(5),
+    );
+    let line = log
+        .lines()
+        .find(|line| line.starts_with("AETHER_COMPOSITOR_XDG_TOPLEVEL:"))
+        .expect("xdg toplevel marker");
+    line.split_whitespace()
+        .find_map(|field| field.strip_prefix("client="))
+        .filter(|id| *id != "unwatched")
+        .unwrap_or_else(|| panic!("toplevel marker without a watched client: {line}"))
+        .to_string()
 }
 
 /// Poll the compositor log until every needle is present, then return it.
