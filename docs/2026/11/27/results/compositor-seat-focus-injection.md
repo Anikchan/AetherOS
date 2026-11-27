@@ -222,3 +222,12 @@ fix** (reported in the handoff):
 6. **XWayland**: X11 windows never receive focus from these hooks (they are
    toplevels, and `XwmHandler` does not call `set_focus`). Untested, hardware-
    and XWayland-gated.
+
+## 8. Follow-up in this round
+
+The pointer half of the same test hook (`AETHER_COMPOSITOR_INJECT_POINTER`),
+`wl_surface.frame` callbacks for self-pacing clients and `wl_buffer.release` for
+double buffering landed next: see
+`docs/2026/11/27/results/compositor-frames-pointer.md`. The `enable_key_injection`
+entry point named in §3 is now `enable_headless_input` (it sets up the same
+headless seat for keys and pointer).

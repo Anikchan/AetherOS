@@ -82,10 +82,22 @@ build.
 - **Window management** (`wm`, `P3-T04`) and layer shell: toplevels are drawn at
   their managed rect, layer surfaces on their anchored edge
   (`backend::layer_location`), shell chrome above windows, cursor on top.
-- **Input** (`P3-T09`): libinput keyboard/pointer events feed the `wl_seat`
-  created by the backend; pointer motion does hit-testing (Top/Overlay layer
-  surfaces first, then windows, topmost first), a click moves keyboard focus,
-  and the client cursor surface is drawn as a software cursor.
+- **Input** (`P3-T09`, `P3-T13`): libinput keyboard/pointer events feed the
+  `wl_seat` created by the backend; pointer motion does hit-testing (Top/Overlay
+  layer surfaces first, then windows, topmost first) and forwards
+  `wl_pointer.enter/motion/button` with **surface-local** coordinates, so dock and
+  panel clicks work. A click moves keyboard focus to the clicked surface, except
+  on a layer surface with `keyboard_interactivity = none` (a dock or the menu
+  bar): clicking chrome never stops the focused window from receiving keys.
+  Every forwarded event is logged (see the marker table). The client cursor
+  surface is drawn as a software cursor.
+- **Frame callbacks and buffer release** (`P3-T13`): `wl_surface.frame`
+  callbacks are answered after presentation (headless: on the frame tick, DRM:
+  after the page flip). A client that is waiting for a callback has no damage
+  pending, so the compositor presents an *empty* frame at the frame cadence to
+  hand the callback back — otherwise a self-pacing client would stall forever.
+  The previous `wl_buffer` of a surface is released (`wl_buffer.release`) once a
+  newer buffer replaced it, which is what makes double buffering possible.
 - **Layer-surface keyboard focus**: `zwlr_layer_shell_v1` can ask for the
   keyboard, but smithay never assigns focus for layer surfaces, so the
   compositor does it on the first commit that maps the surface:
@@ -94,20 +106,21 @@ build.
   typing from a focused window), and `none` never takes it. Focus changes are
   logged with the interactivity and namespace (see the marker list).
 
-## Test-only: headless key injection
+## Test-only: headless input injection
 
-The headless backend has no input device, so a key can never reach a client's
-`wl_keyboard` there — which is exactly the path the shell's keyboard handling
-needs to be proven against. For tests only:
+The headless backend has no input device, so neither a key nor a click can reach
+a client's `wl_keyboard` / `wl_pointer` there — which is exactly the path the
+shell's keyboard and dock handling needs to be proven against. For tests only:
 
 ```sh
 AETHER_COMPOSITOR_BACKEND=headless \
 AETHER_COMPOSITOR_INJECT_KEYS=15,28,57 \
+AETHER_COMPOSITOR_INJECT_POINTER="x=600,y=1050,button=1" \
   ./target/debug/aether-compositor
 ```
 
-The variable is a comma-separated list of **evdev** keycodes. When it is set and
-non-empty the headless backend:
+`AETHER_COMPOSITOR_INJECT_KEYS` is a comma-separated list of **evdev** keycodes.
+When either variable is set the headless backend:
 
 1. creates a `wl_seat` with a keyboard and a pointer (there is no device to do it
    otherwise) and logs `AETHER_COMPOSITOR_SEAT: name=seat-0 keyboard=true
@@ -115,18 +128,40 @@ non-empty the headless backend:
    keys=<n> evdev=<list>`;
 2. replays the keycodes one per frame interval into whatever surface currently
    holds keyboard focus, as a press+release pair, logging
-   `AETHER_COMPOSITOR_KEY_INJECTED: evdev=<n> focus=<surface|none>`.
+   `AETHER_COMPOSITOR_KEY_INJECTED: evdev=<n> focus=<surface|none>`;
+3. optionally injects one pointer action first, from
+   `AETHER_COMPOSITOR_INJECT_POINTER="x=600,y=1050,button=1"` (output logical
+   coordinates, `button` is an evdev button code and optional): a motion to that
+   point plus a press/release when `button` is given, forwarded as normal
+   `wl_pointer` events to the surface under the point and logged as
+   `AETHER_COMPOSITOR_POINTER: surface=<label> x=<x> y=<y> event=enter|motion|button`.
+   The click is injected before the keys, because a click can move keyboard focus.
+
+   ```
+   AETHER_COMPOSITOR_POINTER_INJECTION: backend=headless x=600 y=1050 button=1
+   AETHER_COMPOSITOR_POINTER: surface=aether-shell-dock x=0 y=34 event=enter
+   AETHER_COMPOSITOR_POINTER: surface=aether-shell-dock x=0 y=34 event=button
+   ```
+
+   `x` and `y` are required; a missing or unparsable `button` is a hover only
+   when the field is absent, and a broken value disables the pointer injection
+   instead of silently turning a click into a hover.
 
 `wl_keyboard.key` carries the evdev code (the xkb keycode minus 8), so a client
 that wants an XKB keysym adds 8 — the value the variable lists is the value the
-client sees. Nothing is consumed until a client surface has mapped, so the
-keycodes are not spent before the seat has a focus.
+client sees. `wl_pointer` positions are surface-local, computed from the surface's
+placement (`x=600` on a dock at `(600,1016)` arrives as `surface_x=0`). Nothing is
+consumed until a client surface has mapped, so the actions are not spent before
+the seat has a target.
 
 This is **test plumbing, not a feature**: the DRM backend ignores the variable,
 the image never sets it, and an unset variable leaves the headless backend
 exactly as before (no `wl_seat` global at all). Acceptance:
 `tests/p3_t12_seat_focus.rs` (exclusive layer focus, `on_demand` and `none` never
-taking focus, and the injected key arriving on the client's `wl_keyboard`).
+taking focus, and the injected key arriving on the client's `wl_keyboard`) and
+`tests/p3_t13_frames_pointer.rs` (frame callback without damage, `wl_buffer.release`
+for the replaced buffer, and the injected click arriving on the dock's
+`wl_pointer` with surface-local coordinates).
 
 ## Glass shader passes (P3-T05)
 
@@ -234,6 +269,10 @@ AETHER_COMPOSITOR_SEAT_FOCUS: surface=yes|none
 AETHER_COMPOSITOR_SEAT_FOCUS: surface=exclusive|on_demand layer=<namespace>
 AETHER_COMPOSITOR_KEY_INJECTION: backend=headless keys=<n> evdev=<list>   (test-only)
 AETHER_COMPOSITOR_KEY_INJECTED: evdev=<n> focus=surface|none              (test-only)
+AETHER_COMPOSITOR_POINTER_INJECTION: backend=headless x=<n> y=<n> button=<n>|none  (test-only)
+AETHER_COMPOSITOR_POINTER: surface=<namespace|window-<id>> x=<n> y=<n> event=enter|motion|button
+AETHER_COMPOSITOR_BUFFER_RELEASED: surface=<id>
+AETHER_COMPOSITOR_FRAME_STATS: frames=… … buffers_released=<n>
 AETHER_COMPOSITOR_INPUT: backend=libinput seat=<name>
 AETHER_COMPOSITOR_INPUT_KEY / _INPUT_BUTTON: …
 ```
@@ -278,11 +317,14 @@ Still to be validated on the Dell:
 ```
 
 The script sets `AETHER_COMPOSITOR_BACKEND=drm`, bounds the run with
-`AETHER_COMPOSITOR_RUN_SECS` so the compositor prints its exit markers, writes
-`compositor.log`/`.err` per run, and grades: EGL/GLES context, modeset, page
-flips, libinput input, seat, glass programs, effect tier + blur, `failures=0`,
-damage-scoped frost (`frosted_px < surface_px`), damage-scoped backdrop capture
-(`backdrop_px < backdrop_union_px`), frame stats and clean shutdown.
+`AETHER_COMPOSITOR_RUN_SECS` so the compositor prints its exit markers (the
+headless backend honours the same variable), writes `compositor.log`/`.err` per
+run, and grades: EGL/GLES context, modeset, page flips, libinput input, seat,
+glass programs, effect tier + blur, `failures=0`, damage-scoped frost
+(`frosted_px < surface_px`), damage-scoped backdrop capture (`backdrop_px <
+backdrop_union_px`), layer-surface damage placement, `wl_buffer.release`
+(double buffering), pointer forwarding (`AETHER_COMPOSITOR_POINTER` shape),
+frame stats (including `buffers_released=`) and clean shutdown.
 Exit code 0 = all checks passed (keypress-dependent input checks are warnings,
 never passes). `--grade` re-scores a captured log on any host; `--selftest`
 scores `scripts/fixtures/*.log` (one good Full, one good Minimal, one broken, one

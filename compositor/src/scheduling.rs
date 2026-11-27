@@ -151,6 +151,12 @@ pub struct Frame {
     pub damage_wait_ms: f64,
     /// Presentation timestamp in milliseconds since compositor start.
     pub time_ms: u32,
+    /// How many frames that carried damage have been presented up to and
+    /// including this one. Callback-only frames (see
+    /// [`FrameScheduler::present_empty`]) do not increase it, so the sampled
+    /// `AETHER_COMPOSITOR_FRAME` markers stay attached to real repaints instead
+    /// of being spent on empty frames.
+    pub damaged_frames: u64,
 }
 
 /// Vsync-ish frame pacer with damage tracking and idle accounting.
@@ -163,6 +169,8 @@ pub struct FrameScheduler {
     pub frames: u64,
     pub idle_skips: u64,
     pub presented_pixels: u64,
+    /// Frames that carried damage (excludes callback-only frames).
+    damaged_frames: u64,
     pub last_frame: Option<Instant>,
     /// When the first not-yet-presented damage rect was added, for the P3-T08
     /// damage-wait (frame-gap) measurement.
@@ -185,6 +193,7 @@ impl FrameScheduler {
             frames: 0,
             idle_skips: 0,
             presented_pixels: 0,
+            damaged_frames: 0,
             last_frame: None,
             first_damage: None,
             last_gap_ms: 0.0,
@@ -234,6 +243,41 @@ impl FrameScheduler {
         }
     }
 
+    /// A frame is due for a client waiting on `wl_surface.frame` even when
+    /// nothing is damaged: the callback is the client's permission to draw the
+    /// next frame, so the compositor has to keep that clock running.
+    pub fn due_for_callbacks(&self, now: Instant) -> bool {
+        match self.last_frame {
+            Some(last) => now.duration_since(last) >= self.interval,
+            None => true,
+        }
+    }
+
+    /// Present a frame that carries no damage, purely to answer
+    /// `wl_surface.frame` callbacks. Counted as a presented frame (it advances
+    /// the same pacing clock) but adds no pixels and closes no idle span of its
+    /// own — an idle desktop with a waiting client is not "busy".
+    pub fn present_empty(&mut self, now: Instant) -> Frame {
+        let gap_ms = self
+            .last_frame
+            .map(|last| now.duration_since(last).as_secs_f64() * 1_000.0);
+        if let Some(gap_ms) = gap_ms {
+            self.last_gap_ms = gap_ms;
+            self.total_gap_ms += gap_ms;
+        }
+        self.last_frame = Some(now);
+        self.frames += 1;
+        Frame {
+            index: self.frames,
+            damage: Vec::new(),
+            damage_pixels: 0,
+            gap_ms,
+            damage_wait_ms: 0.0,
+            time_ms: now.duration_since(self.started).as_millis() as u32,
+            damaged_frames: self.damaged_frames,
+        }
+    }
+
     /// Present the pending damage as one frame. Returns `None` when there is
     /// nothing to present (counted as an idle skip).
     pub fn present(&mut self, now: Instant) -> Option<Frame> {
@@ -261,6 +305,9 @@ impl FrameScheduler {
         self.last_frame = Some(now);
         self.frames += 1;
         self.presented_pixels += damage_pixels;
+        if !damage.is_empty() {
+            self.damaged_frames += 1;
+        }
         Some(Frame {
             index: self.frames,
             damage,
@@ -268,6 +315,7 @@ impl FrameScheduler {
             gap_ms,
             damage_wait_ms,
             time_ms: now.duration_since(self.started).as_millis() as u32,
+            damaged_frames: self.damaged_frames,
         })
     }
 
@@ -518,5 +566,31 @@ mod tests {
         assert!(line.contains("frames=1"), "{line}");
         assert!(line.contains("presented_px=200"), "{line}");
         assert!(line.contains("target_fps=60"), "{line}");
+    }
+
+    #[test]
+    fn callback_frames_advance_the_clock_without_damage() {
+        let mut scheduler = FrameScheduler::new(60);
+        let start = Instant::now();
+        // No damage: the damage-driven scheduler is not due...
+        assert!(!scheduler.due(start));
+        // ...but a client waiting for wl_surface.frame still needs a frame.
+        assert!(scheduler.due_for_callbacks(start));
+        let first = scheduler.present_empty(start);
+        assert_eq!(first.index, 1);
+        assert!(first.damage.is_empty());
+        assert_eq!(first.damage_pixels, 0);
+        assert!(first.gap_ms.is_none());
+        // The callback frame paces the next one like any other frame.
+        assert!(!scheduler.due_for_callbacks(start + Duration::from_millis(5)));
+        assert!(scheduler.due_for_callbacks(start + Duration::from_millis(17)));
+        let second = scheduler.present_empty(start + Duration::from_millis(17));
+        assert_eq!(second.index, 2);
+        assert!((scheduler.average_gap_ms() - 17.0).abs() < 0.5);
+        // It presents nothing, so it adds no pixel work.
+        assert_eq!(scheduler.presented_pixels, 0);
+        // Damage still wins once it exists.
+        scheduler.add_damage(Rect { x: 0, y: 0, w: 4, h: 4 });
+        assert!(scheduler.due(start + Duration::from_millis(34)));
     }
 }

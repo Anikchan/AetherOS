@@ -123,6 +123,18 @@ if [ "$selftest" -eq 1 ]; then
     say "selftest OK   : untranslated layer damage scored FAIL (output 8,8 != placement 600,1016 + local 8,8)"
   fi
   rm -f "$misplaced"
+  # A pointer marker with an event name the compositor never emits (a typo or a
+  # hand-edited log) must not pass.
+  bad_pointer="$(mktemp)"
+  sed -e 's/event=enter/event=hover/' \
+    "$script_dir/fixtures/kms-full-tier.log" >"$bad_pointer"
+  if "$0" --grade "$bad_pointer" --tier full >/dev/null 2>&1; then
+    say "selftest FAIL : a malformed pointer marker should score FAIL"
+    status=1
+  else
+    say "selftest OK   : malformed pointer marker scored FAIL (event=hover)"
+  fi
+  rm -f "$bad_pointer"
   [ "$status" -eq 0 ] && say "SELFTEST: PASSED" || say "SELFTEST: FAILED"
   exit "$status"
 fi
@@ -360,6 +372,9 @@ grade_common() {
 
   if contains "$log" "AETHER_COMPOSITOR_FRAME_STATS:"; then
     pass "$label: frame stats ($(grep -m1 'AETHER_COMPOSITOR_FRAME_STATS:' "$log" | sed 's/^AETHER_COMPOSITOR_FRAME_STATS: //'))"
+    contains "$log" " buffers_released=" \
+      && pass "$label: frame summary counts released buffers" \
+      || warn "$label: FRAME_STATS has no buffers_released counter (compositor built before P3-T13?)"
   else
     warn "$label: no FRAME_STATS marker"
   fi
@@ -385,6 +400,43 @@ grade_common() {
       pass "$label: damage-scoped backdrop capture (backdrop_px=$bpx < backdrop_union_px=$bunion)"
     else
       fail "$label: backdrop capture covers the whole union (backdrop_px=$bpx >= backdrop_union_px=$bunion)"
+    fi
+  fi
+
+  # 10. Double buffering: a client can only recycle a buffer after
+  #     `wl_buffer.release`, so a run that mapped a window and never released
+  #     one means clients are stuck on a single buffer.
+  local released
+  released="$(count_of "$log" "AETHER_COMPOSITOR_BUFFER_RELEASED:")"
+  if [ "$released" -gt 0 ]; then
+    pass "$label: wl_buffer.release sent ($released buffer(s) recycled)"
+  else
+    warn "$label: no AETHER_COMPOSITOR_BUFFER_RELEASED marker (no client double-buffered?)"
+  fi
+
+  # 11. Pointer forwarding: every marker must carry a well-formed event name and
+  #     surface-local coordinates. No marker at all is a WARN (the operator may
+  #     not have moved the pointer), a malformed one is a FAIL.
+  local pointer_lines pointer_bad pointer_ok
+  pointer_lines="$(grep -F 'AETHER_COMPOSITOR_POINTER: ' "$log" || true)"
+  if [ -z "$pointer_lines" ]; then
+    warn "$label: no AETHER_COMPOSITOR_POINTER marker (move the pointer over the dock/desktop)"
+  else
+    pointer_ok=0
+    pointer_bad=0
+    while IFS= read -r line; do
+      case "$line" in
+        *"surface="*" x="*" y="*" event=enter"*|*"surface="*" x="*" y="*" event=motion"*|*"surface="*" x="*" y="*" event=button"*)
+          pointer_ok=$((pointer_ok + 1)) ;;
+        *)
+          pointer_bad=$((pointer_bad + 1))
+          say "      malformed: $line" ;;
+      esac
+    done <<< "$pointer_lines"
+    if [ "$pointer_bad" -eq 0 ]; then
+      pass "$label: pointer forwarded with surface-local coordinates ($pointer_ok marker(s), e.g. $(printf '%s\n' "$pointer_lines" | grep -m1 'POINTER:' | sed 's/^AETHER_COMPOSITOR_POINTER: //'))"
+    else
+      fail "$label: $pointer_bad malformed AETHER_COMPOSITOR_POINTER marker(s)"
     fi
   fi
 

@@ -116,8 +116,9 @@ use smithay::delegate_output;
 use smithay::delegate_seat;
 use smithay::delegate_shm;
 use smithay::delegate_xdg_shell;
-use smithay::backend::input::KeyState;
+use smithay::backend::input::{ButtonState, KeyState};
 use smithay::input::keyboard::{FilterResult, Keycode};
+use smithay::input::pointer::{ButtonEvent, MotionEvent};
 use smithay::input::pointer::CursorImageStatus;
 use smithay::input::{Seat, SeatHandler, SeatState};
 use smithay::output::{Mode, Output, PhysicalProperties, Scale, Subpixel};
@@ -235,6 +236,28 @@ pub struct LayerSurfaceEntry {
     pub output: Option<String>,
 }
 
+/// The surface under the pointer, as [`AetherCompositor::pointer_target`]
+/// resolves it.
+#[derive(Debug, Clone)]
+pub struct PointerTarget {
+    /// Marker label: the layer-shell namespace, or `window-<id>`.
+    pub label: String,
+    pub surface: WlSurface,
+    /// The surface's top-left corner in output logical coordinates.
+    ///
+    /// smithay produces `wl_pointer`'s surface-local coordinates as
+    /// `pointer_position - focus_position`, so this must be the surface *origin*,
+    /// not the position inside the surface.
+    pub origin: Point<f64, Logical>,
+}
+
+impl PointerTarget {
+    /// Position of `location` (output logical) inside the surface.
+    pub fn local(&self, location: Point<f64, Logical>) -> Point<f64, Logical> {
+        location - self.origin
+    }
+}
+
 /// Compositor state shared between the Wayland dispatch handlers and the
 /// main loop.
 pub struct AetherCompositor {
@@ -325,9 +348,26 @@ pub struct AetherCompositor {
     pub drm: Option<backend::drm::DrmBackend>,
     /// Test-only (headless): evdev keycodes still to inject, in order.
     inject_keys: Vec<u32>,
+    /// Test-only (headless): one pointer action (motion + optional click)
+    /// still to inject, at output logical coordinates.
+    inject_pointer: Option<inject::PointerAction>,
     /// Test-only (headless): earliest instant the next key may be injected, so
     /// the replay is paced to the frame interval instead of bursting.
     inject_at: Option<Instant>,
+    /// Surface the pointer was over at the last move, so a move onto a new
+    /// surface is reported as `event=enter` instead of `event=motion`.
+    pointer_over: Option<ObjectId>,
+    /// Buffer each surface presented in the last completed frame. `wl_buffer`
+    /// is not reusable until the compositor sends `wl_buffer.release`, and that
+    /// may only happen once a newer buffer replaced this one — otherwise the
+    /// client would draw into a buffer that is still being displayed.
+    presented_buffers: HashMap<ObjectId, WlBuffer>,
+    /// Stable numeric ids used by `AETHER_COMPOSITOR_BUFFER_RELEASED`.
+    surface_ids: HashMap<ObjectId, u64>,
+    next_surface_id: u64,
+    /// `wl_buffer.release` events sent since start-up (reported in the frame
+    /// summary).
+    pub released_buffers: u64,
     pub mapped: bool,
     pub shutdown_at: Option<Instant>,
     pub deadline: Option<Instant>,
@@ -421,7 +461,13 @@ impl AetherCompositor {
             #[cfg(all(target_os = "linux", feature = "drm"))]
             drm: None,
             inject_keys: Vec::new(),
+            inject_pointer: None,
             inject_at: None,
+            pointer_over: None,
+            presented_buffers: HashMap::new(),
+            surface_ids: HashMap::new(),
+            next_surface_id: 0,
+            released_buffers: 0,
             mapped: false,
             shutdown_at: None,
             deadline: None,
@@ -535,13 +581,22 @@ impl AetherCompositor {
     /// answers the `wl_surface.frame` callbacks for that frame, and lets the
     /// tier policy react to the modelled frame cost.
     pub fn frame_tick(&mut self) {
-        // Test-only: headless key replay runs on the frame clock, so it is paced
-        // even when no damage means no frame is presented.
+        // Test-only: headless key/pointer replay runs on the frame clock, so it
+        // is paced even when no damage means no frame is presented.
         self.inject_tick();
-        let Some(frame) = self.begin_frame() else {
+        let now = Instant::now();
+        if let Some(frame) = self.begin_frame() {
+            self.complete_frame(&frame);
             return;
-        };
-        self.complete_frame(&frame);
+        }
+        // A client that waits for `wl_surface.frame` before drawing again has no
+        // damage pending, so the damage-driven scheduler would never answer it
+        // and the client would stall. Present an empty frame at the same cadence
+        // purely to hand the callback back.
+        if self.callbacks_pending() && self.frames.due_for_callbacks(now) {
+            let frame = self.frames.present_empty(now);
+            self.complete_frame(&frame);
+        }
     }
 
     /// P3-T06/P3-T09: take the next frame the scheduler says is due.
@@ -590,7 +645,24 @@ impl AetherCompositor {
                 .map(|surface| (*surface, frame.damage.clone()))
                 .collect();
             let cost = self.effects.frame_cost(&pairs);
-            if frame.index <= 5 || frame.index % 120 == 0 {
+            // Sample the first five *damaged* frames (not the first five frame
+            // indices): callback-only frames would otherwise spend the sample
+            // budget and hide the repaints a test is looking for.
+            if frame.damaged_frames <= 5 || frame.index % 120 == 0 {
+                // A callback-only frame (no damage: the client was waiting for
+                // `wl_surface.frame`) repaints nothing, and an empty damage list
+                // means "whole surface" to the frost model, so the numbers are
+                // reported as zero instead of being computed.
+                if frame.damage.is_empty() {
+                    println!(
+                        "AETHER_COMPOSITOR_FRAME: n={} time_ms={} damage_rects=0 damage_px=0 frost_px=0 backdrop_px=0 backdrop_union_px=0 windows={} tier={} est_ms={:.3}",
+                        frame.index,
+                        frame.time_ms,
+                        cost.windows,
+                        self.effects.tier().name(),
+                        cost.estimated_ms
+                    );
+                } else {
                 // P3-T06 damage-scoped frost: the physical area the glass chain
                 // rewrites this frame (the same region the DRM renderer hands to
                 // `GlassPasses::frost`), versus a full-surface repaint.
@@ -660,6 +732,7 @@ impl AetherCompositor {
                     self.effects.tier().name(),
                     cost.estimated_ms
                 );
+                }
             }
 
             if pairs.len() != self.reported_windows {
@@ -681,6 +754,10 @@ impl AetherCompositor {
         if let Some(gap) = self.frame_gaps.observe(Some(damage_wait)) {
             println!("{}", self.frame_gaps.marker_line(gap));
         }
+
+        // Double buffering: hand back the buffer this surface replaced in the
+        // previous frame, before the callback tells the client to draw again.
+        self.release_presented_buffers();
 
         let callbacks = self.send_frame_callbacks(frame.time_ms);
         if callbacks > 0 && (frame.index <= 5 || frame.index % 120 == 0) {
@@ -813,24 +890,8 @@ impl AetherCompositor {
     /// Answer the `wl_surface.frame` callbacks of the mapped surfaces with the
     /// frame's presentation timestamp. Returns the number of callbacks sent.
     fn send_frame_callbacks(&mut self, time_ms: u32) -> u64 {
-        let mut surfaces: Vec<WlSurface> = Vec::new();
-        for (index, toplevel) in self.toplevels.iter().enumerate() {
-            let visible = self
-                .wm
-                .windows
-                .get(&WindowId(index as u64))
-                .map(|window| window.workspace == self.wm.active)
-                .unwrap_or(true);
-            if visible {
-                surfaces.push(toplevel.wl_surface().clone());
-            }
-        }
-        for entry in &self.layer_surfaces {
-            surfaces.push(entry.surface.wl_surface().clone());
-        }
-
         let mut sent = 0u64;
-        for surface in surfaces {
+        for surface in self.callback_surfaces() {
             let callbacks = with_states(&surface, |states| {
                 let mut attrs = states.cached_state.get::<SurfaceAttributes>();
                 std::mem::take(&mut attrs.current().frame_callbacks)
@@ -978,6 +1039,258 @@ impl AetherCompositor {
         }
     }
 
+    /// The surface under a pointer position (output logical coordinates).
+    ///
+    /// Shell chrome (Top/Overlay layer surfaces: panel, dock, overlays) sits
+    /// above the windows and is hit first; Background/Bottom layers are
+    /// wallpaper and never take input. Returns the surface, its marker label
+    /// (layer namespace, or `window-<id>` for a managed toplevel) and the
+    /// position in the surface's own coordinates, which is what `wl_pointer`
+    /// takes.
+    pub fn pointer_target(&self, location: Point<f64, Logical>) -> Option<PointerTarget> {
+        let point = (location.x.floor() as i32, location.y.floor() as i32);
+
+        for entry in self
+            .layer_surfaces
+            .iter()
+            .rev()
+            .filter(|entry| matches!(entry.layer, Layer::Top | Layer::Overlay))
+        {
+            let Some(rect) = self.layer_surface_rect(entry) else {
+                continue;
+            };
+            if point.0 >= rect.x
+                && point.0 < rect.x + rect.w
+                && point.1 >= rect.y
+                && point.1 < rect.y + rect.h
+            {
+                return Some(PointerTarget {
+                    label: entry.namespace.clone(),
+                    surface: entry.surface.wl_surface().clone(),
+                    origin: Point::from((rect.x as f64, rect.y as f64)),
+                });
+            }
+        }
+
+        for (index, toplevel) in self.toplevels.iter().enumerate().rev() {
+            let Some(window) = self.wm.windows.get(&WindowId(index as u64)) else {
+                continue;
+            };
+            if window.workspace != self.wm.active || !toplevel.alive() {
+                continue;
+            }
+            let rect = window.rect;
+            if point.0 >= rect.x
+                && point.0 < rect.x + rect.w
+                && point.1 >= rect.y
+                && point.1 < rect.y + rect.h
+            {
+                return Some(PointerTarget {
+                    label: format!("window-{index}"),
+                    surface: toplevel.wl_surface().clone(),
+                    origin: Point::from((rect.x as f64, rect.y as f64)),
+                });
+            }
+        }
+        None
+    }
+
+    /// Move the pointer to `location` (output logical coordinates): forward
+    /// `wl_pointer.motion` to the surface under it — smithay sends
+    /// `enter`/`leave` as the focus moves — and log
+    /// `AETHER_COMPOSITOR_POINTER: surface=<label> x=<x> y=<y> event=enter|motion`.
+    ///
+    /// `time` is the input timestamp in milliseconds; the DRM backend passes
+    /// the libinput event time, the headless backend the compositor clock.
+    pub fn pointer_move_to(&mut self, location: Point<f64, Logical>, time: u32) {
+        self.pointer_location = location;
+        let target = self.pointer_target(location);
+        let previous = self.pointer_over.clone();
+        self.pointer_over = target.as_ref().map(|target| target.surface.id());
+
+        let Some(seat) = self.seat.clone() else {
+            return;
+        };
+        let Some(pointer) = seat.get_pointer() else {
+            return;
+        };
+        let focus = target
+            .as_ref()
+            .map(|target| (target.surface.clone(), target.origin));
+        let serial = self.serials.next_serial();
+        pointer.motion(
+            self,
+            focus,
+            &MotionEvent {
+                location,
+                serial,
+                time,
+            },
+        );
+        pointer.frame(self);
+
+        if let Some(target) = target {
+            let event = if previous == Some(target.surface.id()) {
+                "motion"
+            } else {
+                "enter"
+            };
+            let local = target.local(location);
+            println!(
+                "AETHER_COMPOSITOR_POINTER: surface={} x={} y={} event={event}",
+                target.label,
+                local.x.round() as i32,
+                local.y.round() as i32
+            );
+        }
+    }
+
+    /// Forward `wl_pointer.button` at the current pointer position, log the
+    /// marker, and move the keyboard to the clicked surface (click-to-focus).
+    ///
+    /// A layer surface with `keyboard_interactivity = none` (a dock, the menu
+    /// bar) is clicked without taking the keyboard: clicking chrome must never
+    /// stop the focused application from receiving keys.
+    pub fn pointer_button_at(&mut self, button: u32, pressed: bool, time: u32) {
+        let location = self.pointer_location;
+        let target = self.pointer_target(location);
+        let Some(seat) = self.seat.clone() else {
+            return;
+        };
+        let Some(pointer) = seat.get_pointer() else {
+            return;
+        };
+        let serial = self.serials.next_serial();
+        if pressed {
+            if let (Some(keyboard), Some(target)) = (seat.get_keyboard(), target.as_ref()) {
+                let is_layer = self
+                    .layer_surfaces
+                    .iter()
+                    .any(|entry| entry.surface.wl_surface() == &target.surface);
+                let takes_focus = !is_layer
+                    || !matches!(
+                        layer_interactivity(&target.surface),
+                        KeyboardInteractivity::None
+                    );
+                if takes_focus {
+                    keyboard.set_focus(self, Some(target.surface.clone()), serial);
+                }
+            }
+        }
+        pointer.button(
+            self,
+            &ButtonEvent {
+                serial,
+                time,
+                button,
+                state: if pressed {
+                    ButtonState::Pressed
+                } else {
+                    ButtonState::Released
+                },
+            },
+        );
+        pointer.frame(self);
+        if let Some(target) = target {
+            let local = target.local(location);
+            println!(
+                "AETHER_COMPOSITOR_POINTER: surface={} x={} y={} event=button",
+                target.label,
+                local.x.round() as i32,
+                local.y.round() as i32
+            );
+        }
+    }
+
+    /// Release the buffer a surface presented in an earlier frame, once a newer
+    /// buffer replaced it (or the client detached it).
+    ///
+    /// `wl_buffer` is single-use: the client may not draw into it again until
+    /// the compositor sends `wl_buffer.release`, so without this a client can
+    /// only ever own one buffer (no double buffering, no smooth animation).
+    /// A buffer is still in use while it is the displayed one, so it is released
+    /// at the completion of the frame that replaced it — after the page flip on
+    /// the DRM backend, immediately after presentation on the headless one.
+    fn release_presented_buffers(&mut self) {
+        for surface in self.callback_surfaces() {
+            let id = surface.id();
+            let attached = with_states(&surface, |states| {
+                let mut attrs = states.cached_state.get::<SurfaceAttributes>();
+                match &attrs.current().buffer {
+                    Some(BufferAssignment::NewBuffer(buffer)) => Some(buffer.clone()),
+                    _ => None,
+                }
+            });
+            let previous = self.presented_buffers.remove(&id);
+            match (previous, attached) {
+                (Some(previous), Some(attached)) => {
+                    if previous != attached {
+                        self.release_buffer(&surface, previous);
+                    }
+                    self.presented_buffers.insert(id, attached);
+                }
+                (Some(previous), None) => self.release_buffer(&surface, previous),
+                (None, Some(attached)) => {
+                    self.presented_buffers.insert(id, attached);
+                }
+                (None, None) => {}
+            }
+        }
+    }
+
+    fn release_buffer(&mut self, surface: &WlSurface, buffer: WlBuffer) {
+        buffer.release();
+        self.released_buffers += 1;
+        let id = self.surface_id(surface);
+        println!("AETHER_COMPOSITOR_BUFFER_RELEASED: surface={id}");
+    }
+
+    /// Stable numeric id for a surface in the log (`0`, `1`, … by first use).
+    fn surface_id(&mut self, surface: &WlSurface) -> u64 {
+        if let Some(id) = self.surface_ids.get(&surface.id()) {
+            return *id;
+        }
+        let id = self.next_surface_id;
+        self.next_surface_id += 1;
+        self.surface_ids.insert(surface.id(), id);
+        id
+    }
+
+    /// Surfaces whose `wl_surface.frame` callbacks and buffers the compositor
+    /// answers: the visible toplevels and every layer surface.
+    fn callback_surfaces(&self) -> Vec<WlSurface> {
+        let mut surfaces: Vec<WlSurface> = Vec::new();
+        for (index, toplevel) in self.toplevels.iter().enumerate() {
+            let visible = self
+                .wm
+                .windows
+                .get(&WindowId(index as u64))
+                .map(|window| window.workspace == self.wm.active)
+                .unwrap_or(true);
+            if visible {
+                surfaces.push(toplevel.wl_surface().clone());
+            }
+        }
+        for entry in &self.layer_surfaces {
+            surfaces.push(entry.surface.wl_surface().clone());
+        }
+        surfaces
+    }
+
+    /// True when any surface is waiting for a `wl_surface.frame` callback.
+    fn callbacks_pending(&self) -> bool {
+        self.callback_surfaces().iter().any(|surface| {
+            with_states(surface, |states| {
+                !states
+                    .cached_state
+                    .get::<SurfaceAttributes>()
+                    .current()
+                    .frame_callbacks
+                    .is_empty()
+            })
+        })
+    }
+
     /// Test-only, headless: replay one queued evdev keycode into the seat.
     ///
     /// Enabled by [`crate::inject::INJECT_KEYS_ENV`]; the DRM backend never
@@ -987,7 +1300,7 @@ impl AetherCompositor {
     /// the focused `wl_keyboard` and logged as
     /// `AETHER_COMPOSITOR_KEY_INJECTED: evdev=<n> focus=<surface|none>`.
     pub fn inject_tick(&mut self) {
-        if self.inject_keys.is_empty() || !self.mapped {
+        if !self.mapped {
             return;
         }
         let now = Instant::now();
@@ -995,6 +1308,24 @@ impl AetherCompositor {
             if now < at {
                 return;
             }
+        }
+        // One injected action per frame interval. A queued pointer click goes
+        // first: a click can move keyboard focus (click-to-focus), so it must
+        // land before the keys that are meant for the clicked surface.
+        if let Some(action) = self.inject_pointer.take() {
+            self.inject_at = Some(now + self.frames.interval());
+            let time = self.started.elapsed().as_millis() as u32;
+            self.pointer_move_to(Point::from((action.x as f64, action.y as f64)), time);
+            if let Some(button) = action.button {
+                let time = self.started.elapsed().as_millis() as u32;
+                self.pointer_button_at(button, true, time);
+                let time = self.started.elapsed().as_millis() as u32;
+                self.pointer_button_at(button, false, time);
+            }
+            return;
+        }
+        if self.inject_keys.is_empty() {
+            return;
         }
         let Some(seat) = self.seat.clone() else {
             return;
@@ -1037,21 +1368,44 @@ impl AetherCompositor {
         );
     }
 
-    /// Test-only, headless: read `AETHER_COMPOSITOR_INJECT_KEYS`, create the
-    /// seat the headless backend does not have, and queue the keycodes.
+    /// Test-only, headless: read the injection variables, create the seat the
+    /// headless backend does not have, and queue the actions.
     ///
-    /// Does nothing when the variable is unset, so the default headless backend
-    /// still advertises no `wl_seat` at all. Called from `run_headless` only.
-    pub fn enable_key_injection(&mut self, dh: &DisplayHandle) {
-        let Ok(value) = std::env::var(inject::INJECT_KEYS_ENV) else {
+    /// - `AETHER_COMPOSITOR_INJECT_KEYS="30,48"` — evdev keycodes, one per frame;
+    /// - `AETHER_COMPOSITOR_INJECT_POINTER="x=600,y=1050,button=1"` — one pointer
+    ///   move (and click, when `button` is given) at output coordinates.
+    ///
+    /// Does nothing when both are unset, so the default headless backend still
+    /// advertises no `wl_seat` at all. Called from `run_headless` only.
+    pub fn enable_headless_input(&mut self, dh: &DisplayHandle) {
+        let keys_value = std::env::var(inject::INJECT_KEYS_ENV).ok();
+        let pointer_value = std::env::var(inject::INJECT_POINTER_ENV).ok();
+        if keys_value.is_none() && pointer_value.is_none() {
             return;
-        };
-        let keys = inject::parse_keys(&value);
-        if keys.is_empty() {
-            eprintln!(
-                "aether-compositor: {}={value} contains no evdev keycodes; key injection disabled",
-                inject::INJECT_KEYS_ENV
-            );
+        }
+        let keys = keys_value
+            .as_deref()
+            .map(inject::parse_keys)
+            .unwrap_or_default();
+        if let Some(value) = keys_value.as_deref() {
+            if keys.is_empty() {
+                eprintln!(
+                    "aether-compositor: {}={value} contains no evdev keycodes; key injection disabled",
+                    inject::INJECT_KEYS_ENV
+                );
+            }
+        }
+        let pointer = pointer_value.as_deref().and_then(inject::parse_pointer);
+        if let Some(value) = pointer_value.as_deref() {
+            if pointer.is_none() {
+                eprintln!(
+                    "aether-compositor: {}={value} is not a usable x=..,y=..[,button=..]; \
+                     pointer injection disabled",
+                    inject::INJECT_POINTER_ENV
+                );
+            }
+        }
+        if keys.is_empty() && pointer.is_none() {
             return;
         }
         if self.seat.is_none() {
@@ -1069,15 +1423,29 @@ impl AetherCompositor {
             self.seat = Some(seat);
             println!("AETHER_COMPOSITOR_SEAT: name=seat-0 keyboard=true pointer=true");
         }
-        println!(
-            "AETHER_COMPOSITOR_KEY_INJECTION: backend=headless keys={} evdev={}",
-            keys.len(),
-            keys.iter()
-                .map(u32::to_string)
-                .collect::<Vec<_>>()
-                .join(",")
-        );
-        self.inject_keys = keys;
+        if !keys.is_empty() {
+            println!(
+                "AETHER_COMPOSITOR_KEY_INJECTION: backend=headless keys={} evdev={}",
+                keys.len(),
+                keys.iter()
+                    .map(u32::to_string)
+                    .collect::<Vec<_>>()
+                    .join(",")
+            );
+            self.inject_keys = keys;
+        }
+        if let Some(pointer) = pointer {
+            println!(
+                "AETHER_COMPOSITOR_POINTER_INJECTION: backend=headless x={} y={} button={}",
+                pointer.x,
+                pointer.y,
+                pointer
+                    .button
+                    .map(|button| button.to_string())
+                    .unwrap_or_else(|| "none".to_string())
+            );
+            self.inject_pointer = Some(pointer);
+        }
     }
 
     /// Logical rect a layer surface is drawn at on its output: the negotiated
@@ -1991,10 +2359,19 @@ fn run_headless() -> Result<(), String> {
 
     let mut state = AetherCompositor::new(&dh);
     state.deadline = Some(Instant::now() + OVERALL_TIMEOUT);
-    // Test-only: `AETHER_COMPOSITOR_INJECT_KEYS` gives the headless backend a
-    // seat with a keyboard and replays evdev keycodes into it (see
-    // `inject`). Unset (the default, and every other test) → no seat at all.
-    state.enable_key_injection(&dh);
+    // `AETHER_COMPOSITOR_RUN_SECS` bounds a headless run the same way it does a
+    // DRM one (the checklist uses it to get the exit summaries). Without it the
+    // 60 s overall timeout still applies as a "nobody ever mapped" guard.
+    if let Some(secs) = std::env::var("AETHER_COMPOSITOR_RUN_SECS")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+    {
+        state.deadline = Some(Instant::now() + Duration::from_secs(secs));
+    }
+    // Test-only: `AETHER_COMPOSITOR_INJECT_KEYS` / `AETHER_COMPOSITOR_INJECT_POINTER`
+    // give the headless backend a seat and replay input into it (see `inject`).
+    // Unset (the default, and every other test) → no seat at all.
+    state.enable_headless_input(&dh);
 
     // XWayland (and smithay's prepare_x11_sockets) bind Unix sockets under
     // /tmp/.X11-unix; that directory is not always present on minimal CI images
@@ -2139,7 +2516,10 @@ fn run_headless() -> Result<(), String> {
             }
             if let Some(deadline) = state.deadline {
                 if Instant::now() >= deadline {
-                    state.timed_out = true;
+                    // A deadline that expires with no client ever mapped is a
+                    // timeout; one that expires after a client mapped (a bounded
+                    // `AETHER_COMPOSITOR_RUN_SECS` run) is a normal end.
+                    state.timed_out = !state.mapped;
                     signal.stop();
                 }
             }
@@ -2157,15 +2537,17 @@ fn run_headless() -> Result<(), String> {
     // We need to propagate timed_out. We added field? Let's add field `timed_out: bool` to AetherCompositor.
     if state.timed_out {
         println!(
-            "AETHER_COMPOSITOR_FRAME_STATS: {}",
-            state.frames.stats_line(Instant::now())
+            "AETHER_COMPOSITOR_FRAME_STATS: {} buffers_released={}",
+            state.frames.stats_line(Instant::now()),
+            state.released_buffers
         );
         return Err("compositor timed out waiting for a client surface to commit a buffer".to_string());
     }
 
     println!(
-        "AETHER_COMPOSITOR_FRAME_STATS: {}",
-        state.frames.stats_line(Instant::now())
+        "AETHER_COMPOSITOR_FRAME_STATS: {} buffers_released={}",
+        state.frames.stats_line(Instant::now()),
+        state.released_buffers
     );
     println!(
         "AETHER_COMPOSITOR_EFFECT_SUMMARY: tier={} tier_switches={} frame_callbacks={}",

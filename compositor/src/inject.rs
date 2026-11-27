@@ -21,6 +21,9 @@
 /// Environment variable that enables headless key injection (evdev codes).
 pub const INJECT_KEYS_ENV: &str = "AETHER_COMPOSITOR_INJECT_KEYS";
 
+/// Environment variable that enables one headless pointer click.
+pub const INJECT_POINTER_ENV: &str = "AETHER_COMPOSITOR_INJECT_POINTER";
+
 /// Largest evdev keycode accepted (`KEY_MAX` is `0x2ff`).
 const MAX_EVDEV: u32 = 0x2ff;
 
@@ -38,10 +41,60 @@ pub fn parse_keys(value: &str) -> Vec<u32> {
         .collect()
 }
 
+/// One injected pointer action: an output-space position plus an optional
+/// button (evdev button code, `1` = left/BTN_LEFT).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PointerAction {
+    pub x: i32,
+    pub y: i32,
+    /// `None` = move the pointer only, no click.
+    pub button: Option<u32>,
+}
+
+/// Parse `AETHER_COMPOSITOR_INJECT_POINTER` (`x=600,y=1050,button=1`).
+///
+/// `x` and `y` are required output logical coordinates; `button` is optional
+/// and `1` (BTN_LEFT) when omitted but a click was asked for... it is not: an
+/// omitted button means the action is a motion only, which is what a
+/// hover/enter test wants. Unknown keys are ignored, and a missing or
+/// unparsable `x`/`y` returns `None` (the caller reports it and injects
+/// nothing).
+pub fn parse_pointer(value: &str) -> Option<PointerAction> {
+    let mut x = None;
+    let mut y = None;
+    let mut button = None;
+    for field in value.split(',') {
+        let Some((key, raw)) = field.split_once('=') else {
+            continue;
+        };
+        let raw = raw.trim();
+        match key.trim() {
+            "x" => x = raw.parse::<i32>().ok(),
+            "y" => y = raw.parse::<i32>().ok(),
+            "button" | "btn" => {
+                button = raw
+                    .parse::<u32>()
+                    .ok()
+                    .filter(|code| *code > 0 && *code <= MAX_EVDEV)
+            }
+            _ => {}
+        }
+    }
+    let (x, y) = (x?, y?);
+    if x < 0 || y < 0 {
+        return None;
+    }
+    // `button=0` and junk parse to `None`, which would silently turn a click
+    // into a hover; keep the explicit "no button" case to a missing field.
+    if value.contains("button=") && button.is_none() {
+        return None;
+    }
+    Some(PointerAction { x, y, button })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-
     #[test]
     fn parses_a_comma_separated_list() {
         assert_eq!(parse_keys("30,48,18"), vec![30, 48, 18]);
@@ -74,5 +127,50 @@ mod tests {
             let xkb = evdev + 8;
             assert_eq!(xkb - 8, evdev);
         }
+    }
+
+    #[test]
+    fn parses_a_pointer_click() {
+        // The dock on a 1920x1080 output: 720x64 anchored bottom → (600,1016).
+        assert_eq!(
+            parse_pointer("x=600,y=1050,button=1"),
+            Some(PointerAction {
+                x: 600,
+                y: 1050,
+                button: Some(1)
+            })
+        );
+        // Order does not matter and spaces are tolerated.
+        assert_eq!(
+            parse_pointer("button=1, y=1050 , x=600"),
+            Some(PointerAction {
+                x: 600,
+                y: 1050,
+                button: Some(1)
+            })
+        );
+        // No button field: a hover (enter/motion) only.
+        assert_eq!(
+            parse_pointer("x=10,y=20"),
+            Some(PointerAction {
+                x: 10,
+                y: 20,
+                button: None
+            })
+        );
+    }
+
+    #[test]
+    fn rejects_an_unusable_pointer_action() {
+        // Position is mandatory.
+        assert_eq!(parse_pointer(""), None);
+        assert_eq!(parse_pointer("x=600"), None);
+        assert_eq!(parse_pointer("y=1050"), None);
+        assert_eq!(parse_pointer("x=nope,y=1"), None);
+        // A button field that does not parse is an error, not a silent hover.
+        assert_eq!(parse_pointer("x=1,y=2,button=0"), None);
+        assert_eq!(parse_pointer("x=1,y=2,button=left"), None);
+        // Off-output coordinates are rejected instead of clamped.
+        assert_eq!(parse_pointer("x=-1,y=2"), None);
     }
 }

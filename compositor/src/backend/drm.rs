@@ -78,7 +78,7 @@ use smithay::backend::session::libseat::LibSeatSession;
 use smithay::backend::session::{Event as SessionEvent, Session};
 use smithay::backend::udev::{primary_gpu, UdevBackend, UdevEvent};
 use smithay::input::keyboard::FilterResult;
-use smithay::input::pointer::{AxisFrame, ButtonEvent, MotionEvent};
+use smithay::input::pointer::AxisFrame;
 use smithay::input::Seat;
 use smithay::output::{Mode, Output, PhysicalProperties, Scale, Subpixel};
 use smithay::reexports::drm::control::{
@@ -413,8 +413,9 @@ pub fn run() -> Result<(), String> {
         println!("AETHER_COMPOSITOR_GLASS_STATS: {}", glass.stats_line());
     }
     println!(
-        "AETHER_COMPOSITOR_FRAME_STATS: {}",
-        state.frames.stats_line(Instant::now())
+        "AETHER_COMPOSITOR_FRAME_STATS: {} buffers_released={}",
+        state.frames.stats_line(Instant::now()),
+        state.released_buffers
     );
     println!(
         "AETHER_COMPOSITOR_SCANOUT_STATS: {}",
@@ -602,8 +603,20 @@ fn present_if_due(state: &mut AetherCompositor) -> Result<(), String> {
     {
         return Ok(());
     }
-    let Some(frame) = state.begin_frame() else {
-        return Ok(());
+    let frame = match state.begin_frame() {
+        Some(frame) => frame,
+        None => {
+            // A client waiting on `wl_surface.frame` has no damage pending, but
+            // the callback may only be answered after a flip. Present an empty
+            // frame at the frame cadence so the client is not stalled; if KMS
+            // reports nothing to render, the existing `Ok(false)` path marks the
+            // output dirty and the next tick flips (hardware-gated detail).
+            if state.callbacks_pending() && state.frames.due_for_callbacks(Instant::now()) {
+                state.frames.present_empty(Instant::now())
+            } else {
+                return Ok(());
+            }
+        }
     };
     let Some(mut drm) = state.drm.take() else {
         return Err("drm backend not initialised".to_string());
@@ -1069,33 +1082,15 @@ fn process_input_event(state: &mut AetherCompositor, event: InputEvent<LibinputI
             });
         }
         InputEvent::PointerMotion { event } => {
-            let Some(pointer) = seat.get_pointer() else {
-                return;
-            };
             let delta = event.delta();
             let location = clamp_to_output(state, state.pointer_location + delta);
-            state.pointer_location = location;
-            let focus = pointer_focus(state, location);
-            let serial = state.serials.next_serial();
-            let time = event.time_msec();
-            pointer.motion(
-                state,
-                focus,
-                &MotionEvent {
-                    location,
-                    serial,
-                    time,
-                },
-            );
-            pointer.frame(state);
+            // Shared with the headless test hook: hit-test (layer chrome first),
+            // forward `wl_pointer` with surface-local coordinates and log
+            // `AETHER_COMPOSITOR_POINTER`.
+            state.pointer_move_to(location, event.time_msec());
             state.damage_pointer();
         }
         InputEvent::PointerButton { event } => {
-            let Some(pointer) = seat.get_pointer() else {
-                return;
-            };
-            let serial = state.serials.next_serial();
-            let time = event.time_msec();
             let button = event.button_code();
             let button_state = event.state();
             println!(
@@ -1106,24 +1101,14 @@ fn process_input_event(state: &mut AetherCompositor, event: InputEvent<LibinputI
                     "released"
                 }
             );
-            // Click-to-focus: the surface under the pointer takes the keyboard.
-            if button_state == ButtonState::Pressed {
-                if let Some(keyboard) = seat.get_keyboard() {
-                    if let Some((surface, _)) = pointer_focus(state, state.pointer_location) {
-                        keyboard.set_focus(state, Some(surface), serial);
-                    }
-                }
-            }
-            pointer.button(
-                state,
-                &ButtonEvent {
-                    serial,
-                    time,
-                    button,
-                    state: button_state,
-                },
+            // Forward the click and apply click-to-focus (chrome with
+            // `keyboard_interactivity = none` is clicked without taking the
+            // keyboard). Shared with the headless test hook.
+            state.pointer_button_at(
+                button,
+                button_state == ButtonState::Pressed,
+                event.time_msec(),
             );
-            pointer.frame(state);
         }
         InputEvent::PointerAxis { event } => {
             let Some(pointer) = seat.get_pointer() else {
@@ -1156,67 +1141,4 @@ fn clamp_to_output(state: &AetherCompositor, location: Point<f64, Logical>) -> P
         location.x.clamp(0.0, (w - 1.0).max(0.0)),
         location.y.clamp(0.0, (h - 1.0).max(0.0)),
     ))
-}
-
-/// Topmost window or layer surface under a logical position, with the position
-/// translated into surface-local coordinates.
-fn pointer_focus(
-    state: &AetherCompositor,
-    location: Point<f64, Logical>,
-) -> Option<(WlSurface, Point<f64, Logical>)> {
-    let point = (location.x as i32, location.y as i32);
-    let (ow, oh) = state
-        .outputs
-        .first()
-        .and_then(|output| output.current_mode())
-        .map(|mode| (mode.size.w, mode.size.h))
-        .unwrap_or((1920, 1080));
-
-    // Shell chrome (panel, dock, overlay) sits above the windows. Background
-    // and Bottom layers are wallpaper: they never take input.
-    for entry in state
-        .layer_surfaces
-        .iter()
-        .rev()
-        .filter(|entry| matches!(entry.layer, Layer::Top | Layer::Overlay))
-    {
-        let surface = entry.surface.wl_surface();
-        let cached = with_states(surface, |states| {
-            states
-                .cached_state
-                .get::<LayerSurfaceCachedState>()
-                .current()
-                .clone()
-        });
-        let size = crate::layer_surface_size(&cached, Size::from((ow, oh)));
-        let (x, y) = layer_location(layer_anchors(cached.anchor), (size.w, size.h), (ow, oh));
-        if point.0 >= x && point.0 < x + size.w && point.1 >= y && point.1 < y + size.h {
-            return Some((
-                surface.clone(),
-                Point::from(((point.0 - x) as f64, (point.1 - y) as f64)),
-            ));
-        }
-    }
-
-    // Then managed windows, topmost last.
-    for (index, toplevel) in state.toplevels.iter().enumerate().rev() {
-        let Some(window) = state.wm.windows.get(&WindowId(index as u64)) else {
-            continue;
-        };
-        if window.workspace != state.wm.active || !toplevel.alive() {
-            continue;
-        }
-        let rect: Rect = window.rect;
-        if point.0 >= rect.x
-            && point.0 < rect.x + rect.w
-            && point.1 >= rect.y
-            && point.1 < rect.y + rect.h
-        {
-            return Some((
-                toplevel.wl_surface().clone(),
-                Point::from(((point.0 - rect.x) as f64, (point.1 - rect.y) as f64)),
-            ));
-        }
-    }
-    None
 }
