@@ -1,0 +1,153 @@
+#!/bin/sh
+# aether-support — first-boot diagnostic bundle (2026-11-28).
+#
+# The graphical start is the fragile part of a first boot: if aether-session or
+# the DRM compositor fails there may be no desktop and possibly no network, so
+# collecting the evidence must work offline and without X. This gathers what a
+# failed start leaves behind into one tar.gz under /var/log/ and, with --usb,
+# copies it to the FAT ESP so another machine can read it.
+#
+# Best-effort by design: a missing tool or file is a one-line note in the bundle
+# ("not available: journalctl") and the exit status is 0 whenever the bundle
+# exists. Usage: aether-support [--usb]
+#
+# Never captured: /run/aether-wpa.conf (Wi-Fi credentials) and environment
+# dumps; every captured stream passes the redaction filter below.
+#
+# Overrides (used by os-build/test/support-selftest.sh):
+#   AETHER_SUPPORT_ROOT  prefix for every file the collector reads (default /)
+#   AETHER_SUPPORT_OUT   bundle directory (default <root>/var/log)
+#   AETHER_SUPPORT_ESP   ESP partition for --usb (default /dev/sda1)
+
+set -u
+
+MODE=collect
+case "${1:-}" in
+    "") ;;
+    --usb) MODE=usb ;;
+    -h|--help) echo "usage: aether-support [--usb]"; exit 0 ;;
+    *) echo "aether-support: unknown argument: $1 (try --help)" >&2; exit 2 ;;
+esac
+
+R=${AETHER_SUPPORT_ROOT:-}
+OUT=${AETHER_SUPPORT_OUT:-$R/var/log}
+ESP=${AETHER_SUPPORT_ESP:-/dev/sda1}
+STAMP=$(date -u +%Y%m%dT%H%M%SZ 2>/dev/null || echo 0)
+NAME=aether-support-$STAMP
+BUNDLE=$OUT/$NAME.tar.gz
+TMPBASE=${TMPDIR:-/tmp}; TMPBASE=${TMPBASE%/}
+STAGE=$TMPBASE/$NAME.$$
+MNT=; ESPNAME=
+
+have() { command -v "$1" >/dev/null 2>&1; }
+
+# One rule, applied to every captured stream, so a passphrase echoed into a log
+# cannot leak into a bundle that leaves the machine.
+redact() { sed -E 's/(psk|password|passphrase)[^ ]*/\1=<redacted>/Ig'; }
+
+cleanup() {
+    [ -n "$MNT" ] && { umount "$MNT" 2>/dev/null || umount -l "$MNT" 2>/dev/null || true; rmdir "$MNT" 2>/dev/null || true; }
+    [ -d "$STAGE" ] && rm -rf "$STAGE"
+}
+trap cleanup EXIT HUP INT TERM
+
+cmd() { # <member> <command...> — redacted output plus its exit status
+    m=$1; shift
+    if ! have "$1"; then
+        printf 'not available: %s\n' "$1" >"$STAGE/$m"
+    else
+        { "$@" 2>&1; echo "(exit $?)"; } | redact >"$STAGE/$m"
+    fi
+}
+
+file() { # <member> <path> — contents, a directory listing, or a note
+    if [ -f "$R$2" ]; then redact <"$R$2" >"$STAGE/$1"
+    elif [ -d "$R$2" ]; then ls -l "$R$2" 2>&1 | redact >"$STAGE/$1"
+    else printf 'not present: %s\n' "$2" >"$STAGE/$1"; fi
+}
+
+unit() { # <member> <unit> — status plus the last 200 journal lines
+    {
+        if have systemctl; then systemctl status --no-pager -l "$2" 2>&1
+        else echo "not available: systemctl"; fi
+        echo "--- journalctl -b -n 200 -u $2"
+        if have journalctl; then journalctl -b --no-pager -n 200 -u "$2" 2>&1
+        else echo "not available: journalctl"; fi
+    } | redact >"$STAGE/$1.txt"
+}
+
+mkdir -p "$STAGE" "$OUT" || { echo "aether-support: cannot create $STAGE or $OUT" >&2; exit 1; }
+
+# --- the failure surface ----------------------------------------------------
+cmd uname.txt uname -a
+file proc-cmdline.txt /proc/cmdline
+cmd dmesg.txt dmesg
+cmd journalctl-boot.txt journalctl -b --no-pager -n 5000
+cmd systemctl-failed.txt systemctl --failed --no-pager
+
+unit unit-aether-session aether-session
+unit unit-aether-shell aether-shell
+unit unit-aether-boot-return aether-boot-return
+unit unit-getty-tty2 getty@tty2
+
+file etc-aether-ui-build.txt /etc/aether/ui-build.txt
+file var-log-aether-boot.log /var/log/aether-boot.log
+file var-log-aether-compositor.log /var/log/aether/compositor.log
+file var-log-aether-test.log /var/log/aether-test.log
+
+file dev-dri.txt /dev/dri
+drm=0
+for f in "$R"/sys/class/drm/card*-*/status "$R"/sys/class/drm/card*-*/modes; do
+    [ -f "$f" ] || continue
+    drm=1
+    redact <"$f" >"$STAGE/$(printf '%s' "${f#"$R"/}" | sed 's#/#-#g').txt"
+done
+[ "$drm" = 1 ] || printf 'not present: /sys/class/drm/card*-*/\n' >"$STAGE/sys-class-drm.txt"
+
+cmd lsmod.txt lsmod
+cmd lspci.txt lspci -nnk
+cmd lsusb.txt lsusb
+cmd ip-4-addr.txt ip -4 addr
+cmd ip-route.txt ip route
+file etc-os-release.txt /etc/os-release
+
+if have systemd-analyze; then
+    systemd-analyze blame 2>&1 | head -20 | redact >"$STAGE/systemd-analyze-blame.txt"
+else
+    printf 'not available: systemd-analyze\n' >"$STAGE/systemd-analyze-blame.txt"
+fi
+
+# The scp hint uses the first non-loopback IPv4 address the collector saw.
+ipaddr=$(sed -n 's/.*inet \([0-9][0-9.]*\)\/.*/\1/p' "$STAGE/ip-4-addr.txt" 2>/dev/null | grep -v '^127\.' | head -1)
+[ -n "$ipaddr" ] || ipaddr='<ip>'
+
+# --- bundle -----------------------------------------------------------------
+tar -czf "$BUNDLE" -C "$TMPBASE" "$NAME.$$" 2>/dev/null ||
+    tar -czf "$BUNDLE" -C "$STAGE" . 2>/dev/null ||
+    { echo "aether-support: cannot write $BUNDLE" >&2; exit 1; }
+rm -rf "$STAGE"
+[ -f "$BUNDLE" ] || { echo "aether-support: bundle was not created" >&2; exit 1; }
+
+if [ "$MODE" = usb ]; then
+    n=$(basename "$BUNDLE")
+    if [ ! -b "$ESP" ]; then
+        echo "aether-support: $ESP is not present; no USB copy (the bundle stays in /var/log)" >&2
+    elif ! { MNT=$(mktemp -d 2>/dev/null || echo "$TMPBASE/aether-esp.$$") && mkdir -p "$MNT" &&
+             { mount -o rw -t vfat "$ESP" "$MNT" 2>/dev/null || mount -o rw "$ESP" "$MNT" 2>/dev/null; }; }; then
+        echo "aether-support: cannot mount $ESP read-write; no USB copy" >&2
+        rmdir "$MNT" 2>/dev/null || true; MNT=
+    else
+        if cp "$BUNDLE" "$MNT/$n" 2>/dev/null && sync; then ESPNAME=$n
+        else echo "aether-support: copy to $ESP failed" >&2; fi
+        if ! umount "$MNT" 2>/dev/null; then
+            umount -l "$MNT" 2>/dev/null || echo "aether-support: WARNING: $MNT is still mounted, unmount it by hand" >&2
+        fi
+        rmdir "$MNT" 2>/dev/null || true; MNT=
+    fi
+fi
+
+size=$(wc -c <"$BUNDLE" | tr -d ' ')
+echo "aether-support: bundle $BUNDLE ($size bytes)"
+[ -n "$ESPNAME" ] && echo "aether-support: USB copy $ESP on $ESPNAME (read it from another machine)"
+echo "aether-support: fetch it with: scp root@$ipaddr:$BUNDLE ."
+exit 0
