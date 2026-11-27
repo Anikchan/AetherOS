@@ -282,13 +282,28 @@ pub fn frost_region_scaled(surface: Rect, damage: &[Rect], scale: f64, halo: i32
     if clipped.w <= 0 || clipped.h <= 0 {
         return None;
     }
-    let physical = Rect {
-        x: ((clipped.x - surface.x) as f64 * scale).round() as i32,
-        y: ((clipped.y - surface.y) as f64 * scale).round() as i32,
-        w: (clipped.w as f64 * scale).round().max(1.0) as i32,
-        h: (clipped.h as f64 * scale).round().max(1.0) as i32,
-    };
+    let physical = physical_damage(surface, clipped, scale);
     frost_region(physical_surface, &[physical], halo)
+}
+
+/// Physical footprint of a surface-local `clipped` damage rect on an output at
+/// `scale`, relative to the surface's physical origin.
+///
+/// Both edges are rounded once from their *output* coordinate, so the strip
+/// covers exactly the texels the renderer draws for that damage. Rounding the
+/// width on its own (`round(w * scale)`) is off by one physical pixel whenever
+/// the edges fall on a fractional pixel (1.5x): the strip then reaches one pixel
+/// past the damage, or is clipped one pixel short at the surface edge.
+pub fn physical_damage(surface: Rect, clipped: Rect, scale: f64) -> Rect {
+    let round = |value: i32| (value as f64 * scale).round() as i32;
+    let origin_x = round(surface.x);
+    let origin_y = round(surface.y);
+    Rect {
+        x: round(clipped.x) - origin_x,
+        y: round(clipped.y) - origin_y,
+        w: round(clipped.x + clipped.w) - round(clipped.x),
+        h: round(clipped.y + clipped.h) - round(clipped.y),
+    }
 }
 
 /// Logical rect -> physical output rect.
@@ -686,6 +701,107 @@ mod tests {
         // The logical surface doubles, so the physical strip does too.
         assert_eq!(at_1x, Rect { x: 52, y: 152, w: 416, h: 196 });
         assert_eq!(at_2x, Rect { x: 152, y: 352, w: 736, h: 296 });
+    }
+
+    #[test]
+    fn frost_region_scaled_never_clips_at_fractional_pixel_edges() {
+        // HiDPI review: the frost strip must cover exactly the physical footprint
+        // of the damage, and stay inside the surface, at 1.5x and 2x — even for
+        // one-logical-pixel damage at an odd offset, where rounding the width
+        // independently used to add or drop a physical pixel column.
+        let halo = 0; // isolate the strip from the halo clipping
+        for scale in [1.5, 2.0] {
+            let cases = [
+                (Rect { x: 0, y: 0, w: 1152, h: 648 }, Rect { x: 1, y: 1, w: 1, h: 1 }),
+                (Rect { x: 1000, y: 0, w: 3, h: 32 }, Rect { x: 1001, y: 0, w: 1, h: 8 }),
+                (Rect { x: 121, y: 64, w: 1151, h: 648 }, Rect { x: 122, y: 65, w: 3, h: 3 }),
+                (Rect { x: 7, y: 3, w: 13, h: 9 }, Rect { x: 0, y: 0, w: 13, h: 9 }),
+            ];
+            for (surface, strip) in cases {
+                let clipped = damage_region(surface, &[strip]);
+                let physical = physical_damage(surface, clipped, scale);
+                // 1. The strip starts and ends where the damage does, rounded
+                //    from output coordinates.
+                assert_eq!(
+                    physical.x,
+                    (clipped.x as f64 * scale).round() as i32
+                        - (surface.x as f64 * scale).round() as i32,
+                    "origin at {scale}x for {surface:?} / {strip:?}"
+                );
+                assert_eq!(
+                    physical.x + physical.w,
+                    ((clipped.x + clipped.w) as f64 * scale).round() as i32
+                        - (surface.x as f64 * scale).round() as i32,
+                    "far edge at {scale}x for {surface:?} / {strip:?}"
+                );
+                // 2. No rect is clipped: the strip and its surface fit in the
+                //    physical surface, and the frost region agrees.
+                assert!(physical.w > 0 && physical.h > 0);
+                let region = frost_region_scaled(surface, &[strip], scale, halo).unwrap();
+                let physical_surface = (
+                    (surface.w as f64 * scale).round() as i32,
+                    (surface.h as f64 * scale).round() as i32,
+                );
+                assert!(
+                    region.x >= 0
+                        && region.y >= 0
+                        && region.x + region.w <= physical_surface.0
+                        && region.y + region.h <= physical_surface.1,
+                    "frost {region:?} must stay inside {physical_surface:?} at {scale}x"
+                );
+                assert_eq!(
+                    region,
+                    Rect {
+                        x: physical.x,
+                        y: physical.y,
+                        w: physical.w,
+                        h: physical.h
+                    },
+                    "the frost region must be the physical damage footprint at {scale}x"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn hidpi_capture_is_not_clipped_and_covers_the_frost() {
+        // A window on the 2880x1800 (1.5x, 1920x1200 logical) output, near but
+        // inside the right/bottom edges, and the same window on a 2x output.
+        let cases = [
+            (1.5, (2880, 1800), Rect { x: 760, y: 60, w: 1100, h: 700 }),
+            (2.0, (1920, 1080), Rect { x: 40, y: 40, w: 880, h: 460 }),
+        ];
+        for (scale, output, surface) in cases {
+            let halo = 48;
+            let strip = Rect {
+                x: surface.x + surface.w - 40,
+                y: surface.y + surface.h - 24,
+                w: 32,
+                h: 16,
+            };
+            let captured = backdrop_regions(&[surface], &[strip], scale, halo, output);
+            assert_eq!(captured.len(), 1, "one strip per frosted surface at {scale}x");
+            let local = frost_region_scaled(surface, &[strip], scale, halo).unwrap();
+            let origin = physical_rect(surface, scale);
+            let frost = Rect {
+                x: origin.x + local.x,
+                y: origin.y + local.y,
+                w: local.w,
+                h: local.h,
+            };
+            // The capture is the frost region translated to output space, not a
+            // clipped copy of it: the output bound must not cut it.
+            assert_eq!(
+                captured[0], frost,
+                "capture must not be clipped by the output at {scale}x"
+            );
+            // And the surface itself fits inside the output.
+            assert!(origin.x + origin.w <= output.0 && origin.y + origin.h <= output.1);
+            // The strip is at the surface's far corner: the halo is clipped by
+            // the surface, not by the surface's *physical* rounding.
+            assert!(frost.x + frost.w <= origin.x + origin.w);
+            assert!(frost.y + frost.h <= origin.y + origin.h);
+        }
     }
 
     #[test]

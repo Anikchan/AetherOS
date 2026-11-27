@@ -262,6 +262,10 @@ pub struct AetherCompositor {
     surface_scales: HashMap<ObjectId, f64>,
     /// Surfaces whose buffer scale has already been reported.
     scaled_surfaces: HashSet<ObjectId>,
+    /// Last layer-surface placement reported as
+    /// `AETHER_COMPOSITOR_LAYER_DAMAGE`, so the marker is printed once per
+    /// placement instead of once per committed frame.
+    reported_layer_placement: HashMap<ObjectId, Rect>,
     /// P3-T04 window-management model: floating/snap/tile + workspaces.
     /// Layer surfaces (shell chrome) are deliberately *not* managed here.
     pub wm: WorkspaceManager,
@@ -375,6 +379,7 @@ impl AetherCompositor {
             xwayland_display: None,
             surface_scales: HashMap::new(),
             scaled_surfaces: HashSet::new(),
+            reported_layer_placement: HashMap::new(),
             // Replaced with the primary output's logical size once outputs are
             // added below.
             wm: WorkspaceManager::new(0, 0),
@@ -838,15 +843,108 @@ impl AetherCompositor {
                 }
             }
             Some(_) => {}
-            // Layer surfaces (panel, dock, wallpaper) have no window geometry
-            // yet; their damage is recorded in output space from the surface
-            // origin, which is the top-left corner for anchored shell chrome.
+            // Layer surfaces (panel, dock, wallpaper) are not managed windows:
+            // their client damage is surface-local, so it is translated by the
+            // placement the surface is drawn at (`layer_surface_rect`) before it
+            // enters output space. Anchored chrome is not always at (0, 0) — the
+            // dock sits at the bottom edge — so dropping the translation would
+            // repaint the wrong strip of the output.
             None => {
-                for rect in damage {
-                    self.frames.add_damage(*rect);
+                if let Some(index) = self
+                    .layer_surfaces
+                    .iter()
+                    .position(|entry| entry.surface.wl_surface() == surface)
+                {
+                    self.record_layer_damage(index, damage);
                 }
             }
         }
+    }
+
+    /// Translate one layer surface's surface-local damage into output space and
+    /// record it, printing the placement when it changes.
+    fn record_layer_damage(&mut self, index: usize, damage: &[Rect]) {
+        let Some(entry) = self.layer_surfaces.get(index) else {
+            return;
+        };
+        let namespace = entry.namespace.clone();
+        let surface_id = entry.surface.wl_surface().id();
+        let Some(placement) = self.layer_surface_rect(entry) else {
+            return;
+        };
+        let local: Vec<Rect> = if damage.is_empty() {
+            vec![Rect {
+                x: 0,
+                y: 0,
+                w: placement.w,
+                h: placement.h,
+            }]
+        } else {
+            damage.to_vec()
+        };
+        let translated =
+            layer_damage_rects((placement.x, placement.y), (placement.w, placement.h), &local);
+        if self.reported_layer_placement.get(&surface_id) != Some(&placement) {
+            self.reported_layer_placement
+                .insert(surface_id, placement);
+            for (local, output) in &translated {
+                println!(
+                    "AETHER_COMPOSITOR_LAYER_DAMAGE: namespace={namespace} placement={},{} local={},{},{}x{} output={},{},{}x{}",
+                    placement.x,
+                    placement.y,
+                    local.x,
+                    local.y,
+                    local.w,
+                    local.h,
+                    output.x,
+                    output.y,
+                    output.w,
+                    output.h
+                );
+            }
+        }
+        for (_, output) in translated {
+            self.frames.add_damage(output);
+        }
+    }
+
+    /// Logical rect a layer surface is drawn at on its output: the negotiated
+    /// size placed by the anchors (`backend::layer_location`). Mirrors the DRM
+    /// backend's `layer_rect`, so damage enters output space at exactly the
+    /// offset the surface is rendered with. Positions are relative to the
+    /// surface's own output, like the frame scheduler's damage space.
+    fn layer_surface_rect(&self, entry: &LayerSurfaceEntry) -> Option<Rect> {
+        let surface = entry.surface.wl_surface();
+        let cached = with_states(surface, |states| {
+            states
+                .cached_state
+                .get::<LayerSurfaceCachedState>()
+                .current()
+                .clone()
+        });
+        let output = match entry.output.as_deref() {
+            Some(name) => self.output_by_name(name).or_else(|| self.outputs.first()),
+            None => self.outputs.first(),
+        }?;
+        let output_size = self.logical_size(output);
+        let size = layer_surface_size(&cached, output_size);
+        let anchors = (
+            cached.anchor.contains(Anchor::LEFT),
+            cached.anchor.contains(Anchor::RIGHT),
+            cached.anchor.contains(Anchor::TOP),
+            cached.anchor.contains(Anchor::BOTTOM),
+        );
+        let (x, y) = backend::layer_location(
+            anchors,
+            (size.w, size.h),
+            (output_size.w, output_size.h),
+        );
+        Some(Rect {
+            x,
+            y,
+            w: size.w,
+            h: size.h,
+        })
     }
 
     /// Damage a surface's whole area (first map, buffer swap without an
@@ -864,16 +962,15 @@ impl AetherCompositor {
                 }
             }
             None => {
-                // Layer surface without managed geometry: damage the primary
-                // output's full logical area.
-                if let Some(output) = self.outputs.first() {
-                    let size = self.logical_size(output);
-                    self.frames.add_damage(Rect {
-                        x: 0,
-                        y: 0,
-                        w: size.w,
-                        h: size.h,
-                    });
+                // Layer surface without managed geometry: damage the placed
+                // surface, not the whole output (a dock repaint must not cost a
+                // full-screen frame).
+                if let Some(index) = self
+                    .layer_surfaces
+                    .iter()
+                    .position(|entry| entry.surface.wl_surface() == surface)
+                {
+                    self.record_layer_damage(index, &[]);
                 }
             }
         }
@@ -1892,3 +1989,117 @@ fn run_headless() -> Result<(), String> {
 
 // globals for display pointer and timed_out
 static DISPLAY_PTR: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// Translate one layer surface's damage from surface-local logical coordinates
+/// into output logical coordinates.
+///
+/// `placement` is the surface's top-left on its output (what
+/// [`backend::layer_location`] returns) and `size` its negotiated logical size.
+/// Each damage rect is clipped to the surface first, then translated, exactly
+/// like the toplevel path clips damage to the managed window rect. Rects that
+/// fall entirely outside the surface are dropped.
+///
+/// Returns `(surface-local, output)` pairs so the caller can report the
+/// translation it applied.
+pub(crate) fn layer_damage_rects(
+    placement: (i32, i32),
+    size: (i32, i32),
+    damage: &[Rect],
+) -> Vec<(Rect, Rect)> {
+    let mut translated = Vec::with_capacity(damage.len());
+    for rect in damage {
+        let x0 = rect.x.max(0);
+        let y0 = rect.y.max(0);
+        let x1 = (rect.x + rect.w).min(size.0.max(0));
+        let y1 = (rect.y + rect.h).min(size.1.max(0));
+        if x1 <= x0 || y1 <= y0 {
+            continue;
+        }
+        let local = Rect {
+            x: x0,
+            y: y0,
+            w: x1 - x0,
+            h: y1 - y0,
+        };
+        translated.push((
+            local,
+            Rect {
+                x: placement.0 + local.x,
+                y: placement.1 + local.y,
+                w: local.w,
+                h: local.h,
+            },
+        ));
+    }
+    translated
+}
+
+#[cfg(test)]
+mod layer_damage_tests {
+    use super::*;
+
+    #[test]
+    fn layer_damage_is_translated_by_the_placement() {
+        // A dock anchored to the bottom edge of a 1920x1080 output.
+        let placement = (600, 1016);
+        let size = (720, 64);
+
+        // A surface-local strip at (8, 8) 100x20 damages the same strip offset
+        // by the placement in output space.
+        let strip = Rect { x: 8, y: 8, w: 100, h: 20 };
+        let translated = layer_damage_rects(placement, size, &[strip]);
+        assert_eq!(
+            translated,
+            vec![(
+                Rect { x: 8, y: 8, w: 100, h: 20 },
+                Rect { x: 608, y: 1024, w: 100, h: 20 },
+            )]
+        );
+        // Generalized: a rect at (dx, dy) lands at (x + dx, y + dy).
+        let (x, y) = placement;
+        for (dx, dy) in [(0, 0), (1, 3), (100, 40), (719, 63)] {
+            let probe = [Rect { x: dx, y: dy, w: 1, h: 1 }];
+            let output = layer_damage_rects(placement, size, &probe);
+            assert_eq!(
+                output[0].1,
+                Rect { x: x + dx, y: y + dy, w: 1, h: 1 },
+                "local ({dx}, {dy}) must be placed at ({}, {})",
+                x + dx,
+                y + dy
+            );
+        }
+    }
+
+    #[test]
+    fn layer_damage_is_clipped_to_the_surface() {
+        let placement = (600, 1016);
+        let size = (720, 64);
+        // A strip hanging off the right/bottom edge is clipped to the surface,
+        // and still translated by the placement.
+        let translated =
+            layer_damage_rects(placement, size, &[Rect { x: 700, y: 60, w: 80, h: 40 }]);
+        assert_eq!(
+            translated,
+            vec![(
+                Rect { x: 700, y: 60, w: 20, h: 4 },
+                Rect { x: 1300, y: 1076, w: 20, h: 4 },
+            )]
+        );
+        // Damage outside the surface damages nothing (no bogus full-frame).
+        let outside = Rect { x: 900, y: 0, w: 10, h: 10 };
+        assert!(layer_damage_rects(placement, size, &[outside]).is_empty());
+    }
+
+    #[test]
+    fn a_zero_placement_keeps_the_surface_local_rect() {
+        // Menu bar anchored to the top edge: the placement is the origin, so the
+        // translation is the identity (the pre-fix behaviour remains correct
+        // for chrome that really sits at (0, 0)).
+        let rect = Rect { x: 12, y: 4, w: 40, h: 16 };
+        assert_eq!(
+            layer_damage_rects((0, 0), (1920, 32), &[rect]),
+            vec![(rect, rect)]
+        );
+    }
+}
+

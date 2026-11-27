@@ -111,6 +111,18 @@ if [ "$selftest" -eq 1 ]; then
     say "selftest OK   : whole-union capture fixture scored FAIL (backdrop_px == backdrop_union_px)"
   fi
   rm -f "$unscoped"
+  # Layer-surface damage recorded from the surface origin instead of its
+  # placement (the pre-fix behaviour) must not pass.
+  misplaced="$(mktemp)"
+  sed -e 's/output=608,1024,100x20/output=8,8,100x20/' \
+    "$script_dir/fixtures/kms-full-tier.log" >"$misplaced"
+  if "$0" --grade "$misplaced" --tier full >/dev/null 2>&1; then
+    say "selftest FAIL : layer damage at the surface origin should score FAIL"
+    status=1
+  else
+    say "selftest OK   : untranslated layer damage scored FAIL (output 8,8 != placement 600,1016 + local 8,8)"
+  fi
+  rm -f "$misplaced"
   [ "$status" -eq 0 ] && say "SELFTEST: PASSED" || say "SELFTEST: FAILED"
   exit "$status"
 fi
@@ -379,6 +391,35 @@ grade_common() {
   contains "$log" "AETHER_COMPOSITOR_DONE" \
     && pass "$label: clean shutdown (AETHER_COMPOSITOR_DONE)" \
     || warn "$label: no AETHER_COMPOSITOR_DONE marker (killed before the deadline?)"
+
+  # 9. Layer-surface damage is translated by the surface's placement. The menu
+  #    bar is at (0, 0) but the dock is not, so a damage rect recorded from the
+  #    surface origin would repaint a strip at the top of the output. Every
+  #    marker must satisfy `placement + local == output`.
+  local layer_lines layer_bad
+  layer_lines="$(grep -F 'AETHER_COMPOSITOR_LAYER_DAMAGE: ' "$log" || true)"
+  if [ -z "$layer_lines" ]; then
+    warn "$label: no layer-surface damage observed (was the shell's dock/panel drawn during the run?)"
+  else
+    layer_bad="$(printf '%s\n' "$layer_lines" | awk '
+      {
+        if (!match($0, /placement=[-0-9]+,[-0-9]+/)) { print "unparsable: " $0; next }
+        split(substr($0, RSTART + 10, RLENGTH - 10), placement, ",")
+        if (!match($0, /local=[-0-9]+,[-0-9]+,[-0-9]+x[-0-9]+/)) { print "unparsable: " $0; next }
+        split(substr($0, RSTART + 6, RLENGTH - 6), local, /[ ,x]+/)
+        if (!match($0, /output=[-0-9]+,[-0-9]+,[-0-9]+x[-0-9]+/)) { print "unparsable: " $0; next }
+        split(substr($0, RSTART + 7, RLENGTH - 7), output, /[ ,x]+/)
+        if (placement[1] + local[1] != output[1] ||
+            placement[2] + local[2] != output[2] ||
+            local[3] != output[3] || local[4] != output[4])
+          print "misplaced: " $0
+      }')"
+    if [ -z "$layer_bad" ]; then
+      pass "$label: layer-surface damage lands on the placed surface ($(printf '%s\n' "$layer_lines" | grep -c . ) marker(s), $(printf '%s\n' "$layer_lines" | grep -m1 'LAYER_DAMAGE' | sed 's/^AETHER_COMPOSITOR_LAYER_DAMAGE: //'))"
+    else
+      fail "$label: layer damage was not translated by the placement: $(printf '%s' "$layer_bad" | head -n 2 | tr '\n' ';')"
+    fi
+  fi
 }
 
 # ---------------------------------------------------------------------------

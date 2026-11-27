@@ -15,6 +15,9 @@ AETHER_COMPOSITOR_EFFECT_PIPELINE: tier=minimal blur=none saturation=1.00 tint=0
 AETHER_COMPOSITOR_OUTPUT: name=eDP-1 mode=1920x1080 scale=1 logical=1920x1080 position=0,0
 AETHER_COMPOSITOR_OUTPUT_COUNT: 1
 AETHER_COMPOSITOR_CLIENT_MAPPED
+AETHER_COMPOSITOR_LAYER_SURFACE: namespace=aether-shell-dock layer=Top output=eDP-1 scale=1
+AETHER_COMPOSITOR_LAYER_CONFIGURE: namespace=aether-shell-dock size=720x64
+AETHER_COMPOSITOR_LAYER_DAMAGE: namespace=aether-shell-dock placement=600,1016 local=8,8,100x20 output=608,1024,100x20
 AETHER_COMPOSITOR_FRAME: n=1 time_ms=640 damage_rects=1 damage_px=32000 frost_px=32000 backdrop_px=0 backdrop_union_px=0 windows=1 tier=minimal est_ms=0.002
 AETHER_COMPOSITOR_GLASS_SHADER: tier=minimal blur=none frosted=1 frosted_total=1 damage_px=32000 frost_px=32000 surface_px=746496 backdrop=none backdrop_px=0 backdrop_union_px=0
 AETHER_COMPOSITOR_DRM_VBLANK: n=1 time_ms=640 total=1

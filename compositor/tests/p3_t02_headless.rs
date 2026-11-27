@@ -343,6 +343,7 @@ fn two_outputs_layer_shell_and_xdg_toplevel() {
     assert_eq!(primary.mode, (1920, 1080), "primary output mode");
     assert_eq!(primary.logical_size, (1920, 1080), "primary logical size");
     assert_eq!(primary.logical_position, (0, 0), "primary logical position");
+    let primary_output = primary.proxy.clone().expect("bound primary wl_output");
 
     let hdpi = by_name("aether-headless-1");
     assert_eq!(
@@ -421,6 +422,40 @@ fn two_outputs_layer_shell_and_xdg_toplevel() {
     layer_wl_surface.commit();
     queue.roundtrip(&mut state).expect("layer map");
 
+    // --- Layer-shell damage translation -------------------------------------
+    // The dock is anchored to the bottom edge, so its surface origin is *not*
+    // (0, 0): client damage must be translated by the placement before it
+    // enters output space, or the repaint lands at the top of the output
+    // instead of on the dock.
+    let dock_wl_surface = compositor.create_surface(&qh, ());
+    let dock_surface = layer_shell.get_layer_surface(
+        &dock_wl_surface,
+        Some(&primary_output),
+        zwlr_layer_shell_v1::Layer::Top,
+        "aether-shell-dock".to_string(),
+        &qh,
+        (),
+    );
+    dock_surface.set_anchor(zwlr_layer_surface_v1::Anchor::Bottom);
+    dock_surface.set_size(720, 64);
+    dock_wl_surface.commit();
+    queue.roundtrip(&mut state).expect("dock configure");
+    queue.roundtrip(&mut state).expect("dock configure");
+    let (dock_serial, dock_width, dock_height) =
+        state.layer_configure.expect("dock layer configure");
+    assert_eq!(
+        (dock_width, dock_height),
+        (720, 64),
+        "the dock keeps its requested size when anchored to one edge"
+    );
+    dock_surface.ack_configure(dock_serial);
+
+    let dock_buffer = create_buffer(&shm, &qh, &runtime_dir, 720, 64);
+    dock_wl_surface.attach(Some(&dock_buffer.buffer), 0, 0);
+    dock_wl_surface.damage(8, 8, 100, 20);
+    dock_wl_surface.commit();
+    queue.roundtrip(&mut state).expect("dock map");
+
     // --- Compositor-side markers --------------------------------------------
     let log = fs::read_to_string(runtime_dir.join("compositor.log")).expect("compositor log");
     assert_eq!(
@@ -452,6 +487,16 @@ fn two_outputs_layer_shell_and_xdg_toplevel() {
     assert!(
         log.contains("AETHER_COMPOSITOR_CLIENT_MAPPED"),
         "compositor observed a mapped surface:\n{log}"
+    );
+    // The dock sits at the bottom-centre of the 1920x1080 primary output:
+    // (1920 - 720) / 2 = 600, 1080 - 64 = 1016. Its surface-local damage at
+    // (8, 8) must land at (608, 1024) in output space.
+    assert!(
+        log.contains(
+            "AETHER_COMPOSITOR_LAYER_DAMAGE: namespace=aether-shell-dock \
+             placement=600,1016 local=8,8,100x20 output=608,1024,100x20"
+        ),
+        "dock damage is translated by its placement:\n{log}"
     );
     if std::env::var_os("AETHER_COMPOSITOR_TEST_LOG").is_some() {
         println!("--- compositor log ---\n{log}");

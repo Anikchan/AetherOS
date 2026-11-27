@@ -156,8 +156,92 @@ struct ShmBuffer {
     buffer: wl_buffer::WlBuffer,
 }
 
+/// `run_scenario` connects through the process-global `WAYLAND_DISPLAY` /
+/// `XDG_RUNTIME_DIR` variables, so the two scenario tests must not overlap.
+static SCENARIO: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn scenario_lock() -> std::sync::MutexGuard<'static, ()> {
+    SCENARIO
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+#[test]
+fn damage_scoped_backdrop_does_not_reuse_a_stale_strip() {
+    // The client damages the top of every window, then (once that frame was
+    // presented) a much smaller strip lower down. The backdrop capture is
+    // damage-scoped, so each frame must capture exactly the strips *that frame*
+    // frosts — never the previous frame's strip, which would leave unwritten
+    // texels under the new frost and blur stale pixels.
+    let _guard = scenario_lock();
+    let log = run_scenario("full");
+    assert_backdrop_follows_the_damage(&log);
+}
+
+/// Assert that every 3-window frame captured exactly the strips it frosted.
+fn assert_backdrop_follows_the_damage(log: &str) {
+    let frames: Vec<&str> = log
+        .lines()
+        .filter(|line| line.contains("AETHER_COMPOSITOR_FRAME: ") && line.contains("windows=3"))
+        .collect();
+    assert!(
+        frames.len() >= 2,
+        "need two presented 3-window frames, got {}:\n{log}",
+        frames.len()
+    );
+
+    let damages: Vec<u64> = frames
+        .iter()
+        .map(|line| value_usize(line, "damage_px=") as u64)
+        .collect();
+    assert!(
+        damages.iter().any(|damage| *damage != damages[0]),
+        "the two frames carried the same damage, so the scenario proves nothing: {damages:?}"
+    );
+
+    let mut union: Option<u64> = None;
+    let mut frosts = Vec::new();
+    for line in &frames {
+        let frost = value_usize(line, "frost_px=") as u64;
+        let backdrop = value_usize(line, "backdrop_px=") as u64;
+        let backdrop_union = value_usize(line, "backdrop_union_px=") as u64;
+        // The capture covers every frosted surface's frost region this frame.
+        assert!(
+            backdrop >= frost,
+            "backdrop {backdrop} must cover the {frost} frosted pixels: {line}"
+        );
+        // The baseline (whole-union) area does not grow frame to frame: only the
+        // captured strips change, the glass surfaces do not.
+        assert_eq!(
+            *union.get_or_insert(backdrop_union),
+            backdrop_union,
+            "the backdrop union grew between frames: {line}"
+        );
+        assert!(
+            backdrop <= backdrop_union,
+            "capture {backdrop} exceeds the union {backdrop_union}: {line}"
+        );
+        // All three windows are fully inside the output, so the captured strips
+        // are exactly the frost regions of *this* frame. A strip carried over
+        // from the previous, larger damage would make the capture larger.
+        assert_eq!(
+            backdrop, frost,
+            "frame captured a stale strip: {backdrop} != {frost}: {line}"
+        );
+        frosts.push(frost);
+    }
+    // And the smaller second-frame damage really did shrink the strips.
+    let min = frosts.iter().min().copied().unwrap();
+    let max = frosts.iter().max().copied().unwrap();
+    assert!(
+        min < max,
+        "the frost region never followed the damage: frosts={frosts:?}"
+    );
+}
+
 #[test]
 fn effect_tiers_and_damage_based_frames() {
+    let _guard = scenario_lock();
     let full = run_scenario("full");
     let minimal = run_scenario("minimal");
 
@@ -308,6 +392,7 @@ fn run_scenario(tier: &str) -> String {
         .expect("compositor advertises xdg_wm_base");
 
     let mut buffers = Vec::new();
+    let mut surfaces = Vec::new();
     for index in 0..3 {
         let surface = compositor_proxy.create_surface(&qh, ());
         let xdg = wm_base.get_xdg_surface(&surface, &qh, ());
@@ -332,10 +417,11 @@ fn run_scenario(tier: &str) -> String {
         surface.commit();
         queue.roundtrip(&mut state).expect("toplevel map");
         buffers.push(buffer);
+        surfaces.push(surface);
     }
 
     // Let the frame scheduler present a few frames and answer the callbacks.
-    let deadline = Instant::now() + Duration::from_secs(5);
+    let deadline = Instant::now() + Duration::from_secs(8);
     while state.frame_callbacks < 3 && Instant::now() < deadline {
         queue
             .roundtrip(&mut state)
@@ -345,6 +431,29 @@ fn run_scenario(tier: &str) -> String {
     assert!(
         state.frame_callbacks >= 3,
         "compositor answered {} of 3 frame callbacks",
+        state.frame_callbacks
+    );
+
+    // Second frame with *different* damage: a much smaller strip lower down the
+    // window. A damage-scoped backdrop capture must follow this damage; reusing
+    // the strip of the previous frame would leave stale texels under the frost.
+    let mut second_callbacks = Vec::new();
+    for surface in &surfaces {
+        let callback = surface.frame(&qh, ());
+        surface.damage(64, 128, 64, 32);
+        surface.commit();
+        second_callbacks.push(callback);
+    }
+    let deadline = Instant::now() + Duration::from_secs(8);
+    while state.frame_callbacks < 6 && Instant::now() < deadline {
+        queue
+            .roundtrip(&mut state)
+            .expect("second frame callback roundtrip");
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert!(
+        state.frame_callbacks >= 6,
+        "compositor answered {} of 6 frame callbacks",
         state.frame_callbacks
     );
 
