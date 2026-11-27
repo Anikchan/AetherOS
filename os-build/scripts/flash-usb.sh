@@ -27,6 +27,7 @@ set -eu
 IMAGE=""
 DEVICE=""
 SWITCH=0
+PERSISTENT=0
 DRY_RUN=0
 MIN_IMAGE_BYTES=$((8 * 1024 * 1024))
 
@@ -36,6 +37,10 @@ usage: flash-usb.sh <image> [--device /dev/sdX] [--switch] [--dry-run]
 
   --device DEV  target block device (default: the only USB block device found)
   --switch      after a verified write, set BootNext to the AetherOS entry
+                (one-shot: AetherOS hands the next boot back to this disk)
+  --persistent  with --switch: write BootOrder instead of BootNext, so the
+                choice survives a power cut (an ESP marker makes AetherOS
+                restore the order on its next boot; see the boot-switch D6)
   --dry-run     validate everything and print the plan, write nothing
 EOF
 }
@@ -48,6 +53,7 @@ while [ $# -gt 0 ]; do
         --device) [ $# -ge 2 ] || die "missing value for --device"; DEVICE="$2"; shift 2 ;;
         --device=*) DEVICE="${1#--device=}"; shift ;;
         --switch) SWITCH=1; shift ;;
+        --persistent) PERSISTENT=1; shift ;;
         --dry-run) DRY_RUN=1; shift ;;
         -h|--help) usage; exit 0 ;;
         -*) die "unknown option: $1" ;;
@@ -124,7 +130,7 @@ say "sha256: $(sha256sum "$IMAGE" | cut -d' ' -f1)"
 
 if [ "$DRY_RUN" = 1 ]; then
     say "dry-run: would write $IMAGE -> $DEVICE, sync, read back and compare"
-    [ "$SWITCH" = 1 ] && say "dry-run: would then set BootNext to AetherOS"
+    [ "$SWITCH" = 1 ] && say "dry-run: would then set the next boot to AetherOS ($([ "$PERSISTENT" = 1 ] && echo BootOrder || echo BootNext))"
     exit 0
 fi
 
@@ -147,9 +153,17 @@ if [ "$SWITCH" = 1 ]; then
     script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
     say "setting the next boot to AetherOS ..."
     if [ -x "$script_dir/aether-boot-switch.sh" ]; then
-        "$script_dir/aether-boot-switch.sh" aether
+        if [ "$PERSISTENT" = 1 ]; then
+            "$script_dir/aether-boot-switch.sh" aether --persistent
+        else
+            "$script_dir/aether-boot-switch.sh" aether
+        fi
     elif command -v aether-boot-switch >/dev/null 2>&1; then
-        aether-boot-switch aether
+        if [ "$PERSISTENT" = 1 ]; then
+            aether-boot-switch aether --persistent
+        else
+            aether-boot-switch aether
+        fi
     else
         say "aether-boot-switch not found; the stick is written, use F12 for this boot"
     fi
