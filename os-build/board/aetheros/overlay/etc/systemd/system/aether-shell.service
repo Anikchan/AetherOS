@@ -1,0 +1,40 @@
+[Unit]
+Description=AetherOS desktop shell (layer-shell host on the compositor's socket)
+Documentation=file:/etc/aether/ui-build.txt
+# The shell creates its surfaces on the compositor's socket; starting it first
+# is pointless. aether-shell-host waits (20 s) for the socket anyway, so this is
+# about stop/restart ordering rather than a hard barrier.
+After=aether-session.service
+# Stopping or restarting the compositor stops the shell with it.
+PartOf=aether-session.service
+# Only the session unit enables this one (Wants=), so a skipped/unavailable
+# compositor never leaves a stray shell behind.
+# Fail-soft: three attempts, then stop restarting (tty2 login survives).
+StartLimitIntervalSec=120
+StartLimitBurst=3
+# Match the compositor: no DRM node, no shell.
+ConditionPathExists=/dev/dri
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/aether-shell-host
+# Same runtime dir as the compositor: the Wayland socket lives in /run/aether.
+# The shell does not create it (the compositor unit owns it).
+Environment=XDG_RUNTIME_DIR=/run/aether
+Environment=WAYLAND_DISPLAY=wayland-0
+Environment=AETHER_COMPOSITOR_LOG=/var/log/aether/compositor.log
+# The shell writes $HOME/.config/aether; on a read-only root that must not be
+# inside the image. /var is tmpfs on this image and StateDirectory creates
+# /var/lib/aether-shell before ExecStart.
+Environment=HOME=/var/lib/aether-shell
+Environment=XDG_CONFIG_HOME=/var/lib/aether-shell/config
+StateDirectory=aether-shell
+StateDirectoryMode=0755
+
+# The host exits cleanly after --hold-ms (24 h), so restart on any exit.
+Restart=always
+RestartSec=5
+TimeoutStopSec=5
+
+[Install]
+WantedBy=multi-user.target

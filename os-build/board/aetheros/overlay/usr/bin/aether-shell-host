@@ -1,0 +1,57 @@
+#!/bin/sh
+# aether-shell-host — put the desktop shell on tty1 after the compositor.
+#
+# Started by aether-shell.service, After=aether-session.service.
+#
+# Two shell modes exist in this tree:
+#
+#   --connect [--hold-ms N]   the real layer-shell host (shell/src/wayland.rs):
+#                             binds wl_compositor + wl_shm + zwlr_layer_shell_v1
+#                             on $WAYLAND_DISPLAY, creates every shell surface
+#                             in plan order at the configured size, maps solid
+#                             palette buffers and dispatches the seat's keys.
+#   --interactive             the journal-driven host: reads the compositor's
+#                             markers, drives the shell state and spawns apps.
+#
+# `--connect` landed in the same overnight round as this image wiring and may be
+# absent from the commit the image is built from, so the wrapper asks the binary
+# which mode it supports instead of assuming one. That keeps aether-shell.service
+# valid either way: with `--connect` the shell paints its surfaces, without it
+# the shell still runs its host loop against the compositor log.
+#
+# --hold-ms: `--connect` returns as soon as the surfaces are up, so hold them
+# for a day; systemd (Restart=always) starts a fresh host afterwards, so a clean
+# exit never leaves the screen without a shell.
+
+set -u
+
+RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/aether}"
+DISPLAY_NAME="${WAYLAND_DISPLAY:-wayland-0}"
+HOLD_MS="${AETHER_SHELL_HOLD_MS:-86400000}"
+
+if [ ! -x /usr/bin/aether-shell ]; then
+    echo "aether-shell-host: /usr/bin/aether-shell is missing (see /etc/aether/ui-build.txt)" >&2
+    exit 127
+fi
+
+HELP="$(/usr/bin/aether-shell --help 2>&1 || true)"
+
+case "$HELP" in
+    *--connect*)
+        attempt=0
+        while [ ! -S "$RUNTIME_DIR/$DISPLAY_NAME" ]; do
+            attempt=$((attempt + 1))
+            if [ "$attempt" -ge 40 ]; then
+                echo "aether-shell-host: no Wayland socket at $RUNTIME_DIR/$DISPLAY_NAME after 20 s" >&2
+                exit 1
+            fi
+            sleep 0.5
+        done
+        exec /usr/bin/aether-shell --connect --hold-ms "$HOLD_MS" "$@"
+        ;;
+    *)
+        echo "aether-shell-host: this aether-shell has no --connect (surface host not in this build); using --interactive" >&2
+        exec /usr/bin/aether-shell --interactive \
+            --journal "${AETHER_COMPOSITOR_LOG:-/var/log/aether/compositor.log}" "$@"
+        ;;
+esac

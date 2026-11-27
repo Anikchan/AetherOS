@@ -1,0 +1,36 @@
+# os-build/buildroot/ui/binaries.txt — workspace binaries installed into the
+# AetherOS image by os-build/post-build.sh (2026-11-28, UI image).
+#
+# One entry per installed binary, tab separated:
+#
+#   <cargo package>	<installed binary>	<core|app>
+#
+# `core` binaries are the graphical session (aether-session.service and
+# aether-shell.service). If none of them can be built the image build fails,
+# because that is exactly the "image with no Rust binary" bug this list exists
+# to close. `app` binaries are best effort: a failed app build is reported in
+# the build manifest and the launcher entry simply does not start.
+#
+# The launcher spawns "/usr/bin/<app id>" (shell/src/model.rs, shell/src/search.rs),
+# so the binary names below must stay identical to the app ids.
+#
+# Binary names, not paths: the post-build step copies
+# <repo>/target/release/<binary> to $TARGET_DIR/usr/bin/<binary>.
+
+# --- graphical session (core) ---
+aether-compositor	aether-compositor	core
+aether-shell	aether-shell	core
+aether-shell	aether-greeter	core
+
+# --- applications (best effort) ---
+aether-archive	aether-archive	app
+aether-browser	aether-browser	app
+aether-calculator	aether-calculator	app
+aether-calendar	aether-calendar	app
+aether-documents	aether-documents	app
+aether-files	aether-files	app
+aether-images	aether-images	app
+aether-player	aether-player	app
+aether-taskmanager	aether-taskmanager	app
+aether-terminal	aether-terminal	app
+aether-text	aether-text	app

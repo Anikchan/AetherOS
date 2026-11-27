@@ -16,6 +16,12 @@ BR2_TOOLCHAIN_BUILDROOT_GLIBC=y
 # when BR2_LINUX_KERNEL_LATEST_VERSION is set, which we do not use (custom
 # 6.18). Select the matching series explicitly instead.
 BR2_KERNEL_HEADERS_6_18=y
+# C++ (libstdc++) is required by Mesa3d in 2025.11: BR2_PACKAGE_MESA3D has
+# `depends on BR2_INSTALL_LIBSTDCPP`, and only BR2_TOOLCHAIN_BUILDROOT_CXX
+# selects it. Without this line every Mesa symbol below is dropped silently by
+# olddefconfig and the image ships no EGL/GBM at all (seen in P2: glxinfo was
+# missing from the image).
+BR2_TOOLCHAIN_BUILDROOT_CXX=y
 
 # --- Kernel: mainline LTS with our fragment (ADR-001) ---
 BR2_LINUX_KERNEL=y
@@ -33,6 +39,10 @@ BR2_PACKAGE_SYSTEMD=y
 # Minimal profile: trim services we do not use.
 # BR2_PACKAGE_SYSTEMD_JOURNALGATEWAYD is not set
 # BR2_PACKAGE_SYSTEMD_HWDB is not set
+# The console getty moves to tty2 (2026-11-28, UI image): tty1 belongs to the
+# DRM compositor started by aether-session.service. tty2 keeps a text login
+# (and therefore `test.sh`) if the graphical start fails; sshd is unaffected.
+BR2_TARGET_GENERIC_GETTY_PORT="tty2"
 
 # --- Filesystem image: read-only squashfs root (P1-T03, D4) ---
 BR2_TARGET_ROOTFS_SQUASHFS=y
@@ -45,6 +55,10 @@ BR2_ROOTFS_OVERLAY="../../board/aetheros/overlay"
 BR2_PACKAGE_SYSTEMD_BOOT=y
 BR2_PACKAGE_HOST_GENIMAGE=y
 BR2_ROOTFS_POST_IMAGE_SCRIPT="../../board/aetheros/post-image.sh"
+# Runs before the filesystem images are made: builds the Rust workspace
+# binaries on the build host and installs them into $TARGET_DIR/usr/bin
+# (see os-build/post-build.sh and os-build/buildroot/ui/README.md).
+BR2_ROOTFS_POST_BUILD_SCRIPT="../../post-build.sh"
 
 # --- Legacy BIOS boot chain: GRUB2 for MBR disks (P1-T07, D4 §3) ---
 # grub-install runs as a CI step (needs a loop device); see
@@ -69,10 +83,24 @@ BR2_PACKAGE_POWER_PROFILES_DAEMON=y
 # --- P2 additions (hardware bring-up) — merged 2026-11-23 (P1 green) ---
 # Graphics (P2-T02): Mesa + Vulkan (ANV, RADV) for Intel/AMD
 BR2_PACKAGE_MESA3D=y
+# 2025.11: iris/radeonsi/ANV/RADV all depend on BR2_PACKAGE_MESA3D_LLVM (the
+# target LLVM build). They stay listed for reference but are inactive until the
+# owner accepts the cost: LLVM adds roughly half an hour to the image build and
+# pushes the compressed image well past the 150 MB P1 gate.
+# Hardware EGL on the Dell's Iris Xe needs BR2_PACKAGE_MESA3D_LLVM=y plus
+# BR2_PACKAGE_MESA3D_GALLIUM_DRIVER_IRIS=y (see the 2026-11-28 D6 note).
 BR2_PACKAGE_MESA3D_GALLIUM_DRIVER_IRIS=y
 BR2_PACKAGE_MESA3D_GALLIUM_DRIVER_RADEONSI=y
 BR2_PACKAGE_MESA3D_VULKAN_DRIVER_INTEL=y
 BR2_PACKAGE_MESA3D_VULKAN_DRIVER_AMD=y
+# UI image (2026-11-28): the compositor's DRM backend needs EGL + GLES + GBM.
+# softpipe is the only gallium driver Buildroot 2025.11 offers without LLVM, so
+# it is what actually ships tonight: EGL_PLATFORM_GBM -> kms_swrast over the
+# i915/amdgpu KMS plane. Slow, but it renders and keeps the image small.
+BR2_PACKAGE_MESA3D_GALLIUM_DRIVER_SOFTPIPE=y
+BR2_PACKAGE_MESA3D_OPENGL_EGL=y
+BR2_PACKAGE_MESA3D_OPENGL_ES=y
+BR2_PACKAGE_MESA3D_GBM=y
 BR2_PACKAGE_VULKAN_LOADER=y
 BR2_PACKAGE_LIBDRM=y
 BR2_PACKAGE_WAYLAND=y
@@ -83,9 +111,22 @@ BR2_PACKAGE_XWAYLAND=y
 # Audio (P2-T04): PipeWire + WirePlumber + ALSA tools
 BR2_PACKAGE_PIPEWIRE=y
 # WirePlumber is the PipeWire session/policy manager and needs Lua >= 5.3
-# (package/wireplumber/Config.in). Without a Lua version the defconfig entry
-# below is dropped silently and the image ships PipeWire with no session
-# manager - seen on the Dell in P2 run 3.
+# (package/wireplumber/Config.in). The chain is three symbols deep:
+#
+#   BR2_PACKAGE_WIREPLUMBER -> BR2_PACKAGE_HAS_LUA_INTERPRETER
+#     -> BR2_PACKAGE_LUA_5_4 ... and the version choice lives *inside*
+#     `if BR2_PACKAGE_LUA` in package/lua/Config.in, so BR2_PACKAGE_LUA=y is
+#     required for BR2_PACKAGE_LUA_5_4 to exist at all.
+#
+# Both halves of the Lua selection are therefore listed. Without
+# BR2_PACKAGE_LUA the version line is dropped by olddefconfig, WirePlumber's
+# dependency is unsatisfied, and the image ships PipeWire with no session
+# manager - seen on the Dell in P2 run 3 and again in image build 46041689625
+# (`Build wireplumber : NO`, commit dabbb76, which already had the version
+# line). os-build/scripts/check-ui-image.sh guards this class: a child symbol
+# without its package, or a defconfig =y symbol missing from the generated
+# .config, fails the check.
+BR2_PACKAGE_LUA=y
 BR2_PACKAGE_LUA_5_4=y
 BR2_PACKAGE_WIREPLUMBER=y
 BR2_PACKAGE_ALSA_LIB=y
@@ -121,9 +162,40 @@ BR2_PACKAGE_LIBINPUT=y
 BR2_PACKAGE_EUDEV=y
 BR2_PACKAGE_UDEV=y
 
+# --- Graphical session runtime (UI image, 2026-11-28) ---
+# Slint renders text through fontdb/fontconfig: without these the shell and
+# every app exit at startup with "no fonts available".
+BR2_PACKAGE_FONTCONFIG=y
+BR2_PACKAGE_FREETYPE=y
+BR2_PACKAGE_DEJAVU=y
+# Keyboard: the compositor compiles its keymap with xkbcommon (dlopen) and the
+# data files xkeyboard-config installs under /usr/share/X11/xkb.
+BR2_PACKAGE_LIBXKBCOMMON=y
+BR2_PACKAGE_XKEYBOARD_CONFIG=y
+# Seat: smithay's backend_session_libseat opens /dev/dri/card0 and the evdev
+# nodes through libseat. The session unit runs as a root system service with no
+# logind session, so libseat uses its builtin backend (LIBSEAT_BACKEND=builtin
+# in board/aetheros/overlay/usr/bin/aether-session); no seatd daemon is needed.
+BR2_PACKAGE_SEATD=y
+BR2_PACKAGE_SEATD_BUILTIN=y
+# aether-compositor / aether-shell / aether-greeter and the apps themselves are
+# built by BR2_ROOTFS_POST_BUILD_SCRIPT (os-build/post-build.sh) because the
+# workspace also needs the `drm` cargo feature; the binary list lives in
+# os-build/buildroot/ui/binaries.txt.
+
 # Validation tools (P2): lspci/lsusb/glxinfo/vulkaninfo
 BR2_PACKAGE_PCIUTILS=y
 BR2_PACKAGE_USBUTILS=y
+# P2 run 3: `lsusb` printed "unable to initialize usb spec" because the image
+# carried no /usr/share/hwdata/usb.ids. hwdata installs it where usbutils looks.
+BR2_PACKAGE_HWDATA=y
+BR2_PACKAGE_HWDATA_USB_IDS=y
+# Boot switching (2026-11-28): aether-boot-return.service sets the next UEFI
+# boot entry back to Ubuntu with `efibootmgr -n`. 2025.11 dependencies are all
+# satisfied here: EFIVAR_ARCH_SUPPORTS (x86_64), !BR2_STATIC_LIBS (glibc
+# toolchain), threads, headers >= 3.12 (6.18), gcc >= 4.9; efivar and popt are
+# selected by the package.
+BR2_PACKAGE_EFIBOOTMGR=y
 BR2_PACKAGE_MESA3D_DEMOS=y
 BR2_PACKAGE_VULKAN_TOOLS=y
 

@@ -1,0 +1,41 @@
+#!/bin/sh
+# aether-session — AetherOS graphical session entry point (2026-11-28).
+#
+# Started by aether-session.service on tty1. Runs the DRM/KMS compositor in the
+# foreground (systemd Restart=on-failure handles crashes, StartLimitBurst caps
+# them at three, and tty2 keeps a console login so a broken graphical start is
+# never a lost machine).
+#
+# The environment is set here rather than in the unit so that the same values
+# apply when the compositor is started by hand from tty2 for debugging:
+#
+#   AETHER_COMPOSITOR_BACKEND=drm   force the DRM backend (no silent headless)
+#   LIBSEAT_BACKEND=builtin         libseat opens /dev/dri + evdev itself; the
+#                                   unit is a root system service with no
+#                                   logind session, so the logind backend would
+#                                   refuse the seat
+#   XDG_RUNTIME_DIR=/run/aether     wayland socket + seatd runtime state
+#   AETHER_COMPOSITOR_LOG=...       where the shell looks for compositor markers
+#
+# An aether-compositor built without the `drm` cargo feature prints
+# "AETHER_COMPOSITOR_BACKEND: headless" and uses the 60 s headless backend; the
+# image build manifest (/etc/aether/ui-build.txt) records which one shipped.
+
+set -eu
+
+export AETHER_COMPOSITOR_BACKEND="${AETHER_COMPOSITOR_BACKEND:-drm}"
+export LIBSEAT_BACKEND="${LIBSEAT_BACKEND:-builtin}"
+export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/aether}"
+export AETHER_COMPOSITOR_LOG="${AETHER_COMPOSITOR_LOG:-/var/log/aether/compositor.log}"
+
+if [ ! -d "$XDG_RUNTIME_DIR" ]; then
+    mkdir -p "$XDG_RUNTIME_DIR"
+    chmod 0700 "$XDG_RUNTIME_DIR"
+fi
+
+if [ ! -x /usr/bin/aether-compositor ]; then
+    echo "aether-session: /usr/bin/aether-compositor is missing (see /etc/aether/ui-build.txt)" >&2
+    exit 127
+fi
+
+exec /usr/bin/aether-compositor "$@"

@@ -1,0 +1,64 @@
+[Unit]
+Description=AetherOS graphical session (compositor on tty1)
+Documentation=file:/etc/aether/ui-build.txt
+# Fail-soft ordering, and why it cannot cycle:
+# - `WantedBy=multi-user.target` is a *want* edge from the target to this unit,
+#   not an ordering edge, so no cycle can form; a failure here cancels nothing
+#   else and delays nothing else.
+# - We deliberately do NOT order After=multi-user.target: waiting for the whole
+#   target makes first paint depend on the console/network, and "ordered after
+#   the target that wants me" is easy to misread as a cycle (systemd only treats
+#   it as one if the target is also ordered after this unit, which it is not,
+#   but the intent is clearer as a positive list).
+# - systemd-user-sessions.service is the conventional anchor for anything that
+#   runs before/with gettys (it flushes /run/user on boot).
+# - systemd-udev-settle.service guarantees udev has created /dev/dri/card* before
+#   the ConditionPathExists test below runs, so a modular DRM driver cannot make
+#   the unit skip itself. Nothing waits on this unit, so a slow settle delays
+#   only the screen, never the console or SSH.
+# What a broken graphical start looks like: this unit fails (or is skipped when
+# there is no /dev/dri), multi-user.target is unaffected, sshd answers, and
+# tty2 (Ctrl+Alt+F2) still prints a login prompt.
+After=systemd-user-sessions.service systemd-udev-settle.service
+Wants=aether-shell.service
+# tty1 belongs to KMS: no console getty on the same VT.
+Conflicts=getty@tty1.service
+IgnoreOnIsolate=yes
+# No DRM node (CI QEMU, containers): skip cleanly instead of restart-looping.
+ConditionPathExists=/dev/dri
+# Fail-soft: three attempts, then the unit is failed and the machine is still a
+# console + SSH box on tty2.
+StartLimitIntervalSec=120
+StartLimitBurst=3
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/aether-session
+# RuntimeDirectory creates /run/aether (0700) before ExecStart and removes it
+# after stop; the wrapper exports it as XDG_RUNTIME_DIR.
+RuntimeDirectory=aether
+RuntimeDirectoryMode=0700
+LogsDirectory=aether
+LogsDirectoryMode=0755
+
+# Own tty1 the way getty@.service does. StandardInput=tty makes the compositor
+# the tty's foreground process, which is what a VT switch needs.
+TTYPath=/dev/tty1
+TTYReset=yes
+TTYVHangup=yes
+TTYVTDisallocate=yes
+StandardInput=tty
+
+# The shell's --interactive fallback reads this file for the compositor's
+# markers; the path is mirrored in aether-shell.service and in
+# /usr/bin/aether-session.
+StandardOutput=append:/var/log/aether/compositor.log
+StandardError=inherit
+
+# Fail-soft: three attempts, then stop restarting (tty2 login survives).
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=10
+
+[Install]
+WantedBy=multi-user.target

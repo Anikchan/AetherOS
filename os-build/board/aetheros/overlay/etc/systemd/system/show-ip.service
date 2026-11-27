@@ -1,11 +1,14 @@
 [Unit]
-Description=Show network addresses on tty1 for headless testing
+Description=Show network addresses on tty2 for headless testing
+# tty1 belongs to the graphical session (aether-session.service), so the address
+# dump goes to the console login VT on tty2 (2026-11-28, UI image). The serial
+# console used by the CI boot tests (console=ttyS0) is unaffected.
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=oneshot
-ExecStart=/bin/sh -c 'ip -br addr > /dev/tty1; ip route > /dev/tty1'
+ExecStart=/bin/sh -c 'ip -br addr > /dev/tty2; ip route > /dev/tty2'
 
 [Install]
 WantedBy=multi-user.target
