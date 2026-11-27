@@ -20,13 +20,22 @@ pub struct SysfsBattery {
 
 impl SysfsBattery {
     pub fn system() -> Self {
-        Self::at("/sys/class/power_supply/BAT0")
+        Self {
+            dir: PathBuf::from("/sys/class/power_supply/BAT0"),
+            ac_dir: Some(PathBuf::from("/sys/class/power_supply/AC")),
+        }
     }
 
+    /// Reader over an explicit battery directory.
+    ///
+    /// No AC adapter unless [`SysfsBattery::with_ac`] names one: the default
+    /// `at()` is what tests and fixture roots use, and reading the host's
+    /// `/sys/class/power_supply/AC` from a fixture made the result depend on
+    /// whether the machine running the test was plugged in.
     pub fn at(dir: impl Into<PathBuf>) -> Self {
         Self {
             dir: dir.into(),
-            ac_dir: Some(PathBuf::from("/sys/class/power_supply/AC")),
+            ac_dir: None,
         }
     }
 
@@ -366,6 +375,29 @@ mod tests {
         let time = status.time_to_empty.unwrap();
         assert!((time.as_secs_f32() - 42.5 / 9.8 * 3600.0).abs() < 2.0);
         let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn fixture_battery_ignores_the_host_ac_adapter() {
+        // A fixture root must read only its own files: before this, `at()`
+        // also read the host's /sys/class/power_supply/AC, so the same test
+        // passed on an unplugged host and failed on a plugged-in one (the
+        // Linux CI runner and the Dell both failed it).
+        let dir = temp_dir("ac-isolation");
+        write(&dir.join("capacity"), "50\n");
+        write(&dir.join("status"), "Discharging\n");
+        write(&dir.join("energy_now"), "1000000\n");
+        write(&dir.join("energy_full"), "2000000\n");
+        let status = SysfsBattery::at(&dir).read().unwrap();
+        assert_eq!(status.source, PowerSource::Battery);
+
+        // An explicit AC adapter is still honoured.
+        let ac = temp_dir("ac-online");
+        write(&ac.join("online"), "1\n");
+        let status = SysfsBattery::at(&dir).with_ac(&ac).read().unwrap();
+        assert_eq!(status.source, PowerSource::Ac);
+        let _ = fs::remove_dir_all(dir);
+        let _ = fs::remove_dir_all(ac);
     }
 
     #[test]
