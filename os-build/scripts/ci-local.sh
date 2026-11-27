@@ -128,6 +128,11 @@ gate "capabilities --self-test" \
 gate "image capability static scan (--strict)" \
     bash os-build/scripts/check-image-capabilities.sh --strict || true
 
+gate "boot-switch selftest" \
+    bash os-build/test/boot-switch-selftest.sh || true
+gate "support bundle selftest" \
+    bash os-build/test/support-selftest.sh || true
+
 # Host-gated suites: make the skip sentence visible (cargo hides it unless the
 # test fails). Same command as the ci.yml step of that name.
 host_gated() {

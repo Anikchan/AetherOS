@@ -88,6 +88,13 @@ jobs:
           bash os-build/scripts/check-image-capabilities.sh --self-test
           bash os-build/scripts/check-image-capabilities.sh --strict
 
+      - name: Boot-switch and support-bundle self-tests
+        # Pure-shell logic verified without hardware: BootNext ping-pong safety
+        # (fake efibootmgr) and the tty2 diagnostic bundle (fake root + stubs).
+        run: |
+          bash os-build/test/boot-switch-selftest.sh
+          bash os-build/test/support-selftest.sh
+
       - name: Kernel feature probe (Landlock / seccomp)
         # If the sandbox tests skip, this says why: the tests gate on the kernel
         # actually having the ABI, and a silent skip is indistinguishable from a
