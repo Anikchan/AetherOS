@@ -153,9 +153,11 @@ same package id, same feature resolution.
 3. waits for `wayland-0`, then starts `env!("CARGO_BIN_EXE_aether-files")` with
    `XDG_RUNTIME_DIR` and `WAYLAND_DISPLAY=wayland-0` and no arguments (the
    `--launch` path);
-4. polls the compositor log for `AETHER_COMPOSITOR_XDG_TOPLEVEL` **and**
-   `AETHER_COMPOSITOR_WM_WINDOW`, fails with both logs if the app exits or 45 s
-   pass, and asserts the app is still alive after mapping.
+4. polls the compositor log for `AETHER_COMPOSITOR_XDG_TOPLEVEL`,
+   `AETHER_COMPOSITOR_WM_WINDOW` and `AETHER_COMPOSITOR_CLIENT_MAPPED` (the
+   last one is the softbuffer → `wl_shm` half: a real SHM buffer was committed),
+   fails with both logs if the app exits or 45 s pass, and asserts the app is
+   still alive after mapping.
 
 On macOS the test prints
 `SKIP launched_app_opens_a_toplevel_on_headless_wayland: runtime window creation is verified on Linux only (Wayland client + softbuffer)`

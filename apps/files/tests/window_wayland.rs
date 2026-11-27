@@ -30,6 +30,10 @@ use std::time::{Duration, Instant};
 const XDG_TOPLEVEL: &str = "AETHER_COMPOSITOR_XDG_TOPLEVEL";
 /// Marker the compositor prints when its WM places a mapped toplevel.
 const WM_WINDOW: &str = "AETHER_COMPOSITOR_WM_WINDOW";
+/// Marker the compositor prints when a surface commits its first buffer.
+/// This is the softbuffer → `wl_shm` half of the proof: the app did not just
+/// negotiate xdg-shell, it allocated and attached a real SHM buffer.
+const CLIENT_MAPPED: &str = "AETHER_COMPOSITOR_CLIENT_MAPPED";
 
 #[test]
 fn launched_app_opens_a_toplevel_on_headless_wayland() {
@@ -57,7 +61,7 @@ fn launched_app_opens_a_toplevel_on_headless_wayland() {
     let deadline = Instant::now() + Duration::from_secs(45);
     loop {
         let log = read(&log_path);
-        if log.contains(XDG_TOPLEVEL) && log.contains(WM_WINDOW) {
+        if log.contains(XDG_TOPLEVEL) && log.contains(WM_WINDOW) && log.contains(CLIENT_MAPPED) {
             break;
         }
         if let Some(status) = app.exited() {
@@ -101,6 +105,10 @@ fn launched_app_opens_a_toplevel_on_headless_wayland() {
     assert!(
         log.contains(WM_WINDOW),
         "the app's window was mapped and placed:\n{log}"
+    );
+    assert!(
+        log.contains(CLIENT_MAPPED),
+        "the app committed a wl_shm buffer (softbuffer → Wayland):\n{log}"
     );
     // The app must still be running: a mapped window is not a window that
     // closed straight away (the shell would show it for a frame and lose it).
