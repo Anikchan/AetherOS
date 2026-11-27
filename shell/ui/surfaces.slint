@@ -1471,7 +1471,9 @@ export component SafeModeBanner inherits Rectangle {
 
 export component ShellRoot inherits Window {
     title: "AetherOS";
-    background: Tokens.background;
+    // Transparent in layer-host mode so unpainted pixels stay clear and the
+    // compositor shows the desktop through the gaps between panels.
+    background: root.layer-host ? transparent : Tokens.background;
 
     // Shell state (pushed from Rust).
     in-out property <string> active-app: "AetherOS";
@@ -1517,6 +1519,14 @@ export component ShellRoot inherits Window {
     // clamps text-scale to 1.0–2.0; `tokens` below feeds every widget.
     in-out property <float> text-scale: 1.0;
     in-out property <bool> reduce-motion: false;
+    // Layer-shell host (P3-T02): one Slint scene, five layer surfaces. The
+    // host renders this window once per frame and crops each surface's rect out
+    // of it, so in this mode the scene is only the chrome (no wallpaper, no
+    // desktop preview, no scrim), the background is transparent, and every
+    // panel sits exactly where its layer surface is placed: the dock on the
+    // bottom edge, the launcher centred, the right-hand panels flush to the
+    // right edge below the menu bar.
+    in-out property <bool> layer-host: false;
     // Keyboard navigation: which surface and item owns focus (the panel codes
     // match `kbdnav::Surface`) and whether the ring is visible.
     in-out property <int> focus-surface: 0;
@@ -1565,11 +1575,12 @@ export component ShellRoot inherits Window {
     // `ShellController::sync` (`ui.global::<Tokens>()`); every surface and
     // shared widget reads them.
 
-    Wallpaper { width: 100%; height: 100%; }
+    if !root.layer-host : Wallpaper { width: 100%; height: 100%; }
 
     // Desktop preview: two sample windows so the composed shell reads like a
-    // desktop. Real app windows are compositor clients (P3).
-    WindowFrame {
+    // desktop. Real app windows are compositor clients (P3), so the layer host
+    // does not draw them.
+    if !root.layer-host : WindowFrame {
         x: 120px; y: 92px;
         width: 760px; height: 500px;
         title: "Notes.md — AetherPad";
@@ -1615,7 +1626,7 @@ export component ShellRoot inherits Window {
         }
     }
 
-    WindowFrame {
+    if !root.layer-host : WindowFrame {
         x: 900px; y: 120px;
         width: 440px; height: 340px;
         title: "Files — Home";
@@ -1663,7 +1674,7 @@ export component ShellRoot inherits Window {
     // Dock (layer-shell bottom surface on the device).
     Dock {
         x: (parent.width - self.width) / 2;
-        y: parent.height - self.height - 10px;
+        y: root.layer-host ? parent.height - self.height : parent.height - self.height - 10px;
         apps: root.apps;
         auto-hide: root.dock-auto-hide;
         tier: root.tier;
@@ -1675,7 +1686,7 @@ export component ShellRoot inherits Window {
     // Overlay surfaces.
     // Scrim closes panels, but never the lock screen: it has no dismiss path
     // other than the password.
-    if root.overlay != 0 && root.overlay != 6 : Rectangle {
+    if root.overlay != 0 && root.overlay != 6 && !root.layer-host : Rectangle {
         width: 100%;
         height: 100%;
         background: #05070A66;
@@ -1686,7 +1697,7 @@ export component ShellRoot inherits Window {
 
     if root.overlay == 1 : Launcher {
         x: (parent.width - self.width) / 2;
-        y: 96px;
+        y: root.layer-host ? (parent.height - self.height) / 2 : 96px;
         query: root.search-query;
         results: root.results;
         selected: root.search-selected;
@@ -1699,8 +1710,8 @@ export component ShellRoot inherits Window {
     }
 
     if root.overlay == 2 : ControlCenter {
-        x: parent.width - self.width - 12px;
-        y: Tokens.menubar-height + 8px;
+        x: root.layer-host ? parent.width - self.width : parent.width - self.width - 12px;
+        y: root.layer-host ? Tokens.menubar-height : Tokens.menubar-height + 8px;
         wifi: root.wifi;
         bluetooth: root.bluetooth;
         focus-on: root.focus-on;
@@ -1726,8 +1737,8 @@ export component ShellRoot inherits Window {
     }
 
     if root.overlay == 3 : NotificationCenter {
-        x: parent.width - self.width - 12px;
-        y: Tokens.menubar-height + 8px;
+        x: root.layer-host ? parent.width - self.width : parent.width - self.width - 12px;
+        y: root.layer-host ? Tokens.menubar-height : Tokens.menubar-height + 8px;
         items: root.notifications;
         focus-on: root.focus-on;
         tier: root.tier;
@@ -1738,7 +1749,7 @@ export component ShellRoot inherits Window {
         open-settings => { root.overlay-requested(5); }
     }
 
-    if root.overlay == 4 : Overview {
+    if root.overlay == 4 && !root.layer-host : Overview {
         width: 100%;
         height: 100%;
         windows: root.windows;
@@ -1749,7 +1760,7 @@ export component ShellRoot inherits Window {
         workspace-selected(index) => { root.workspace-requested(index); }
     }
 
-    if root.overlay == 5 : SettingsApp {
+    if root.overlay == 5 && !root.layer-host : SettingsApp {
         x: 0;
         y: Tokens.menubar-height;
         width: 100%;
@@ -1770,7 +1781,7 @@ export component ShellRoot inherits Window {
         feature-enabled(id, value) => { root.feature-enabled(id, value); }
     }
 
-    if root.overlay == 6 : LockScreen {
+    if root.overlay == 6 && !root.layer-host : LockScreen {
         width: 100%;
         height: 100%;
         clock: root.clock;
@@ -1784,14 +1795,14 @@ export component ShellRoot inherits Window {
 
     // G-NH2: above every overlay, including the lock screen — a hung app must
     // never hide the user's way out.
-    if root.safe-mode : SafeModeBanner {
+    if root.safe-mode && !root.layer-host : SafeModeBanner {
         x: (parent.width - self.width) / 2;
         y: Tokens.menubar-height + 8px;
         message: root.safe-mode-note;
         reset => { root.safe-mode-reset(); }
     }
 
-    if root.nohang-open : Rectangle {
+    if root.nohang-open && !root.layer-host : Rectangle {
         width: 100%;
         height: 100%;
         background: #05070A88;

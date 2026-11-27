@@ -43,8 +43,8 @@ fn usage() {
          \x20                                    run the shell host (journal in, surfaces out)\n\
          \x20 aether-shell --host-check <log|->    verify the layer-shell host contract\n\
          \x20 aether-shell --host-plan             print the layer-surface request plan\n\
-         \x20 aether-shell --connect [--hold-ms <ms>]\n\
-         \x20                                    create the layer surfaces on $WAYLAND_DISPLAY\n\
+         \x20 aether-shell --connect [--hold-ms <ms>] [--frames-out <dir>] [--act <panel>]\n\
+         \x20                                    paint the layer surfaces on $WAYLAND_DISPLAY\n\
          \x20 aether-shell --launch <id>          start a launcher app through the registry argv\n\
          \x20 aether-shell --effects-tier          print the effective glass tier\n\
          \x20 aether-shell --effects-env           print the compositor tier export\n\
@@ -189,9 +189,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         Some("--connect") => {
             // P3-T02 → P4: the real layer-shell host. Connects to
-            // `$WAYLAND_DISPLAY`, creates the five shell surfaces and reports
-            // what the compositor configured (and what it drew).
-            use aether_shell::keys;
+            // `$WAYLAND_DISPLAY`, creates the five shell surfaces, paints the
+            // Slint scene into them, and reports what the compositor
+            // configured and what the shell drew.
             use aether_shell::wayland::LayerHost;
 
             let hold_ms: u64 = flag(&args, "--hold-ms")
@@ -199,6 +199,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .transpose()
                 .map_err(|error| format!("--hold-ms needs milliseconds: {error}"))?
                 .unwrap_or(0);
+            let frames_out = flag(&args, "--frames-out").map(PathBuf::from);
+            // Scripted harness action: open a panel before painting, the same
+            // way `--interactive --act` presses a dialog button.
+            let act = match flag(&args, "--act").as_deref() {
+                None => None,
+                Some("launcher") => Some(Overlay::Launcher),
+                Some("notifications") => Some(Overlay::Notifications),
+                Some("control-center") | Some("control-centre") => Some(Overlay::ControlCenter),
+                Some(other) => {
+                    eprintln!(
+                        "--act needs launcher, notifications or control-center, not {other}"
+                    );
+                    std::process::exit(2);
+                }
+            };
             aether_ui::render::init()?;
             let ui = ShellRoot::new()?;
             let controller = ShellController::new(
@@ -206,14 +221,28 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 Box::new(CommandServices::new()),
                 SettingsStore::at_default_location(),
             );
+            controller.set_spawn_apps(true);
+            if let Some(overlay) = act {
+                controller.open(overlay);
+            }
             let mut host = LayerHost::connect()?;
-            let report = host.create_surfaces()?;
+            host.set_frames_out(frames_out);
+            host.create_surfaces(controller.a11y().text_scale)?;
+
+            let started = std::time::Instant::now();
+            let stats = host.run(
+                &controller,
+                std::time::Duration::from_millis(hold_ms),
+                |event| println!("{}", event.line()),
+            )?;
+            let report = host.report();
             print!("{}", report.summary());
-            host.hold(std::time::Duration::from_millis(hold_ms), |input| {
-                // The same path the Slint surfaces call: a key press becomes a
-                // focus move or an activation, and the marker records it.
-                println!("{}", keys::dispatch(&controller, input).line());
-            });
+            println!(
+                "{} elapsed_ms={} paint_ms={:.3}",
+                stats.summary_line(),
+                started.elapsed().as_millis(),
+                host.last_paint_ms()
+            );
             if !report.is_ok() {
                 std::process::exit(1);
             }

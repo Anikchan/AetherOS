@@ -17,7 +17,9 @@
 //! `aether-shell --host-check <compositor.log>` prints the report for the
 //! on-device acceptance harness.
 
-use crate::layers::{specs, Keyboard, Layer, LayerSurfaceSpec};
+use crate::layers::{self, Keyboard, Layer, LayerSurfaceSpec};
+#[cfg(test)]
+use crate::layers::specs;
 
 /// `zwlr_layer_surface_v1.anchor` bitfield values.
 pub const ANCHOR_TOP: u32 = 1;
@@ -64,6 +66,8 @@ pub struct HostRequest {
     pub width: i32,
     pub height: i32,
     pub exclusive_zone: i32,
+    /// Margin from the anchored edges, in logical pixels.
+    pub margin_top: i32,
     /// `zwlr_layer_surface_v1.keyboard_interactivity` value.
     pub keyboard_interactivity: u32,
 }
@@ -92,6 +96,7 @@ impl HostRequest {
             width: spec.width,
             height: spec.height,
             exclusive_zone: spec.exclusive_zone,
+            margin_top: spec.margin_top,
             keyboard_interactivity: match spec.keyboard {
                 Keyboard::None => KEYBOARD_NONE,
                 Keyboard::Exclusive => KEYBOARD_EXCLUSIVE,
@@ -101,7 +106,8 @@ impl HostRequest {
     }
 
     /// Size the compositor will configure for this request on `output` (logical
-    /// pixels). Mirrors `layer_surface_size` in the compositor.
+    /// pixels). Mirrors `layer_surface_size` in the compositor, margins
+    /// included.
     pub fn negotiate(&self, output: (i32, i32)) -> (i32, i32) {
         let width = if self.anchors & ANCHOR_LEFT != 0 && self.anchors & ANCHOR_RIGHT != 0 {
             output.0
@@ -110,20 +116,55 @@ impl HostRequest {
         } else {
             output.0
         };
+        let available = output.1 - self.margin_top;
         let height = if self.anchors & ANCHOR_TOP != 0 && self.anchors & ANCHOR_BOTTOM != 0 {
-            output.1
+            available
         } else if self.height > 0 {
             self.height
         } else {
-            output.1
+            available
         };
         (width.max(1), height.max(1))
+    }
+
+    /// Where the compositor places this surface on `output` (logical pixels).
+    ///
+    /// Mirrors the layer-shell anchoring rules for the anchors the plan uses:
+    /// a stretched axis covers the output, a sized axis sits at the anchored
+    /// edge (or is centred when nothing is anchored), and margins offset the
+    /// anchored edge.
+    pub fn placement(&self, output: (i32, i32)) -> (i32, i32) {
+        let (width, height) = self.negotiate(output);
+        let x = if self.anchors & ANCHOR_LEFT != 0 {
+            0
+        } else if self.anchors & ANCHOR_RIGHT != 0 {
+            output.0 - width
+        } else {
+            (output.0 - width) / 2
+        };
+        let y = if self.anchors & ANCHOR_TOP != 0 {
+            self.margin_top
+        } else if self.anchors & ANCHOR_BOTTOM != 0 {
+            output.1 - height
+        } else {
+            (output.1 - height) / 2
+        };
+        (x, y)
     }
 }
 
 /// The request the host sends for every shell surface, in creation order.
 pub fn plan() -> Vec<HostRequest> {
-    specs().iter().map(HostRequest::from_spec).collect()
+    plan_at(layers::MIN_TEXT_SCALE)
+}
+
+/// The same plan at an accessibility text scale: the menu bar grows, the
+/// right-hand panels widen, and their top margin follows the menu bar.
+pub fn plan_at(text_scale: f32) -> Vec<HostRequest> {
+    layers::specs_at(text_scale)
+        .iter()
+        .map(HostRequest::from_spec)
+        .collect()
 }
 
 /// Size the compositor will configure for `spec` on `output`.
@@ -419,13 +460,27 @@ mod tests {
         };
         assert_eq!(size_of("menubar"), (1920, 28));
         assert_eq!(size_of("dock"), (720, 64));
-        assert_eq!(size_of("launcher"), (640, 480));
+        assert_eq!(size_of("launcher"), (640, 420));
         assert_eq!(
             size_of("notifications"),
-            (360, 1080),
-            "height 0 with only the top anchor fills the output height"
+            (360, 1052),
+            "top+bottom anchors fill the output minus the menu bar margin"
         );
-        assert_eq!(size_of("control-center"), (340, 1080));
+        assert_eq!(size_of("control-center"), (340, 1052));
+
+        // Placement is the layer-shell anchoring rule: stretched axes cover the
+        // output, sized axes sit at their edge, margins offset the edge.
+        let placement_of = |name: &str| {
+            plan.iter()
+                .find(|request| request.name == name)
+                .unwrap()
+                .placement((1920, 1080))
+        };
+        assert_eq!(placement_of("menubar"), (0, 0));
+        assert_eq!(placement_of("dock"), (600, 1016));
+        assert_eq!(placement_of("launcher"), (640, 330));
+        assert_eq!(placement_of("notifications"), (1560, 28));
+        assert_eq!(placement_of("control-center"), (1580, 28));
 
         // A HiDPI output reports its logical size, so the shell draws logical.
         let hdpi = plan

@@ -26,7 +26,7 @@ pub mod render {
     use std::path::Path;
     use std::rc::Rc;
 
-    use slint::platform::software_renderer::MinimalSoftwareWindow;
+    use slint::platform::software_renderer::{MinimalSoftwareWindow, PremultipliedRgbaColor};
     use slint::platform::{Platform, WindowAdapter};
     use slint::{ComponentHandle, PhysicalSize, Rgb8Pixel};
 
@@ -140,6 +140,79 @@ pub mod render {
             Ok::<_, String>(buffer)
         })??;
         Ok(buffer)
+    }
+
+    /// One painted rectangle of a frame, in physical pixels.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub struct DirtyRect {
+        pub x: i32,
+        pub y: i32,
+        pub width: i32,
+        pub height: i32,
+    }
+
+    impl DirtyRect {
+        pub fn intersects(&self, other: &DirtyRect) -> bool {
+            self.x < other.x + other.width
+                && other.x < self.x + self.width
+                && self.y < other.y + other.height
+                && other.y < self.y + self.height
+        }
+    }
+
+    /// Paint the component into a caller-owned premultiplied ARGB buffer.
+    ///
+    /// Returns the rectangles that were painted, or `None` when Slint had
+    /// nothing to redraw since the last call, so a host can coalesce its
+    /// commits to the frames Slint actually repainted. Pixels Slint does not
+    /// paint stay transparent (`alpha = 0`), which is what lets a layer-shell
+    /// host crop one canvas into several surfaces.
+    ///
+    /// The component must have a transparent background (the shell's
+    /// `layer-host` mode does that) for the untouched pixels to stay clear.
+    pub fn render_argb_into(
+        ui: &impl ComponentHandle,
+        buffer: &mut [PremultipliedRgbaColor],
+        width: u32,
+        height: u32,
+    ) -> Result<Option<Vec<DirtyRect>>, String> {
+        let len = (width as usize) * (height as usize);
+        if buffer.len() < len {
+            return Err(format!(
+                "ARGB buffer is {} pixels, the frame needs {len}",
+                buffer.len()
+            ));
+        }
+        with_renderer(|renderer| {
+            ui.show().map_err(|e| format!("show failed: {e}"))?;
+            slint::platform::update_timers_and_animations();
+            let window = renderer
+                .platform
+                .last_window
+                .borrow()
+                .clone()
+                .ok_or_else(|| "the component did not create a window".to_string())?;
+            if window.size() != PhysicalSize::new(width, height) {
+                window.set_size(PhysicalSize::new(width, height));
+                slint::platform::update_timers_and_animations();
+            }
+            let mut painted: Option<Vec<DirtyRect>> = None;
+            let drawn = window.draw_if_needed(|software_renderer| {
+                let region = software_renderer.render(&mut buffer[..len], width as usize);
+                painted = Some(
+                    region
+                        .iter()
+                        .map(|(position, size)| DirtyRect {
+                            x: position.x as i32,
+                            y: position.y as i32,
+                            width: size.width as i32,
+                            height: size.height as i32,
+                        })
+                        .collect(),
+                );
+            });
+            Ok::<_, String>(if drawn { painted } else { None })
+        })?
     }
 
     /// Render a component and write it as a PNG.

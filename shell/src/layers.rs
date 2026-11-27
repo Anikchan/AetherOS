@@ -55,6 +55,10 @@ pub struct LayerSurfaceSpec {
     pub height: i32,
     /// Exclusive zone in logical pixels (0 for non-exclusive surfaces).
     pub exclusive_zone: i32,
+    /// Margin from the anchored edges in logical pixels. The right-hand panels
+    /// reserve the menu bar height at the top, and the compositor subtracts it
+    /// from the negotiated size.
+    pub margin_top: i32,
     /// Whether the surface takes keyboard focus while visible.
     pub keyboard: Keyboard,
 }
@@ -65,8 +69,36 @@ impl LayerSurfaceSpec {
     }
 }
 
-/// The shell surfaces that become layer surfaces on the device.
+/// The accessibility text scale the shell clamps to, as a multiplier.
+pub const MIN_TEXT_SCALE: f32 = 1.0;
+pub const MAX_TEXT_SCALE: f32 = 2.0;
+
+/// Menu bar height in logical pixels at 100 % text: `Tokens.menubar-height`.
+pub const MENUBAR_HEIGHT: i32 = 28;
+
+/// The shell surfaces that become layer surfaces on the device, at 100 % text.
 pub fn specs() -> Vec<LayerSurfaceSpec> {
+    specs_at(MIN_TEXT_SCALE)
+}
+
+/// The same table at an accessibility text scale (F1 SHL-18).
+///
+/// Panel geometry follows the `.slint` components so a layer surface is never
+/// narrower or shorter than the panel it carries (`shell/ui/surfaces.slint`):
+/// the menu bar is `28px × text-scale`, the control centre and the notification
+/// centre grow by `140px` per extra scale step, and the launcher by `100px` in
+/// height. Anything the surface cannot grow with is clipped on the device.
+pub fn specs_at(text_scale: f32) -> Vec<LayerSurfaceSpec> {
+    let scale = if text_scale.is_finite() {
+        text_scale.clamp(MIN_TEXT_SCALE, MAX_TEXT_SCALE)
+    } else {
+        MIN_TEXT_SCALE
+    };
+    let scaled = |px: f32| (px * scale).round() as i32;
+    let grow = |base: i32, per_step: f32| base + (per_step * (scale - 1.0)).round() as i32;
+    let menubar_height = scaled(MENUBAR_HEIGHT as f32);
+    let panel_width = |base: i32| grow(base, 140.0);
+
     vec![
         LayerSurfaceSpec {
             name: "menubar",
@@ -77,8 +109,9 @@ pub fn specs() -> Vec<LayerSurfaceSpec> {
             anchor_left: true,
             anchor_right: true,
             width: 0,
-            height: 28,
-            exclusive_zone: 28,
+            height: menubar_height,
+            exclusive_zone: menubar_height,
+            margin_top: 0,
             keyboard: Keyboard::None,
         },
         LayerSurfaceSpec {
@@ -92,6 +125,7 @@ pub fn specs() -> Vec<LayerSurfaceSpec> {
             width: 720,
             height: 64,
             exclusive_zone: 0,
+            margin_top: 0,
             keyboard: Keyboard::None,
         },
         LayerSurfaceSpec {
@@ -103,8 +137,10 @@ pub fn specs() -> Vec<LayerSurfaceSpec> {
             anchor_left: false,
             anchor_right: false,
             width: 640,
-            height: 480,
+            // `Launcher` height in the .slint file.
+            height: grow(420, 100.0),
             exclusive_zone: 0,
+            margin_top: 0,
             keyboard: Keyboard::Exclusive,
         },
         LayerSurfaceSpec {
@@ -119,9 +155,10 @@ pub fn specs() -> Vec<LayerSurfaceSpec> {
             anchor_bottom: true,
             anchor_left: false,
             anchor_right: true,
-            width: 360,
+            width: panel_width(360),
             height: 0,
             exclusive_zone: 0,
+            margin_top: menubar_height,
             keyboard: Keyboard::OnDemand,
         },
         LayerSurfaceSpec {
@@ -132,9 +169,10 @@ pub fn specs() -> Vec<LayerSurfaceSpec> {
             anchor_bottom: true,
             anchor_left: false,
             anchor_right: true,
-            width: 340,
+            width: panel_width(340),
             height: 0,
             exclusive_zone: 0,
+            margin_top: menubar_height,
             keyboard: Keyboard::OnDemand,
         },
     ]
@@ -165,6 +203,28 @@ mod tests {
         assert!(menubar.anchor_top && menubar.anchor_left && menubar.anchor_right);
         assert_eq!(dock.height, 64);
         assert_eq!(dock.width, 720);
+    }
+
+    #[test]
+    fn panel_geometry_follows_the_text_scale() {
+        let specs = specs_at(1.5);
+        let find = |name: &str| specs.iter().find(|spec| spec.name == name).unwrap();
+        // `Tokens.menubar-height` = 28px × text-scale.
+        assert_eq!(find("menubar").height, 42);
+        assert_eq!(find("menubar").exclusive_zone, 42);
+        // `ControlCenter` = 340 + (ts-1)*140, `NotificationCenter` 360 + …
+        assert_eq!(find("control-center").width, 410);
+        assert_eq!(find("notifications").width, 430);
+        // `Launcher` height = 420 + (ts-1)*100.
+        assert_eq!(find("launcher").height, 470);
+        // The right-hand panels stay below the (taller) menu bar.
+        assert_eq!(find("notifications").margin_top, 42);
+        assert_eq!(find("control-center").margin_top, 42);
+        // The scale is clamped to 100–200 %, so a bogus value cannot make the
+        // shell ask for a surface bigger than the design.
+        assert_eq!(specs_at(9.0).iter().find(|spec| spec.name == "menubar").unwrap().height, 56);
+        assert_eq!(specs_at(0.2).iter().find(|spec| spec.name == "menubar").unwrap().height, 28);
+        assert_eq!(specs_at(f32::NAN).iter().find(|spec| spec.name == "menubar").unwrap().height, 28);
     }
 
     #[test]
