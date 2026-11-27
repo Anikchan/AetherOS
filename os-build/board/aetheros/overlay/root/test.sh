@@ -17,23 +17,13 @@
 #   SLEEP_CYCLES=10   suspend/resume cycles (0 to skip)
 #   SLEEP_WAKE=15     RTC auto-wake seconds per cycle
 
-LOG=/var/log/aether-test.log
 SLEEP_CYCLES="${SLEEP_CYCLES:-10}"
 SLEEP_WAKE="${SLEEP_WAKE:-15}"
 WIFI_SSID="${WIFI_SSID:-}"
 WIFI_PSK="${WIFI_PSK:-${WIFI_PASSWORD:-}}"
 WIFI_CONF=/run/aether-wpa.conf
 WIFI_RESULT=skipped
-# /var/log is tmpfs on AetherOS; the fallback keeps the script usable elsewhere
-# (and quiet about it) without changing where the device writes its log.
-if ! ( : > "$LOG" ) 2>/dev/null; then
-    LOG=/tmp/aether-test.log
-fi
-( : > "$LOG" ) 2>/dev/null || true
-trap 'rm -f "$WIFI_CONF"' EXIT HUP INT TERM
-
-say() { printf '%s\n' "$*" | tee -a "$LOG"; }
-run() { say "\$ $*"; "$@" 2>&1 | tee -a "$LOG"; }
+LOG=/var/log/aether-test.log
 
 usage() {
     cat <<EOF
@@ -50,6 +40,8 @@ The passphrase is never written to the log.
 EOF
 }
 
+err() { printf '%s\n' "$*" >&2; }
+
 # Positional order: SSID then passphrase. A value that starts with '-' has to
 # follow `--` (a passphrase is allowed to look like an option).
 set_positional() {
@@ -58,17 +50,17 @@ set_positional() {
     elif [ -z "$WIFI_PSK" ]; then
         WIFI_PSK="$1"
     else
-        say "unexpected argument: $1"; usage; exit 2
+        err "unexpected argument: $1"; usage; exit 2
     fi
 }
 
 while [ $# -gt 0 ]; do
     case "$1" in
         --wifi-ssid|--ssid)
-            [ $# -ge 2 ] || { say "missing value for $1"; exit 2; }
+            [ $# -ge 2 ] || { err "missing value for $1"; exit 2; }
             WIFI_SSID="$2"; shift 2 ;;
         --wifi-password|--wifi-pass|--wifi-psk|--psk)
-            [ $# -ge 2 ] || { say "missing value for $1"; exit 2; }
+            [ $# -ge 2 ] || { err "missing value for $1"; exit 2; }
             WIFI_PSK="$2"; shift 2 ;;
         --no-wifi)
             WIFI_SSID=""; WIFI_PSK=""; WIFI_NO_WIFI=1; shift ;;
@@ -78,13 +70,15 @@ while [ $# -gt 0 ]; do
             shift
             while [ $# -gt 0 ]; do set_positional "$1"; shift; done ;;
         -*)
-            say "unknown option: $1"; usage; exit 2 ;;
+            err "unknown option: $1"; usage; exit 2 ;;
         *)
             set_positional "$1"; shift ;;
     esac
 done
 
-# Ask for what is still missing, but only when a human is attached.
+# Credentials are collected FIRST, before the log file exists and before any
+# output is written, so nothing typed here can end up in a transcript or a log.
+# The passphrase is read with the terminal echo disabled.
 ask_secret() {
     # $1 = prompt; the value is left in $_secret
     printf '%s' "$1" >&2
@@ -99,17 +93,33 @@ ask_secret() {
 
 if [ -z "${WIFI_NO_WIFI:-}" ]; then
     if [ -z "$WIFI_SSID" ] && [ -t 0 ]; then
-        printf 'Wi-Fi SSID (blank = skip connect): ' >&2
+        printf 'Wi-Fi SSID (blank = skip the connect test): ' >&2
         IFS= read -r WIFI_SSID || WIFI_SSID=""
     fi
     if [ -n "$WIFI_SSID" ] && [ -z "$WIFI_PSK" ] && [ -t 0 ]; then
-        ask_secret "Wi-Fi passphrase for \"$WIFI_SSID\": "
+        ask_secret "Wi-Fi passphrase for \"$WIFI_SSID\" (not echoed, not logged): "
         WIFI_PSK="$_secret"
         unset _secret
     fi
-    if [ -n "$WIFI_SSID" ] && [ -z "$WIFI_PSK" ]; then
-        say "wifi: SSID given without a passphrase; connect step will be skipped"
-    fi
+fi
+unset _secret 2>/dev/null || true
+
+# The log is created only after the credentials are read.
+# /var/log is tmpfs on AetherOS; the fallback keeps the script usable elsewhere
+# (and quiet about it) without changing where the device writes its log.
+if ! ( : > "$LOG" ) 2>/dev/null; then
+    LOG=/tmp/aether-test.log
+fi
+( : > "$LOG" ) 2>/dev/null || true
+trap 'rm -f "$WIFI_CONF"' EXIT HUP INT TERM
+
+say() { printf '%s\n' "$*" | tee -a "$LOG"; }
+run() { say "\$ $*"; "$@" 2>&1 | tee -a "$LOG"; }
+
+if [ -n "${WIFI_NO_WIFI:-}" ]; then
+    : # no credentials were asked for
+elif [ -n "$WIFI_SSID" ] && [ -z "$WIFI_PSK" ]; then
+    say "wifi: SSID given without a passphrase; the connect step will be skipped"
 fi
 
 say "================================================================"
