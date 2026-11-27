@@ -141,9 +141,11 @@ The per-surface PNGs (`--frames-out`) decode to the design's tokens:
 
 ```sh
 LIBRARY_PATH=/opt/homebrew/lib cargo test -p aether-shell -p aether-ui
-# 184 passed, 0 failed   (183 before this round: +1 handshake, +1 paint unit,
-#                         +1 wayland unit, +1 layers text-scale; the pixel
-#                         assertions extend the existing handshake test)
+# 184 passed, 0 failed   (179 before this round: +1 handshake test for an
+#                         opened panel, +1 layer_pixels test, +1 paint unit
+#                         test, +1 wayland panel unit test, +1 layer text-scale
+#                         test; the pixel assertions extend the existing
+#                         handshake test)
 LIBRARY_PATH=/opt/homebrew/lib cargo check --workspace
 # clean (no errors, no new warnings in the shell or the design system)
 ```
