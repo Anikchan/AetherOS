@@ -356,7 +356,44 @@ if [ -z "$CONFIG" ]; then
 fi
 [ -n "$DEFCONFIG" ] || DEFCONFIG="$DEFAULT_DEFCONFIG"
 
-missing_input "$CONFIG" "generated config (did 'make defconfig' run? Buildroot writes output/.config)" || exit 3
+# Buildroot writes the generated config next to the tree it was run in, and the
+# path has moved between versions/`O=` settings: `output/.config` on older
+# trees, `<buildroot>/.config` when `make defconfig` runs without `O=`. Accept
+# the path as given, and fall back to the sibling/child locations so the guard
+# cannot go green-by-absence on a layout change (2026-11-28: the shipped
+# workflow passed `output/.config` while Buildroot wrote `.config` at the top,
+# and the image builds failed on the guard, not on the image).
+resolve_config() {
+    local given="$1" dir base candidate
+    if [ -r "$given" ]; then
+        printf '%s\n' "$given"
+        return 0
+    fi
+    [ -d "$given" ] && { printf '%s\n' "$given"; return 0; }
+    dir="$(dirname "$given")"
+    base="$(basename "$given")"
+    for candidate in \
+        "$dir/.config" \
+        "$dir/output/.config" \
+        "$dir/../.config" \
+        "$dir/../output/.config"; do
+        if [ -r "$candidate" ]; then
+            printf '%s\n' "$candidate"
+            return 0
+        fi
+    done
+    # Last resort: a single output/.config below the given directory.
+    candidate="$(find "$dir" -maxdepth 2 -name "$base" -type f 2>/dev/null | head -1)"
+    if [ -n "$candidate" ]; then
+        printf '%s\n' "$candidate"
+        return 0
+    fi
+    return 1
+}
+
+CONFIG="$(resolve_config "$CONFIG" || printf '%s' "$CONFIG")"
+
+missing_input "$CONFIG" "generated config (did 'make defconfig' run? Buildroot writes <tree>/.config or <tree>/output/.config)" || exit 3
 missing_input "$DEFCONFIG" "defconfig" || exit 3
 
 run_check "$CONFIG" "$DEFCONFIG" "$QUIET" "$JSON"

@@ -46,8 +46,12 @@ jobs:
         # session manager. This compares the defconfig's intent with the
         # generated .config and fails on anything that vanished.
         run: |
+          # Buildroot 2025.11 writes the generated config at <tree>/.config
+          # (not <tree>/output/.config); the script also falls back to the
+          # other layout so a future change cannot make the guard pass by
+          # absence.
           bash os-build/scripts/check-defconfig-drop.sh \
-            os-build/buildroot/buildroot/output/.config \
+            os-build/buildroot/buildroot/.config \
             os-build/buildroot/aetheros_defconfig
       - name: Build
         timeout-minutes: 90
