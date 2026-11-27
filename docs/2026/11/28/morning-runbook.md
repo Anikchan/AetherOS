@@ -10,14 +10,25 @@
 ```sh
 # on Ubuntu (the Dell booted to the internal disk)
 cd ~/Downloads                     # wherever the artifact zip was unpacked
+sudo os-build/scripts/flash-usb.sh aetheros-efi.img --dry-run   # check the plan
+sudo os-build/scripts/flash-usb.sh aetheros-efi.img --switch    # write + verify + BootNext
+```
+
+`flash-usb.sh` refuses an internal disk (it requires a *removable USB* block
+device), refuses a mounted target (a stale automount under `/run/media` is what
+produced the squashfs read errors on 2026-11-27), refuses a target smaller than
+the image, and verifies by reading the first `<image size>` bytes back and
+comparing SHA-256 — a mismatch is a failure, not a note. `--switch` then sets
+`BootNext` to the AetherOS entry, so the next reboot lands in AetherOS without
+F12; AetherOS hands the boot back to the internal disk by itself.
+
+Manual equivalent:
+
+```sh
 sudo dd if=aetheros-efi.img of=/dev/sda bs=4M conv=fsync status=progress
 sync
 sudo head -c 107974656 /dev/sda | sha256sum    # compare with the artifact's sha
 ```
-
-Do not mount the stick while writing. If a stale automount exists
-(`/run/media/...`), unmount it first — writing under a mounted filesystem was
-what produced the squashfs read errors in the first attempt on 2026-11-27.
 
 ## 2. Switch the next boot to the USB (no F12)
 
