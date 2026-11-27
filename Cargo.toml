@@ -43,6 +43,15 @@ license = "MIT"
 # the whole workspace builds and tests headlessly on the macOS dev host and on
 # the Linux CI runner. The interactive window backend is opt-in (`winit`
 # feature per crate) and the on-device layer-shell platform lands with P3-T02.
+#
+# Window-backend scoping (P3 window host, 2026-11-28): the app crates opt in to
+# `backend-winit` + `backend-winit-wayland` in their own manifests, because
+# `slint` features are additive per build unit. The shell and `ui` keep this
+# narrow set: the shell paints its layer surfaces through its own
+# `wayland-client` host and its tests install `i-slint-backend-testing`.
+# Build the shell on its own (`cargo build -p aether-shell`) to keep winit out
+# of the shell binary; a `--workspace` build unifies features and links it.
+# Evidence and risks: docs/2026/11/28/results/app-window-backend.md.
 [workspace.dependencies]
 slint = { version = "1.19.0", default-features = false, features = [
     "compat-1-18",

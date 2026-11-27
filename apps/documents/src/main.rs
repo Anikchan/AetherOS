@@ -79,12 +79,30 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let hits = document.find("the");
             println!("matches for \"the\": {}", hits.len());
         }
-        Some("--help") | None => usage(),
+        Some("--help") => usage(),
+        // No flags: the shell's launch path. Open the real window on the
+        // session's Wayland display and run until it is closed.
+        None => open_window()?,
         Some(other) => {
             eprintln!("unknown argument: {other}");
             usage();
             std::process::exit(2);
         }
     }
+    Ok(())
+}
+
+/// Open the real window and run the Slint event loop until it is closed.
+///
+/// The app binaries opt into Slint's winit backend on Wayland (software
+/// renderer → softbuffer → `wl_shm`, no GPU). `--render` never reaches this
+/// path: it installs the headless `aether-ui` platform first.
+fn open_window() -> Result<(), Box<dyn std::error::Error>> {
+    use slint::ComponentHandle;
+
+    let ui = DocumentsApp::new()?;
+    let controller = DocumentsController::with_demo_content(ui, RecentFiles::at_config_dir());
+    controller.ui().show()?;
+    slint::run_event_loop()?;
     Ok(())
 }
