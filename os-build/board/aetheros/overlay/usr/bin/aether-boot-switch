@@ -1,32 +1,46 @@
 #!/bin/sh
-# aether-boot-switch — one-shot UEFI BootNext switching between the internal
-# disk (Ubuntu) and the AetherOS USB stick.
+# aether-boot-switch — switching the Dell between the internal disk (Ubuntu) and
+# the AetherOS USB stick, from either side.
 #
-# Why BootNext and not BootOrder: BootNext is consumed (deleted) by the
-# firmware after exactly one boot, so a wrong choice cannot persist, a missing
-# USB cannot deny the machine its normal boot, and the switch cannot loop.
-# BootOrder is never rewritten by this script.
+# Two modes, one default:
+#
+#   BootNext (default, fail-safe)
+#     The firmware consumes BootNext after exactly one boot, so a wrong choice
+#     cannot persist, a crashed or unbootable AetherOS cannot keep the machine
+#     away from Ubuntu, and the switch cannot loop. This is what `aether` and
+#     `ubuntu` do, and what aether-boot-return.service does on every AetherOS
+#     boot.
+#
+#   BootOrder (opt-in, `--persistent`)
+#     Writes the target entry to the front of BootOrder and records the previous
+#     order in <state>/original-order, so AetherOS can survive a power loss in
+#     the middle of a test. It is not the default because if AetherOS dies
+#     before it restores the order, the machine keeps booting AetherOS.
+#     `ubuntu --persistent` restores the recorded order (byte for byte).
 #
 # The same file is the Ubuntu host helper (os-build/scripts/aether-boot-switch.sh
 # is a symlink to it) and the image binary used by aether-boot-return.service,
 # so there is exactly one implementation to reason about.
 #
 # Usage:
-#   aether-boot-switch status     show BootCurrent/BootNext/entries (read-only)
-#   aether-boot-switch aether     next boot -> the AetherOS USB entry (creates it)
-#   aether-boot-switch ubuntu     next boot -> the internal-disk (Ubuntu) entry
-#   aether-boot-switch stay       on AetherOS: do not hand the next boot back
-#   aether-boot-switch clear      delete BootNext (recovery: follow BootOrder)
+#   aether-boot-switch status                 mode in effect + table (read-only)
+#   aether-boot-switch aether                 next boot -> AetherOS (BootNext)
+#   aether-boot-switch ubuntu                 next boot -> internal disk (BootNext)
+#   aether-boot-switch aether --persistent    BootOrder: AetherOS first, rest kept
+#   aether-boot-switch ubuntu --persistent    restore the recorded BootOrder
+#   aether-boot-switch stay                   on AetherOS: do not hand the boot back
+#   aether-boot-switch clear                  drop BootNext AND the recorded order
 #
 # Every run prints one stable marker line:
-#   AETHER_BOOT_SWITCH: next=<index|none> label=<label|none> current=<index|none> result=<...>
-# where result is status | switched | created | already | cleared | stay |
-# noop | failed.
+#   AETHER_BOOT_SWITCH: next=<index|none> label=<label|none> current=<index|none>
+#                       result=<...> mode=<next|persistent|default|unknown>
+# where result is status | switched | created | already | restored | cleared |
+# stay | noop | failed.
 #
 # Exit codes: 0 changed or already correct, 1 no safe target (no-op),
 #             2 usage, 3 efibootmgr or the boot table is unavailable (no-op),
-#             4 a write was attempted but not confirmed (BootNext unchanged or
-#               unreadable; nothing else was touched).
+#             4 a write was attempted but not confirmed (the previous table is
+#               restored where possible; nothing is ever left half-written).
 #
 # Environment overrides (used by os-build/test/boot-switch-selftest.sh):
 #   AETHER_EFIBOOTMGR    efibootmgr binary (default: efibootmgr from PATH)
@@ -34,6 +48,7 @@
 #   AETHER_USB_PART      USB ESP partition (default: /dev/disk/by-label/AETHEROS)
 #   AETHER_USB_PARTNUM   partition number for -p (default: from the device name)
 #   AETHER_USB_PARTUUID  ESP partition GUID (default: blkid PARTUUID)
+#   AETHER_STATE_DIR     original-order record dir (default /var/lib/aether-boot)
 #   AETHER_LOG           log file, "-" disables it (default /var/log/aether-boot.log)
 #   AETHER_RUN_DIR       state dir for the stay flag (default /run)
 
@@ -43,6 +58,8 @@ PROG=aether-boot-switch
 EFIBOOTMGR=${AETHER_EFIBOOTMGR:-efibootmgr}
 LOG=${AETHER_LOG-/var/log/aether-boot.log}
 RUN_DIR=${AETHER_RUN_DIR:-/run}
+STATE_DIR=${AETHER_STATE_DIR:-/var/lib/aether-boot}
+ORDER_FILE=$STATE_DIR/original-order
 STAY_FLAG=$RUN_DIR/aether-boot-stay
 
 AETHER_LABEL=AetherOS
@@ -53,26 +70,42 @@ USB_LABELS="/dev/disk/by-label/AETHEROS /dev/disk/by-label/AETHEROS-ESP /dev/dis
 
 EFI_RAW=""
 ENTRIES=""
+VALID_SET=""
+AETHER_SET=""
 BOOT_CURRENT=""
 BOOT_NEXT=""
 BOOT_ORDER=""
+ORDER_SUPPORTED=0
 USB_PARTUUID=""
+AE_IDX=""
+ENTRY_CREATED=0
+PERSISTENT=0
+MODE=unknown
+ORDER_CHANGED=0
 
 usage() {
     cat <<'EOF'
-aether-boot-switch — one-shot UEFI BootNext switching (internal disk <-> AetherOS USB)
+aether-boot-switch — switch the boot target between the internal disk and the
+AetherOS USB, from Ubuntu or from AetherOS.
 
-usage: aether-boot-switch <command>
+usage: aether-boot-switch [--persistent] <command>
 
-  status    show BootCurrent, BootNext, BootOrder and the entries (read-only)
+  status    show the mode in effect, BootCurrent, BootNext, BootOrder, entries
+  mode      print "AETHER_BOOT_MODE: <next|persistent|default>" (used by the
+            boot-time unit; read-only)
   aether    set the next boot to the AetherOS USB entry (creates it if absent)
   ubuntu    set the next boot to the internal-disk (Ubuntu) entry
   stay      do not hand the next boot back (AetherOS: sets /run/aether-boot-stay)
-  clear     delete BootNext so the next boot follows BootOrder (recovery)
+  clear     delete BootNext and the recorded BootOrder (recovery)
 
-BootNext is one-shot: the firmware deletes it after using it. BootOrder is
-never rewritten by this script. Exit: 0 ok, 1 no safe target, 2 usage,
-3 efibootmgr/boot table unavailable, 4 write not confirmed.
+  --persistent  use BootOrder instead of BootNext (aether/ubuntu only): the
+                previous order is recorded in /var/lib/aether-boot/original-order
+                and restored by `ubuntu --persistent` or on the next AetherOS
+                boot. Default is BootNext, which the firmware consumes after one
+                boot and therefore cannot strand the machine.
+
+Exit: 0 ok, 1 no safe target, 2 usage, 3 efibootmgr/boot table unavailable,
+4 write not confirmed (the previous table is restored where possible).
 EOF
 }
 
@@ -93,11 +126,38 @@ note_err() {
 }
 
 # mark <next> <label> <result> — the one line scripts and humans can parse.
+# MODE describes what is in effect after this call: next | persistent | default.
 mark() {
-    line=$(printf 'AETHER_BOOT_SWITCH: next=%s label=%s current=%s result=%s' \
-        "$1" "$2" "${BOOT_CURRENT:-none}" "$3")
+    line=$(printf 'AETHER_BOOT_SWITCH: next=%s label=%s current=%s result=%s mode=%s' \
+        "$1" "$2" "${BOOT_CURRENT:-none}" "$3" "${MODE:-unknown}")
     printf '%s\n' "$line"
     logline "$line"
+}
+
+in_set() {  # in_set <needle> <space separated set>
+    case " ${2:-} " in
+        *" $1 "*) return 0 ;;
+    esac
+    return 1
+}
+
+# detect_mode — what will actually happen on the next boot.
+detect_mode() {
+    if [ -n "${BOOT_NEXT:-}" ]; then
+        MODE=next
+        return 0
+    fi
+    if [ -n "${BOOT_ORDER:-}" ] && [ -n "$AETHER_SET" ] &&
+       in_set "$(first_index "$BOOT_ORDER")" "$AETHER_SET" &&
+       [ -n "$(order_keep "$(order_drop "$BOOT_ORDER" "$AETHER_SET")")" ]; then
+        # The live order starts with an AetherOS entry, so the next boot is
+        # AetherOS whatever a record says. This is the authoritative signal:
+        # /var/lib on AetherOS is tmpfs, so the record written from Ubuntu is
+        # not visible there, but BootOrder is.
+        MODE=persistent
+        return 0
+    fi
+    MODE=default
 }
 
 # --- efibootmgr plumbing ----------------------------------------------------
@@ -108,6 +168,7 @@ have_efibootmgr() {
 no_tool() {
     note_err "efibootmgr is not available ($EFIBOOTMGR); nothing was read or written."
     note_err "  AetherOS: build with BR2_PACKAGE_EFIBOOTMGR=y. Ubuntu: apt install efibootmgr."
+    MODE=unknown
     mark none none noop
     exit 3
 }
@@ -125,9 +186,12 @@ probe_table() {
             sub(/[ \t]+$/, "", label)
             printf "%s\t%d\t%s\t%s\n", idx, act, label, path
         }')
+    VALID_SET=$(printf '%s\n' "$ENTRIES" | awk -F'\t' 'NF { printf "%s ", $1 }')
+    AETHER_SET=$(printf '%s\n' "$ENTRIES" | awk -F'\t' 'tolower($3) ~ /aether/ { printf "%s ", $1 }')
     BOOT_CURRENT=$(printf '%s\n' "$EFI_RAW" | sed -n 's/^BootCurrent:[[:space:]]*\([0-9A-Fa-f]*\).*/\1/p' | tr 'A-F' 'a-f')
     BOOT_NEXT=$(printf '%s\n' "$EFI_RAW" | sed -n 's/^BootNext:[[:space:]]*\([0-9A-Fa-f]*\).*/\1/p' | tr 'A-F' 'a-f')
-    BOOT_ORDER=$(printf '%s\n' "$EFI_RAW" | sed -n 's/^BootOrder:[[:space:]]*//p')
+    BOOT_ORDER=$(printf '%s\n' "$EFI_RAW" | sed -n 's/^BootOrder:[[:space:]]*//p' | head -1 | tr -d '[:space:]')
+    if [ -n "$BOOT_ORDER" ]; then ORDER_SUPPORTED=1; else ORDER_SUPPORTED=0; fi
     return 0
 }
 
@@ -136,6 +200,7 @@ load_table() {
     note_err "cannot read the UEFI boot table: $(printf '%s' "${EFI_RAW:-no output}" | head -2 | tr '\n' ' ')"
     note_err "  efibootmgr=$EFIBOOTMGR; needs root and /sys/firmware/efi/efivars."
     note_err "  Degrading to a no-op: nothing was changed."
+    MODE=unknown
     mark none none noop
     exit 3
 }
@@ -144,6 +209,12 @@ read_bootnext() {
     "$EFIBOOTMGR" 2>/dev/null \
         | sed -n 's/^BootNext:[[:space:]]*\([0-9A-Fa-f]*\).*/\1/p' \
         | tr 'A-F' 'a-f'
+}
+
+read_order() {
+    "$EFIBOOTMGR" 2>/dev/null \
+        | sed -n 's/^BootOrder:[[:space:]]*//p' \
+        | head -1 | tr -d '[:space:]'
 }
 
 entry_line() {
@@ -158,6 +229,59 @@ entry_label() {
 entry_path() {
     [ -n "${1:-}" ] || return 0
     entry_line "$1" | cut -f4
+}
+
+# --- BootOrder helpers ------------------------------------------------------
+# An order is a comma-separated list of 4-hex indexes, never empty, never
+# duplicated, and never containing an index that is not in the boot table.
+
+first_index() {
+    printf '%s\n' "${1:-}" | tr ',' '\n' | sed -n '1p'
+}
+
+# order_keep <order> — drop indexes that no longer exist and duplicates.
+order_keep() {
+    printf '%s\n' "${1:-}" | tr ',' '\n' | awk -v valid="$VALID_SET" '
+        BEGIN { n = split(valid, v, " "); for (i = 1; i <= n; i++) ok[v[i]] = 1 }
+        $0 != "" && ($0 in ok) && !seen[$0]++ { printf "%s%s", (sep++ ? "," : ""), $0 }'
+}
+
+# order_drop <order> <space separated set>
+order_drop() {
+    printf '%s\n' "${1:-}" | tr ',' '\n' | awk -v drop="${2:-}" '
+        BEGIN { n = split(drop, d, " "); for (i = 1; i <= n; i++) no[d[i]] = 1 }
+        $0 != "" && !($0 in no) && !seen[$0]++ { printf "%s%s", (sep++ ? "," : ""), $0 }'
+}
+
+order_merge() {
+    if [ -n "${1:-}" ] && [ -n "${2:-}" ]; then
+        printf '%s,%s' "$1" "$2"
+    else
+        printf '%s%s' "${1:-}" "${2:-}"
+    fi
+}
+
+# comma_list "0001 0003 " -> "0001,0003"
+comma_list() {
+    printf '%s' "${1:-}" | tr ' ' ',' | sed 's/,\{1,\}/,/g; s/^,//; s/,$//'
+}
+
+# --- the record that makes a persistent switch reversible -------------------
+read_record() {
+    [ -f "$ORDER_FILE" ] || return 0
+    head -1 "$ORDER_FILE" 2>/dev/null
+}
+
+save_record() {
+    mkdir -p "$STATE_DIR" 2>/dev/null || return 1
+    tmp="$ORDER_FILE.tmp.$$"
+    printf '%s\n' "$1" >"$tmp" 2>/dev/null || { rm -f "$tmp" 2>/dev/null; return 1; }
+    mv -f "$tmp" "$ORDER_FILE" 2>/dev/null || { rm -f "$tmp" 2>/dev/null; return 1; }
+    return 0
+}
+
+drop_record() {
+    rm -f "$ORDER_FILE" 2>/dev/null || true
 }
 
 # --- USB identity -----------------------------------------------------------
@@ -261,8 +385,8 @@ list_ubuntu_candidates() {
         }' >&2
 }
 
-# --- the write --------------------------------------------------------------
-# set_next <index> <label> <switched|created>
+# --- writes -----------------------------------------------------------------
+# set_next <index> <label> <switched|created> — one-shot BootNext.
 set_next() {
     idx=$1
     lbl=$2
@@ -270,6 +394,7 @@ set_next() {
 
     if [ "${BOOT_NEXT:-}" = "$idx" ]; then
         note "BootNext is already $idx ($lbl); nothing written."
+        MODE=next
         mark "$idx" "$lbl" already
         exit 0
     fi
@@ -277,6 +402,7 @@ set_next() {
     if [ -z "$(entry_line "$idx")" ]; then
         note_err "refusing to point BootNext at $idx: that entry is not in the boot table."
         note_err "  BootNext left at ${BOOT_NEXT:-none}."
+        detect_mode
         mark "${BOOT_NEXT:-none}" "$lbl" failed
         exit 4
     fi
@@ -290,90 +416,119 @@ set_next() {
         [ -n "$cout" ] && printf '%s\n' "$cout" | head -5 >&2
         note_err "  BootOrder was not touched; the machine still boots normally."
         note_err "  If a stale BootNext remains, run: aether-boot-switch clear"
+        MODE=unknown
         mark "${after:-none}" "$lbl" failed
         exit 4
     fi
 
     note "next boot -> $idx ($lbl). The firmware deletes BootNext after using it once."
+    MODE=next
     mark "$idx" "$lbl" "$res"
     exit 0
 }
 
-# --- subcommands ------------------------------------------------------------
-cmd_status() {
-    have_efibootmgr || no_tool
-    load_table
-    lbl=$(entry_label "${BOOT_NEXT:-}")
-    [ -n "$lbl" ] || lbl=none
+# apply_order <desired> <rollback> — write BootOrder and read it back.
+# Sets ORDER_CHANGED (0/1) and BOOT_ORDER on success.
+# Returns 0 verified, 1 failed but the previous order is confirmed back,
+# 2 failed and the previous order could not be re-confirmed.
+apply_order() {
+    want=$1
+    back=${2:-}
+    ORDER_CHANGED=0
 
-    printf 'AetherOS boot switch\n'
-    printf '  BootCurrent : %s\n' "${BOOT_CURRENT:-none}"
-    printf '  BootNext    : %s (%s)\n' "${BOOT_NEXT:-none}" "$lbl"
-    printf '  BootOrder   : %s\n' "${BOOT_ORDER:-none}"
-    printf '  Entries     :\n'
-    printf '%s\n' "$ENTRIES" | awk -F'\t' \
-        '{ printf "    %s %-3s %s\n", $1, ($2 == 1 ? "on" : "off"), $3 }'
-    if [ -e "$STAY_FLAG" ]; then
-        printf '  stay flag   : present (%s)\n' "$STAY_FLAG"
-    else
-        printf '  stay flag   : absent\n'
+    if [ "${BOOT_ORDER:-}" = "$want" ]; then
+        return 0
     fi
-    mark "${BOOT_NEXT:-none}" "$lbl" status
-    exit 0
-}
 
-cmd_stay() {
-    if mkdir -p "$RUN_DIR" 2>/dev/null && : > "$STAY_FLAG" 2>/dev/null; then
-        note "stay flag set ($STAY_FLAG): this boot will not hand the next boot back."
-        note "  It lives in $RUN_DIR (tmpfs) and disappears at reboot."
-    else
-        note_err "cannot write $STAY_FLAG (need root); stay not set."
-        mark none none failed
-        exit 4
-    fi
-    if have_efibootmgr; then probe_table >/dev/null 2>&1 || true; fi
-    lbl=$(entry_label "${BOOT_NEXT:-}")
-    [ -n "$lbl" ] || lbl=none
-    mark "${BOOT_NEXT:-none}" "$lbl" stay
-    exit 0
-}
-
-cmd_clear() {
-    have_efibootmgr || no_tool
-    load_table
-    if [ -z "${BOOT_NEXT:-}" ]; then
-        note "BootNext is already unset; the next boot follows BootOrder."
-        mark none none already
-        exit 0
-    fi
     crc=0
-    cout=$("$EFIBOOTMGR" -N 2>&1) || crc=$?
-    after=$(read_bootnext)
-    if [ "$crc" != 0 ] || [ -n "$after" ]; then
-        note_err "could not clear BootNext (rc=$crc, BootNext reads back as ${after:-none})."
-        [ -n "$cout" ] && printf '%s\n' "$cout" | head -5 >&2
-        mark "${after:-none}" none failed
-        exit 4
+    cout=$("$EFIBOOTMGR" -o "$want" 2>&1) || crc=$?
+    after=$(read_order)
+
+    if [ "$crc" = 0 ] && [ "$after" = "$want" ]; then
+        BOOT_ORDER=$want
+        ORDER_CHANGED=1
+        return 0
     fi
-    note "BootNext cleared; the next boot follows BootOrder."
-    mark none none cleared
-    exit 0
+
+    note_err "BootOrder write to $want was not confirmed (rc=$crc, BootOrder reads back as ${after:-unsupported})."
+    [ -n "$cout" ] && printf '%s\n' "$cout" | head -5 >&2
+
+    if [ -z "$back" ] || [ "$back" = "$want" ]; then
+        BOOT_ORDER=$after
+        return 2
+    fi
+
+    rrc=0
+    "$EFIBOOTMGR" -o "$back" >/dev/null 2>&1 || rrc=$?
+    now=$(read_order)
+    BOOT_ORDER=$now
+    if [ "$rrc" = 0 ] && [ "$now" = "$back" ]; then
+        note_err "  rolled back: BootOrder is $back again, the table is exactly as before."
+        return 1
+    fi
+    note_err "  rollback did not confirm either: BootOrder reads back as ${now:-unsupported}."
+    note_err "  Restore it by hand: efibootmgr -o $back"
+    return 2
 }
 
-create_then_switch() {
+# restore_desired <recorded> — the order to restore, built only from entries
+# that exist right now: the recorded indexes first (dead ones dropped), then any
+# entry that appeared since the record was made, minus AetherOS itself.
+restore_desired() {
+    rec=$1
+    kept=$(order_keep "$rec")
+    extra=$(order_keep "$(order_drop "${BOOT_ORDER:-}" "$(printf '%s\n' "$rec" | tr ',' ' ')")")
+    extra=$(order_drop "$extra" "$AETHER_SET")
+    order_merge "$kept" "$extra"
+}
+
+# --- AetherOS entry resolution ---------------------------------------------
+ensure_aether_entry() {
+    idx=$(pick_aether)
+    prc=$?
+    case "$prc" in
+        0) AE_IDX=$idx; return 0 ;;
+        2)
+            note_err "more than one AetherOS entry exists; refusing to guess which one is the USB."
+            list_aether_candidates
+            note_err "  Remove stale ones (efibootmgr -b XXXX -B) or relabel them, then retry."
+            detect_mode
+            mark "${BOOT_NEXT:-none}" none noop
+            exit 1
+            ;;
+        *)
+            if has_inactive aether; then
+                note_err "an AetherOS entry exists but is deactivated; not using it."
+                list_aether_candidates
+                note_err "  Reactivate it with: efibootmgr -b XXXX -a"
+                detect_mode
+                mark "${BOOT_NEXT:-none}" none noop
+                exit 1
+            fi
+            create_aether_entry
+            AE_IDX=$CREATED_IDX
+            ENTRY_CREATED=1
+            ;;
+    esac
+}
+
+create_aether_entry() {
     part=$(usb_part) || {
         note_err "cannot find the AetherOS USB stick: no /dev/disk/by-label/AETHEROS."
-        note_err "  Plug the stick in, or pass AETHER_USB_PART=/dev/sdX1. BootNext unchanged."
+        note_err "  Plug the stick in, or pass AETHER_USB_PART=/dev/sdX1. Boot table unchanged."
+        detect_mode
         mark "${BOOT_NEXT:-none}" none noop
         exit 1
     }
     disk=$(usb_disk) || {
         note_err "cannot derive the USB disk from $part; pass AETHER_USB_DISK=/dev/sdX."
+        detect_mode
         mark "${BOOT_NEXT:-none}" none noop
         exit 1
     }
     if [ -z "${AETHER_USB_DISK:-}" ] && [ ! -b "$disk" ]; then
         note_err "$disk is not a block device; refusing to create a boot entry from it."
+        detect_mode
         mark "${BOOT_NEXT:-none}" none noop
         exit 1
     fi
@@ -390,6 +545,7 @@ create_then_switch() {
     if [ "$crc" != 0 ]; then
         note_err "efibootmgr -c failed (rc=$crc): $(printf '%s' "$cout" | head -3 | tr '\n' ' ')"
         note_err "  BootNext left at ${BOOT_NEXT:-none}; the machine still boots normally."
+        detect_mode
         mark "${BOOT_NEXT:-none}" none failed
         exit 4
     fi
@@ -402,6 +558,7 @@ create_then_switch() {
     if [ "$prc" != 0 ]; then
         note_err "the new entry could not be read back (picker rc=$prc); stopping without touching BootNext."
         note_err "  Inspect with 'efibootmgr -v'; remove a bad entry with 'efibootmgr -b XXXX -B'."
+        detect_mode
         mark "${BOOT_NEXT:-none}" none failed
         exit 4
     fi
@@ -414,45 +571,344 @@ create_then_switch() {
         esac
     fi
     note "created boot entry $idx ($AETHER_LABEL)."
-    set_next "$idx" "$AETHER_LABEL" created
+    CREATED_IDX=$idx
+}
+
+# --- persistent mode --------------------------------------------------------
+bootorder_unavailable() {
+    note_err "this firmware does not report BootOrder (only BootCurrent=${BOOT_CURRENT:-none}),"
+    note_err "  so a BootOrder write could not be verified. --persistent is unavailable here;"
+    note_err "  the one-shot BootNext switch still works. Nothing was changed."
+    detect_mode
+    mark "${BOOT_NEXT:-none}" none noop
+    exit 1
+}
+
+# arm_persistent — BootOrder := AetherOS, then the previous order verbatim.
+arm_persistent() {
+    [ "$ORDER_SUPPORTED" = 1 ] || bootorder_unavailable
+    cur=$BOOT_ORDER
+    rec=$(read_record)
+
+    if [ "$(first_index "$cur")" = "$AE_IDX" ]; then
+        # Already first (a previous persistent switch, or a manual efibootmgr -o).
+        if [ -z "$rec" ]; then
+            # No record, so nothing to restore to: derive one with AetherOS at the
+            # end, which is the only order that can end the persistent mode.
+            rec=$(order_merge "$(order_drop "$cur" "$AETHER_SET")" "$(comma_list "$AETHER_SET")")
+            rec=$(order_keep "$rec")
+            if [ -z "$rec" ] || [ "$(first_index "$rec")" = "$AE_IDX" ]; then
+                note_err "BootOrder starts with AetherOS and no restore order can be derived"
+                note_err "  (no other existing entry). Refusing: a persistent switch that cannot"
+                note_err "  be undone would keep this machine on the USB for ever."
+                detect_mode
+                mark "${BOOT_NEXT:-none}" "$(entry_label "$AE_IDX")" noop
+                exit 1
+            fi
+            save_record "$rec" || {
+                note_err "cannot write $ORDER_FILE; refusing to change BootOrder without a restore record."
+                detect_mode
+                mark "${BOOT_NEXT:-none}" "$(entry_label "$AE_IDX")" noop
+                exit 1
+            }
+            note "recorded the restore order: $rec"
+        fi
+        note "BootOrder already starts with $AE_IDX ($AETHER_LABEL); nothing to write."
+        MODE=persistent
+        mark "${BOOT_NEXT:-none}" "$(entry_label "$AE_IDX")" already
+        exit 0
+    fi
+
+    rest=$(order_drop "$cur" "$AETHER_SET")
+    rest=$(order_keep "$rest")
+    if [ -z "$rest" ]; then
+        note_err "BootOrder has no entry besides AetherOS"
+        note_err "  (current order: $cur). A persistent switch to an AetherOS-only order"
+        note_err "  could not be undone, so nothing was written."
+        detect_mode
+        mark "${BOOT_NEXT:-none}" "$(entry_label "$AE_IDX")" noop
+        exit 1
+    fi
+
+    # Record before the write: if the write half-applies, the order can be put
+    # back. The record is removed by the restore path, never by a failed arm.
+    save_record "$cur" || {
+        note_err "cannot write $ORDER_FILE (need root); refusing to change BootOrder"
+        note_err "  without a restore record. Nothing was changed."
+        detect_mode
+        mark "${BOOT_NEXT:-none}" "$(entry_label "$AE_IDX")" noop
+        exit 1
+    }
+    note "recorded the original BootOrder: $cur"
+
+    want=$(order_merge "$AE_IDX" "$rest")
+    apply_order "$want" "$cur"
+    arc=$?
+    if [ "$arc" != 0 ]; then
+        MODE=default
+        [ "$arc" = 2 ] && MODE=unknown
+        mark "${BOOT_NEXT:-none}" "$(entry_label "$AE_IDX")" failed
+        note_err "  The record is kept at $ORDER_FILE so the order can still be restored."
+        exit 4
+    fi
+
+    note "BootOrder -> $want (AetherOS first, previous order recorded)."
+    note "  Undo with: aether-boot-switch ubuntu --persistent   (or on the next AetherOS boot)"
+    MODE=persistent
+    mark "${BOOT_NEXT:-none}" "$(entry_label "$AE_IDX")" switched
+    exit 0
+}
+
+# restore_persistent — put the recorded order back, byte for byte where possible.
+restore_persistent() {
+    rec=$1
+    [ "$ORDER_SUPPORTED" = 1 ] || bootorder_unavailable
+
+    want=$(restore_desired "$rec")
+    if [ -z "$want" ]; then
+        note_err "the recorded order ($rec) has no entry that still exists in the boot table"
+        note_err "  (current order: ${BOOT_ORDER:-none}). Leaving BootOrder untouched; the record"
+        note_err "  is kept at $ORDER_FILE."
+        detect_mode
+        mark "${BOOT_NEXT:-none}" none failed
+        exit 4
+    fi
+
+    apply_order "$want" "${BOOT_ORDER:-}"
+    arc=$?
+    if [ "$arc" != 0 ]; then
+        MODE=persistent
+        [ "$arc" = 2 ] && MODE=unknown
+        note_err "  The record is kept at $ORDER_FILE so the next boot can try again."
+        mark "${BOOT_NEXT:-none}" none failed
+        exit 4
+    fi
+
+    drop_record
+    MODE=default
+    if [ "$ORDER_CHANGED" = 1 ]; then
+        note "BootOrder restored to the recorded order: $want"
+        mark "${BOOT_NEXT:-none}" "$(entry_label "$(first_index "$want")")" restored
+    else
+        note "BootOrder already equals the recorded order ($want); record removed."
+        mark "${BOOT_NEXT:-none}" "$(entry_label "$(first_index "$want")")" already
+    fi
+    exit 0
+}
+
+# uber_persistent — no record: internal disk first, AetherOS dropped to the end.
+ubuntu_persistent_fresh() {
+    [ "$ORDER_SUPPORTED" = 1 ] || bootorder_unavailable
+    idx=$(pick_ubuntu)
+    prc=$?
+    case "$prc" in
+        0) : ;;
+        2)
+            note_err "more than one entry could be the internal disk; refusing to guess."
+            list_ubuntu_candidates
+            note_err "  Label the internal entry 'ubuntu' (efibootmgr -b XXXX -L ubuntu) and retry."
+            detect_mode
+            mark "${BOOT_NEXT:-none}" none noop
+            exit 1
+            ;;
+        *)
+            note_err "no internal-disk (Ubuntu) entry found; refusing to invent one."
+            list_ubuntu_candidates
+            detect_mode
+            mark "${BOOT_NEXT:-none}" none noop
+            exit 1
+            ;;
+    esac
+
+    cur=$BOOT_ORDER
+    rest=$(order_drop "$cur" "$idx $AETHER_SET")
+    rest=$(order_keep "$rest")
+    aelist=$(comma_list "$AETHER_SET")
+    aelist=$(order_drop "$aelist" "$idx")
+    want=$(order_merge "$(order_merge "$idx" "$rest")" "$aelist")
+    want=$(order_keep "$want")
+
+    if [ "$want" = "$cur" ]; then
+        note "BootOrder already starts with $idx; nothing written."
+        MODE=default
+        mark "${BOOT_NEXT:-none}" "$(entry_label "$idx")" already
+        exit 0
+    fi
+
+    apply_order "$want" "$cur"
+    arc=$?
+    if [ "$arc" != 0 ]; then
+        MODE=default
+        [ "$arc" = 2 ] && MODE=unknown
+        mark "${BOOT_NEXT:-none}" "$(entry_label "$idx")" failed
+        exit 4
+    fi
+
+    note "BootOrder -> $want (internal disk first, AetherOS last)."
+    MODE=default
+    mark "${BOOT_NEXT:-none}" "$(entry_label "$idx")" switched
+    exit 0
+}
+
+# --- subcommands ------------------------------------------------------------
+cmd_status() {
+    have_efibootmgr || no_tool
+    load_table
+    detect_mode
+    lbl=$(entry_label "${BOOT_NEXT:-}")
+    [ -n "$lbl" ] || lbl=none
+    rec=$(read_record)
+
+    printf 'AetherOS boot switch\n'
+    printf '  BootCurrent : %s\n' "${BOOT_CURRENT:-none}"
+    printf '  BootNext    : %s (%s)\n' "${BOOT_NEXT:-none}" "$lbl"
+    if [ "$ORDER_SUPPORTED" = 1 ]; then
+        printf '  BootOrder   : %s\n' "${BOOT_ORDER:-none}"
+    else
+        printf '  BootOrder   : not reported by this firmware (BootCurrent=%s)\n' "${BOOT_CURRENT:-none}"
+    fi
+    case "$MODE" in
+        next)       printf '  Mode        : BootNext=%s (one-shot; the firmware deletes it)\n' "$BOOT_NEXT" ;;
+        persistent) printf '  Mode        : persistent (BootOrder=%s, original recorded: %s)\n' \
+                            "$BOOT_ORDER" "$rec" ;;
+        *)          printf '  Mode        : default (BootOrder governs)\n' ;;
+    esac
+    if [ -n "$rec" ]; then
+        printf '  Recorded    : %s (%s)\n' "$rec" "$ORDER_FILE"
+    fi
+    printf '  Entries     :\n'
+    printf '%s\n' "$ENTRIES" | awk -F'\t' \
+        '{ printf "    %s %-3s %s\n", $1, ($2 == 1 ? "on" : "off"), $3 }'
+    if [ -e "$STAY_FLAG" ]; then
+        printf '  stay flag   : present (%s)\n' "$STAY_FLAG"
+    else
+        printf '  stay flag   : absent\n'
+    fi
+    mark "${BOOT_NEXT:-none}" "$lbl" status
+    exit 0
+}
+
+# cmd_mode — read-only query for the boot-time unit: "what is in effect?".
+cmd_mode() {
+    have_efibootmgr || no_tool
+    load_table
+    detect_mode
+    printf 'AETHER_BOOT_MODE: %s\n' "$MODE"
+    logline "$PROG: mode=$MODE"
+    exit 0
+}
+
+cmd_stay() {
+    if mkdir -p "$RUN_DIR" 2>/dev/null && : > "$STAY_FLAG" 2>/dev/null; then
+        note "stay flag set ($STAY_FLAG): this boot will not hand the next boot back."
+        note "  It lives in $RUN_DIR (tmpfs) and disappears at reboot."
+    else
+        note_err "cannot write $STAY_FLAG (need root); stay not set."
+        MODE=unknown
+        mark none none failed
+        exit 4
+    fi
+    if have_efibootmgr; then probe_table >/dev/null 2>&1 || true; fi
+    detect_mode
+    lbl=$(entry_label "${BOOT_NEXT:-}")
+    [ -n "$lbl" ] || lbl=none
+    mark "${BOOT_NEXT:-none}" "$lbl" stay
+    exit 0
+}
+
+# clear — undo everything: restore the recorded order, drop the record, drop
+# BootNext. Each step is verified; a failure is reported, never hidden.
+cmd_clear() {
+    have_efibootmgr || no_tool
+    load_table
+    bad=0
+    did=0
+
+    rec=$(read_record)
+    if [ -n "$rec" ]; then
+        if [ "$ORDER_SUPPORTED" != 1 ]; then
+            note_err "a persistent record exists ($ORDER_FILE) but this firmware does not report"
+            note_err "  BootOrder, so it cannot be restored or verified here. Record kept."
+            bad=1
+        else
+            want=$(restore_desired "$rec")
+            if [ -z "$want" ]; then
+                note_err "the recorded order ($rec) has no entry that still exists;"
+                note_err "  BootOrder left untouched, record kept at $ORDER_FILE."
+                bad=1
+            elif [ "${BOOT_ORDER:-}" = "$want" ]; then
+                drop_record
+                note "BootOrder already equals the recorded order ($want); record removed."
+                did=1
+            else
+                apply_order "$want" "${BOOT_ORDER:-}"
+                arc=$?
+                if [ "$arc" = 0 ]; then
+                    drop_record
+                    note "BootOrder restored to $want; persistent record removed."
+                    did=1
+                else
+                    note_err "could not restore the recorded BootOrder; record kept for the next boot."
+                    bad=1
+                fi
+            fi
+        fi
+    fi
+
+    if [ -n "${BOOT_NEXT:-}" ]; then
+        crc=0
+        cout=$("$EFIBOOTMGR" -N 2>&1) || crc=$?
+        after=$(read_bootnext)
+        if [ "$crc" = 0 ] && [ -z "$after" ]; then
+            note "BootNext cleared; the next boot follows BootOrder."
+            BOOT_NEXT=""
+            did=1
+        else
+            note_err "could not clear BootNext (rc=$crc, BootNext reads back as ${after:-none})."
+            [ -n "$cout" ] && printf '%s\n' "$cout" | head -5 >&2
+            bad=1
+        fi
+    fi
+
+    detect_mode
+    if [ "$bad" = 1 ]; then
+        mark "${BOOT_NEXT:-none}" none failed
+        exit 4
+    fi
+    if [ "$did" = 1 ]; then
+        mark none none cleared
+    else
+        note "nothing was pending: no BootNext and no recorded order."
+        mark none none already
+    fi
+    exit 0
 }
 
 cmd_aether() {
     have_efibootmgr || no_tool
     load_table
     ensure_usb_partuuid
-
-    idx=$(pick_aether)
-    prc=$?
-    case "$prc" in
-        0)
-            set_next "$idx" "$(entry_label "$idx")" switched
-            ;;
-        2)
-            note_err "more than one AetherOS entry exists; refusing to guess which one is the USB."
-            list_aether_candidates
-            note_err "  Remove stale ones (efibootmgr -b XXXX -B) or relabel them, then retry."
-            mark "${BOOT_NEXT:-none}" none noop
-            exit 1
-            ;;
-        *)
-            if has_inactive aether; then
-                note_err "an AetherOS entry exists but is deactivated; not using it."
-                list_aether_candidates
-                note_err "  Reactivate it with: efibootmgr -b XXXX -a"
-                mark "${BOOT_NEXT:-none}" none noop
-                exit 1
-            fi
-            create_then_switch
-            ;;
-    esac
+    ensure_aether_entry
+    if [ "$PERSISTENT" = 1 ]; then
+        arm_persistent
+    fi
+    if [ "$ENTRY_CREATED" = 1 ]; then
+        set_next "$AE_IDX" "$(entry_label "$AE_IDX")" created
+    fi
+    set_next "$AE_IDX" "$(entry_label "$AE_IDX")" switched
 }
 
 cmd_ubuntu() {
     have_efibootmgr || no_tool
     load_table
     ensure_usb_partuuid
-
+    if [ "$PERSISTENT" = 1 ]; then
+        rec=$(read_record)
+        if [ -n "$rec" ]; then
+            restore_persistent "$rec"
+        fi
+        ubuntu_persistent_fresh
+    fi
     idx=$(pick_ubuntu)
     prc=$?
     case "$prc" in
@@ -463,6 +919,7 @@ cmd_ubuntu() {
             note_err "more than one entry could be the internal disk; refusing to guess."
             list_ubuntu_candidates
             note_err "  Label the internal entry 'ubuntu' (efibootmgr -b XXXX -L ubuntu) and retry."
+            detect_mode
             mark "${BOOT_NEXT:-none}" none noop
             exit 1
             ;;
@@ -476,6 +933,7 @@ cmd_ubuntu() {
                 note_err "no internal-disk (Ubuntu) entry found; BootNext unchanged."
                 list_ubuntu_candidates
             fi
+            detect_mode
             mark "${BOOT_NEXT:-none}" none noop
             exit 1
             ;;
@@ -483,13 +941,31 @@ cmd_ubuntu() {
 }
 
 # --- main -------------------------------------------------------------------
+# --persistent may come before or after the command.
+rest=""
+for arg in "$@"; do
+    case "$arg" in
+        --persistent) PERSISTENT=1 ;;
+        -h|--help)    usage; exit 0 ;;
+        *)            rest="$rest${rest:+ }$arg" ;;
+    esac
+done
+# shellcheck disable=SC2086
+set -- $rest
+
 case "${1:-}" in
-    status)        cmd_status ;;
+    status)
+        [ "$PERSISTENT" = 1 ] && { printf '%s: --persistent is not meaningful for status\n' "$PROG" >&2; exit 2; }
+        cmd_status ;;
+    mode)          cmd_mode ;;
     aether|usb)    cmd_aether ;;
     ubuntu|linux)  cmd_ubuntu ;;
-    stay)          cmd_stay ;;
-    clear|clear-next) cmd_clear ;;
-    -h|--help|help) usage; exit 0 ;;
+    stay)
+        [ "$PERSISTENT" = 1 ] && { printf '%s: --persistent is not meaningful for stay\n' "$PROG" >&2; exit 2; }
+        cmd_stay ;;
+    clear|clear-next)
+        [ "$PERSISTENT" = 1 ] && { printf '%s: --persistent is not meaningful for clear (it always undoes both)\n' "$PROG" >&2; exit 2; }
+        cmd_clear ;;
     '')            usage >&2; exit 2 ;;
     *)             printf '%s: unknown command: %s\n' "$PROG" "$1" >&2; usage >&2; exit 2 ;;
 esac

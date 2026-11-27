@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# boot-switch-selftest.sh — prove the AetherOS <-> Ubuntu BootNext switching
-# logic without UEFI hardware, so it is testable on macOS and in CI.
+# boot-switch-selftest.sh — prove the AetherOS <-> Ubuntu boot switching logic
+# (one-shot BootNext and the opt-in persistent BootOrder mode) without UEFI
+# hardware, so it is testable on macOS and in CI.
 #
 # It builds a fake `efibootmgr` backed by files (table, BootNext, BootOrder) and
 # drives the real scripts:
@@ -25,8 +26,26 @@
 #  15  unreadable boot table   -> exit 3 no-op
 #  16  clear                   -> BootNext deleted / already unset
 #  17  the happy boot cycle    -> AetherOS boot hands the next boot to Ubuntu
-#  18  BootOrder is never rewritten by a switch
+#  18  BootOrder is untouched by a one-shot switch
 #  19  sh -n / bash -n clean, host symlink resolves to the same file
+#  20  a real efibootmgr -v dump parses (labels with spaces, UEFI: prefix)
+#  21  --persistent armed: BootOrder written, original recorded, no BootNext
+#  22  --persistent idempotent: second arm writes nothing
+#  23  --persistent round trip: Ubuntu flips -> AetherOS restores, byte for byte
+#  24  --persistent restore with no record: internal first, AetherOS last
+#  25  persistent: no Ubuntu entry -> no-op, never fabricates an entry
+#  26  persistent: AetherOS entry missing -> no-op, order untouched
+#  27  persistent: record references a deleted entry -> dead index dropped
+#  28  persistent: record with only dead entries -> refuse, table untouched
+#  29  persistent: write not permitted -> exit 4, order unchanged, record kept
+#  30  persistent: silent write failure -> exit 4, order unchanged
+#  31  persistent: duplicate indexes in a record are collapsed
+#  32  persistent: AetherOS already first, no record -> derived record, no write
+#  33  persistent: AetherOS is the only entry -> refuse (cannot be undone)
+#  34  status reports mode=next / persistent / default, and "not reported"
+#  35  clear removes BootNext AND the recorded order
+#  36  clear with a failing order write keeps the record and exits 4
+#  37  unit: stale record -> record dropped, one-shot BootNext used instead
 #
 # Usage: os-build/test/boot-switch-selftest.sh [-v]
 # Exit: 0 all cases pass, 1 a case failed.
@@ -92,6 +111,7 @@ setup() {
     export AETHER_LOG=$T/boot.log
     export AETHER_RUN_DIR=$T/run
     export AETHER_CMDLINE=$T/cmdline
+    export AETHER_STATE_DIR=$T/persist
     export AETHER_USB_PART=/dev/fake-usb1
     export AETHER_USB_DISK=/dev/fake-usb
     export AETHER_USB_PARTNUM=1
@@ -118,6 +138,7 @@ printf '%s\n' "$*" >>"$STATE/calls"
 mode=table
 verbose=0
 nextval=""
+neworder=""
 pnum=""
 label=""
 loader=""
@@ -127,6 +148,7 @@ while [ $# -gt 0 ]; do
         -n) nextval=${2:-}; mode=set; shift 2 ;;
         -N) mode=clear; shift ;;
         -c) mode=create; shift ;;
+        -o) neworder=${2:-}; mode=order; shift 2 ;;
         -d) shift 2 ;;
         -p) pnum=${2:-}; shift 2 ;;
         -L) label=${2:-}; shift 2 ;;
@@ -138,7 +160,8 @@ done
 print_table() {
     printf 'BootCurrent: %s\n' "$(cat "$STATE/current" 2>/dev/null || echo 0000)"
     printf 'Timeout: 1 seconds\n'
-    printf 'BootOrder: %s\n' "$(cat "$STATE/order" 2>/dev/null)"
+    # Firmware without BootOrder support: the variable is simply not reported.
+    [ -f "$STATE/suppress-order" ] || printf 'BootOrder: %s\n' "$(cat "$STATE/order" 2>/dev/null)"
     n=$(cat "$STATE/next" 2>/dev/null || true)
     [ -n "$n" ] && printf 'BootNext: %s\n' "$n"
     awk -F'\t' -v v="$verbose" '
@@ -165,6 +188,14 @@ case "$mode" in
         ;;
     clear)
         rm -f "$STATE/next"
+        print_table
+        ;;
+    order)
+        if [ -f "$STATE/fail-order" ]; then
+            echo "Could not set BootOrder: Operation not permitted" >&2
+            exit 1
+        fi
+        [ -f "$STATE/ignore-order" ] || printf '%s\n' "$neworder" >"$STATE/order"
         print_table
         ;;
     create)
@@ -214,7 +245,9 @@ sw() { sh "$CANON" "$@"; }
 ret() { sh "$RETURN"; }
 next_now() { cat "$FAKE_STATE/next" 2>/dev/null || true; }
 order_now() { cat "$FAKE_STATE/order" 2>/dev/null || true; }
+record_now() { cat "$AETHER_STATE_DIR/original-order" 2>/dev/null || true; }
 called() { grep -Fq -- "$1" "$FAKE_STATE/calls"; }
+wrote_order() { grep -Fq -- '-o ' "$FAKE_STATE/calls"; }
 
 # --- 19: syntax and the host symlink (cheap, run first) ---------------------
 printf '# TAP-ish selftest for aether-boot-switch\n'
@@ -469,6 +502,271 @@ out=$(sw aether 2>&1); rc=$?
 expect_rc "failed create exits 4" "$rc" 4
 expect_has "failed create is explained" "$out" "efibootmgr -c failed"
 [ "$(next_now)" = "" ] && ok "failed create writes no BootNext" || bad "failed create wrote BootNext"
+
+# ==========================================================================
+# Persistent mode (--persistent): BootOrder instead of BootNext
+# ==========================================================================
+
+# --- 21: arm ---------------------------------------------------------------
+setup; std_fixture            # order 0000,0001 (ubuntu, AetherOS), booted from ubuntu
+out=$(sw aether --persistent); rc=$?
+expect_rc "persistent arm exits 0" "$rc" 0
+expect_eq "persistent arm puts AetherOS first" "$(order_now)" "0001,0000"
+expect_eq "persistent arm records the original order" "$(record_now)" "0000,0001"
+expect_has "persistent arm marker" "$out" "result=switched mode=persistent"
+if called '-n'; then bad "persistent arm wrote BootNext"; else ok "persistent arm writes no BootNext"; fi
+if wrote_order; then ok "persistent arm used efibootmgr -o"; else bad "persistent arm did not use -o"; fi
+expect_has "persistent arm logs the record" "$(cat "$AETHER_LOG" 2>/dev/null)" "recorded the original BootOrder: 0000,0001"
+
+# --- 22: idempotent arm ----------------------------------------------------
+setup; std_fixture
+sw aether --persistent >/dev/null 2>&1
+: >"$FAKE_STATE/calls"
+out=$(sw aether --persistent); rc=$?
+expect_rc "second persistent arm exits 0" "$rc" 0
+expect_has "second persistent arm says already" "$out" "result=already"
+expect_eq "second persistent arm leaves the order" "$(order_now)" "0001,0000"
+if wrote_order; then bad "second persistent arm rewrote BootOrder"; else ok "second persistent arm performs no write"; fi
+
+# --- 23: full persistent round trip, byte for byte -------------------------
+setup; std_fixture
+before=$(order_now)                                   # 0000,0001
+sw aether --persistent >/dev/null 2>&1                # Ubuntu flips the order
+rm -f "$FAKE_STATE/next"; printf '0001\n' >"$FAKE_STATE/current"   # AetherOS boots
+out=$(ret 2>&1); rc=$?
+expect_rc "round trip: unit exits 0" "$rc" 0
+expect_eq "round trip: order restored byte for byte" "$(order_now)" "$before"
+expect_has "round trip: unit reports the restore" "$out" "persistent switch undone: the internal disk is first again"
+expect_has "round trip: marker is result=restored" "$out" "result=restored mode=default"
+[ "$(next_now)" = "" ] && ok "round trip: no BootNext armed" || bad "round trip: BootNext was written"
+[ -e "$AETHER_STATE_DIR/original-order" ] && bad "round trip: record not removed" || ok "round trip: record removed"
+
+# --- 24: restore with no record: internal first, AetherOS last -------------
+setup
+add_entry 0000 on ubuntu "$UBUNTU_PATH"
+add_entry 0001 on AetherOS "$AETHER_PATH"
+add_entry 0002 on Fedora 'HD(1,GPT,99999999-0000-0000-0000-000000000000)/File(\EFI\fedora\shimx64.efi)'
+printf '0001,0000,0002\n' >"$FAKE_STATE/order"; printf '0001\n' >"$FAKE_STATE/current"
+out=$(sw ubuntu --persistent); rc=$?
+expect_rc "no-record persistent ubuntu exits 0" "$rc" 0
+expect_eq "internal disk first, AetherOS dropped to the end" "$(order_now)" "0000,0002,0001"
+expect_has "no-record persistent ubuntu marker" "$out" "result=switched mode=default"
+[ -e "$AETHER_STATE_DIR/original-order" ] && bad "no-record path created a record" || ok "no-record path creates no record"
+
+# --- 25: persistent, no Ubuntu entry ---------------------------------------
+setup
+add_entry 0001 on AetherOS "$AETHER_PATH"
+printf '0001\n' >"$FAKE_STATE/order"; printf '0001\n' >"$FAKE_STATE/current"
+out=$(sw ubuntu --persistent 2>&1); rc=$?
+expect_rc "persistent ubuntu without a target exits 1" "$rc" 1
+expect_has "persistent ubuntu never invents an entry" "$out" "refusing to invent one"
+expect_eq "persistent ubuntu leaves the order alone" "$(order_now)" "0001"
+if wrote_order; then bad "persistent ubuntu wrote an order with no target"; else ok "persistent ubuntu writes no order"; fi
+
+# --- 26: persistent arm with the AetherOS entry gone -----------------------
+setup
+add_entry 0000 on ubuntu "$UBUNTU_PATH"
+printf '0000\n' >"$FAKE_STATE/order"; printf '0000\n' >"$FAKE_STATE/current"
+unset AETHER_USB_PART AETHER_USB_DISK     # nothing to create the entry from
+out=$(sw aether --persistent 2>&1); rc=$?
+expect_rc "persistent arm without the entry exits 1" "$rc" 1
+expect_has "persistent arm without the entry explains itself" "$out" "cannot find the AetherOS USB stick"
+expect_eq "persistent arm without the entry leaves the order" "$(order_now)" "0000"
+[ -e "$AETHER_STATE_DIR/original-order" ] && bad "failed arm left a record" || ok "failed arm records nothing"
+
+# --- 27: recorded order references a deleted entry -------------------------
+setup
+add_entry 0000 on ubuntu "$UBUNTU_PATH"
+add_entry 0001 on AetherOS "$AETHER_PATH"
+printf '0001,0000\n' >"$FAKE_STATE/order"; printf '0001\n' >"$FAKE_STATE/current"
+mkdir -p "$AETHER_STATE_DIR"; printf '0000,0009\n' >"$AETHER_STATE_DIR/original-order"
+out=$(sw ubuntu --persistent); rc=$?
+expect_rc "record with a dead index still restores" "$rc" 0
+expect_eq "dead index dropped from the restored order" "$(order_now)" "0000"
+expect_has "dead index restore marker" "$out" "result=restored"
+[ -e "$AETHER_STATE_DIR/original-order" ] && bad "record not removed after a partial restore" || ok "record removed after a partial restore"
+
+# --- 28: a record whose indexes are all dead ------------------------------
+setup; std_fixture
+mkdir -p "$AETHER_STATE_DIR"; printf '0009\n' >"$AETHER_STATE_DIR/original-order"
+printf '0001,0000\n' >"$FAKE_STATE/order"     # as if a persistent switch was armed
+out=$(sw ubuntu --persistent); rc=$?
+expect_rc "record of only dead entries still restores" "$rc" 0
+expect_eq "record of only dead entries -> reachable order, AetherOS dropped" "$(order_now)" "0000"
+[ -e "$AETHER_STATE_DIR/original-order" ] && bad "record kept after a fallback restore" || ok "record removed after a fallback restore"
+
+# --- 28b: nothing reachable at all -> refuse ------------------------------
+setup
+add_entry 0001 on AetherOS "$AETHER_PATH"
+printf '0001\n' >"$FAKE_STATE/order"; printf '0001\n' >"$FAKE_STATE/current"
+mkdir -p "$AETHER_STATE_DIR"; printf '0009\n' >"$AETHER_STATE_DIR/original-order"
+out=$(sw ubuntu --persistent 2>&1); rc=$?
+expect_rc "record with only dead entries exits 4" "$rc" 4
+expect_has "record with only dead entries is explained" "$out" "no entry that still exists"
+expect_eq "record with only dead entries leaves the table" "$(order_now)" "0001"
+expect_eq "record with only dead entries keeps the record" "$(record_now)" "0009"
+
+# --- 29: BootOrder reported but not writable -------------------------------
+setup; std_fixture
+: >"$FAKE_STATE/fail-order"
+out=$(sw aether --persistent 2>&1); rc=$?
+expect_rc "unwritable BootOrder exits 4" "$rc" 4
+expect_has "unwritable BootOrder is explained" "$out" "was not confirmed"
+expect_eq "unwritable BootOrder leaves the order" "$(order_now)" "0000,0001"
+expect_eq "unwritable BootOrder keeps the record for a retry" "$(record_now)" "0000,0001"
+expect_has "unwritable BootOrder marker is failed" "$out" "result=failed"
+
+# --- 30: silent BootOrder write failure ------------------------------------
+setup; std_fixture
+: >"$FAKE_STATE/ignore-order"
+out=$(sw aether --persistent 2>&1); rc=$?
+expect_rc "silent BootOrder failure exits 4" "$rc" 4
+expect_has "silent BootOrder failure reports the read-back" "$out" "BootOrder reads back as 0000,0001"
+expect_eq "silent BootOrder failure leaves the order untouched" "$(order_now)" "0000,0001"
+
+# --- 31: duplicates in a record are collapsed ------------------------------
+setup; std_fixture
+mkdir -p "$AETHER_STATE_DIR"; printf '0000,0000,0000\n' >"$AETHER_STATE_DIR/original-order"
+out=$(sw ubuntu --persistent); rc=$?
+expect_rc "duplicate record exits 0" "$rc" 0
+expect_eq "duplicate indexes collapsed" "$(order_now)" "0000"
+expect_has "duplicate record marker" "$out" "result=restored"
+
+# --- 32: AetherOS already first, no record ---------------------------------
+setup; std_fixture
+printf '0001,0000\n' >"$FAKE_STATE/order"     # someone already set it by hand
+: >"$FAKE_STATE/calls"
+out=$(sw aether --persistent); rc=$?
+expect_rc "already-first arm exits 0" "$rc" 0
+expect_has "already-first arm says already" "$out" "result=already mode=persistent"
+expect_eq "already-first arm writes nothing to the order" "$(order_now)" "0001,0000"
+if wrote_order; then bad "already-first arm rewrote BootOrder"; else ok "already-first arm performs no write"; fi
+expect_eq "already-first arm derives a restorable record" "$(record_now)" "0000,0001"
+out=$(sw ubuntu --persistent); rc=$?
+expect_rc "derived record restores" "$rc" 0
+expect_eq "derived record ends the persistent mode" "$(order_now)" "0000,0001"
+
+# --- 33: AetherOS is the only entry ---------------------------------------
+setup
+add_entry 0001 on AetherOS "$AETHER_PATH"
+printf '0001\n' >"$FAKE_STATE/order"; printf '0001\n' >"$FAKE_STATE/current"
+out=$(sw aether --persistent 2>&1); rc=$?
+expect_rc "single-entry persistent arm exits 1" "$rc" 1
+expect_has "single-entry persistent arm refuses" "$out" "no restore order can be derived"
+expect_eq "single-entry persistent arm leaves the order" "$(order_now)" "0001"
+[ -e "$AETHER_STATE_DIR/original-order" ] && bad "single-entry arm left a record" || ok "single-entry arm records nothing"
+
+# --- 34: status reports the mode ------------------------------------------
+setup; std_fixture
+out=$(sw status)
+expect_has "status says default when nothing is armed" "$out" "Mode        : default"
+expect_has "status marker default" "$out" "result=status mode=default"
+printf '0001\n' >"$FAKE_STATE/next"
+out=$(sw status)
+expect_has "status says BootNext when one is pending" "$out" "Mode        : BootNext=0001"
+expect_has "status marker next" "$out" "result=status mode=next"
+rm -f "$FAKE_STATE/next"
+sw aether --persistent >/dev/null 2>&1
+out=$(sw status)
+expect_has "status says persistent when BootOrder is armed" "$out" "Mode        : persistent (BootOrder=0001,0000, original recorded: 0000,0001)"
+expect_has "status shows the recorded order" "$out" "Recorded    : 0000,0001"
+expect_has "status marker persistent" "$out" "result=status mode=persistent"
+# a pending BootNext plus a record: BootNext is what the next boot does
+printf '0000\n' >"$FAKE_STATE/next"
+out=$(sw status)
+expect_has "status prefers BootNext over a record" "$out" "result=status mode=next"
+rm -f "$FAKE_STATE/next"
+
+# --- 34b: firmware that does not report BootOrder -------------------------
+setup; std_fixture
+: >"$FAKE_STATE/suppress-order"
+out=$(sw status)
+expect_has "status says BootOrder is not reported" "$out" "not reported by this firmware"
+expect_has "status falls back to BootCurrent" "$out" "BootCurrent=0000"
+out=$(sw aether --persistent 2>&1); rc=$?
+expect_rc "persistent arm without BootOrder exits 1" "$rc" 1
+expect_has "persistent arm without BootOrder explains" "$out" "does not report BootOrder"
+expect_eq "persistent arm without BootOrder writes nothing" "$(order_now)" "0000,0001"
+out=$(sw ubuntu --persistent 2>&1); rc=$?
+expect_rc "persistent ubuntu without BootOrder exits 1" "$rc" 1
+
+# --- 35: clear removes BootNext and the record ----------------------------
+setup; std_fixture
+sw aether --persistent >/dev/null 2>&1
+printf '0000\n' >"$FAKE_STATE/next"          # also a pending BootNext
+out=$(sw clear); rc=$?
+expect_rc "clear with a record exits 0" "$rc" 0
+expect_eq "clear restores the recorded order" "$(order_now)" "0000,0001"
+[ "$(next_now)" = "" ] && ok "clear removes BootNext" || bad "clear left BootNext"
+[ -e "$AETHER_STATE_DIR/original-order" ] && bad "clear left the record" || ok "clear removes the record"
+expect_has "clear marker" "$out" "result=cleared"
+out=$(sw status)
+expect_has "clear returns the mode to default" "$out" "Mode        : default"
+
+# --- 36: clear when the order write fails ---------------------------------
+setup; std_fixture
+sw aether --persistent >/dev/null 2>&1
+: >"$FAKE_STATE/fail-order"
+out=$(sw clear 2>&1); rc=$?
+expect_rc "clear with a failing order write exits 4" "$rc" 4
+expect_has "clear reports the failed restore" "$out" "could not restore the recorded BootOrder"
+expect_eq "clear leaves the order untouched on failure" "$(order_now)" "0001,0000"
+expect_eq "clear keeps the record on failure" "$(record_now)" "0000,0001"
+
+# --- 37: unit with a stale record -----------------------------------------
+setup; std_fixture
+sw aether --persistent >/dev/null 2>&1
+sw ubuntu --persistent >/dev/null 2>&1      # order restored, record dropped
+mkdir -p "$AETHER_STATE_DIR"; printf '0000,0001\n' >"$AETHER_STATE_DIR/original-order"  # stale copy
+printf '0001\n' >"$FAKE_STATE/current"
+rm -f "$FAKE_STATE/next"
+out=$(ret 2>&1); rc=$?
+expect_rc "unit with a stale record exits 0" "$rc" 0
+expect_eq "unit with a stale record leaves the order as the record" "$(order_now)" "0000,0001"
+expect_eq "unit with a stale record returns via BootNext" "$(next_now)" "0000"
+[ -e "$AETHER_STATE_DIR/original-order" ] && bad "stale record not removed" || ok "stale record removed"
+
+# --- 38: the unit's BootNext path is unchanged without a record -----------
+setup; std_fixture
+printf '0001\n' >"$FAKE_STATE/current"
+out=$(ret 2>&1); rc=$?
+expect_rc "unit without a record exits 0" "$rc" 0
+expect_eq "unit without a record writes BootNext" "$(next_now)" "0000"
+expect_eq "unit without a record leaves BootOrder" "$(order_now)" "0000,0001"
+expect_has "unit without a record marker mode=next" "$out" "result=switched mode=next"
+
+# --- 39: the `mode` query the unit uses -----------------------------------
+setup; std_fixture
+expect_eq "mode query: default" "$(sw mode)" "AETHER_BOOT_MODE: default"
+printf '0000\n' >"$FAKE_STATE/next"
+expect_eq "mode query: next" "$(sw mode)" "AETHER_BOOT_MODE: next"
+rm -f "$FAKE_STATE/next"
+sw aether --persistent >/dev/null 2>&1
+expect_eq "mode query: persistent" "$(sw mode)" "AETHER_BOOT_MODE: persistent"
+
+# --- 40: persistent round trip without a reachable record (AetherOS /var is
+#         tmpfs, so the record written from Ubuntu is not visible there) -----
+setup; std_fixture
+sw aether --persistent >/dev/null 2>&1
+rm -f "$AETHER_STATE_DIR/original-order"          # as AetherOS sees /var/lib
+[ "$(order_now)" = "0001,0000" ] && ok "tmpfs case: order is still AetherOS first" || bad "tmpfs case: arm failed"
+printf '0001\n' >"$FAKE_STATE/current"
+out=$(ret 2>&1); rc=$?
+expect_rc "tmpfs case: unit exits 0" "$rc" 0
+expect_eq "tmpfs case: order restored byte for byte from the table" "$(order_now)" "0000,0001"
+expect_has "tmpfs case: unit says it rebuilt from the table" "$out" "rebuilding from the table"
+[ "$(next_now)" = "" ] && ok "tmpfs case: no BootNext needed" || bad "tmpfs case: BootNext was written"
+
+# --- 41: AetherOS first with a third OS, no record ------------------------
+setup
+add_entry 0000 on ubuntu "$UBUNTU_PATH"
+add_entry 0001 on AetherOS "$AETHER_PATH"
+add_entry 0002 on Fedora 'HD(1,GPT,99999999-0000-0000-0000-000000000000)/File(\EFI\fedora\shimx64.efi)'
+printf '0001,0000,0002\n' >"$FAKE_STATE/order"; printf '0001\n' >"$FAKE_STATE/current"
+out=$(ret 2>&1); rc=$?
+expect_rc "third-OS case: unit exits 0" "$rc" 0
+expect_eq "third-OS case: internal first, AetherOS last" "$(order_now)" "0000,0002,0001"
+[ "$(next_now)" = "" ] && ok "third-OS case: no BootNext needed" || bad "third-OS case: BootNext was written"
 
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" = 0 ]
