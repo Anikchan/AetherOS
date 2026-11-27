@@ -97,9 +97,14 @@ host-check exit=0
 
 Failure text is `AETHER_SHELL_LAYER_HOST_PROBLEM: <surface> <reason>` followed by
 `AETHER_SHELL_LAYER_HOST_FAILED` and `exit=1` — record the reason verbatim.
-Sizes on a 1920×1080 logical output: menubar 1920×28 (exclusive zone 28), dock
-720×64, launcher 640×480, notifications 360×1080, control centre 340×1080. On a
-HiDPI output the panel stretches to the **logical** width (1920×28 for a
+Sizes on a 1920×1080 logical output (2026-11-28, nine surfaces): background
+1920×1080 (Background layer, all four anchors, exclusive zone −1, keyboard
+none), menubar 1920×28 (exclusive zone 28), dock 720×64, launcher 640×420,
+notifications 360×1052, control centre 340×1052 (both topped by the 28 px menu
+bar), and the three **lazy** `Overlay` surfaces `settings`, `overview` and
+`lock` at 1920×1080 (created on first open, unmapped on close; a fresh session
+reports `planned=9 created=6 mapped=3`, an opened Settings `created=7 mapped=4`).
+On a HiDPI output the panel stretches to the **logical** width (1920×28 for a
 2880×1800 panel at 1.5×).
 
 Headless evidence (development host, no device):
