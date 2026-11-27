@@ -277,7 +277,12 @@ else
     chmod 600 "$WIFI_CONF"
     umask 022
 
-    pkill -f "wpa_supplicant.*$IFACE" 2>/dev/null
+    # busybox in this image has neither pkill nor pgrep (verified absent in P2
+    # run 3), so a stale instance is stopped through pidof + kill instead of a
+    # silent no-op that would leave the old supplicant holding the interface.
+    for pid in $(pidof wpa_supplicant 2>/dev/null); do
+        kill "$pid" 2>/dev/null || true
+    done
     sleep 1
     if wpa_supplicant -B -i "$IFACE" -c "$WIFI_CONF" -D nl80211 2>>"$LOG" \
         || wpa_supplicant -B -i "$IFACE" -c "$WIFI_CONF" -D wext 2>>"$LOG"; then
@@ -359,6 +364,37 @@ if [ "$WIFI_RESULT" = ok ] && [ -n "$IFACE" ]; then
         *) say "WIFI_AFTER_SUSPEND: link down (reconnect after resume needs the daemon)" ;;
     esac
 fi
+
+say ""
+say "### UI / GRAPHICAL SESSION (P3/P4)"
+if command -v systemctl >/dev/null 2>&1; then
+    for u in aether-session aether-shell; do
+        say "$u.service: $(systemctl is-active "$u" 2>/dev/null)/$(systemctl is-enabled "$u" 2>/dev/null)"
+    done
+fi
+say "-- session manifest --"
+[ -f /etc/aether/ui-build.txt ] && cat /etc/aether/ui-build.txt | tee -a "$LOG" || say "no /etc/aether/ui-build.txt (image built without the UI step)"
+say "-- session binaries --"
+for b in aether-compositor aether-shell aether-greeter; do
+    command -v "$b" >/dev/null 2>&1 && say "$b: $(command -v "$b")" || say "$b: MISSING"
+done
+say "-- DRM devices --"
+ls -l /dev/dri 2>/dev/null | tee -a "$LOG" || say "/dev/dri: missing"
+for c in /sys/class/drm/card*-*/status; do
+    [ -e "$c" ] && say "$c: $(cat "$c" 2>/dev/null)"
+done
+say "-- compositor log (tail) --"
+if [ -f /var/log/aether/compositor.log ]; then
+    tail -20 /var/log/aether/compositor.log | tee -a "$LOG"
+    say "-- markers --"
+    for m in SOCKET_READY CLIENT_MAPPED SEAT FOCUS; do
+        say "$m: $(grep -c "AETHER_COMPOSITOR_$m" /var/log/aether/compositor.log 2>/dev/null)"
+    done
+else
+    say "no /var/log/aether/compositor.log"
+fi
+say "-- shell journal (last 10 lines, if any) --"
+journalctl -u aether-shell -u aether-session -n 10 --no-pager 2>/dev/null | tee -a "$LOG" || true
 
 say ""
 say "### MANUAL (cannot be automated from SSH)"

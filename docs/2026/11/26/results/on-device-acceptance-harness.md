@@ -934,3 +934,26 @@ the name (`shl-ac-01-menubar.png`).
   safe-mode ledger and the marker contract are verified headlessly today. Force
   Quit is an intent marker (`AETHER_SHELL_NOHANG_TERMINATE`) until the host wires
   the compositor's xdg unresponsive error.
+
+## 6. Graphical session evidence (added 2026-11-28)
+
+`sh /root/test.sh` gained a `### UI / GRAPHICAL SESSION (P3/P4)` section that
+records, without any manual step:
+
+- `aether-session.service` / `aether-shell.service` active+enabled state,
+- `/etc/aether/ui-build.txt` (the post-build manifest: rustc, compositor
+  features, installed binaries, wiring guard result),
+- presence of `aether-compositor`, `aether-shell`, `aether-greeter`,
+- `/dev/dri` nodes and every `card*-*/status` connector,
+- the last 20 lines of `/var/log/aether/compositor.log` plus marker counts
+  (`SOCKET_READY`, `CLIENT_MAPPED`, `SEAT`, `FOCUS`),
+- the last 10 journal lines of both units.
+
+A successful first graphical boot therefore shows `aether-session
+active/enabled`, `SOCKET_READY: 1`, `CLIENT_MAPPED: 1` and an `eDP` connector
+marked `connected`, with the shell's surfaces visible on tty1.
+
+Boot switching for repeated testing is described in
+`docs/2026/11/28/results/boot-switch-ubuntu-aetheros.md`: from Ubuntu run
+`aether-boot-switch aether` before rebooting, and AetherOS hands the next boot
+back to Ubuntu by itself.
