@@ -82,6 +82,11 @@ BR2_PACKAGE_XWAYLAND=y
 
 # Audio (P2-T04): PipeWire + WirePlumber + ALSA tools
 BR2_PACKAGE_PIPEWIRE=y
+# WirePlumber is the PipeWire session/policy manager and needs Lua >= 5.3
+# (package/wireplumber/Config.in). Without a Lua version the defconfig entry
+# below is dropped silently and the image ships PipeWire with no session
+# manager - seen on the Dell in P2 run 3.
+BR2_PACKAGE_LUA_5_4=y
 BR2_PACKAGE_WIREPLUMBER=y
 BR2_PACKAGE_ALSA_LIB=y
 BR2_PACKAGE_ALSA_UTILS=y

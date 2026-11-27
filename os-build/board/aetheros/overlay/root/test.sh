@@ -145,9 +145,9 @@ say "-- DRM connectors --"
 for c in /sys/class/drm/card*-*/status; do
     [ -e "$c" ] && say "$c: $(cat "$c")"
 done
-say "-- native modes (first connector) --"
-for m in /sys/class/drm/card0/card0-*/modes; do
-    [ -e "$m" ] && { say "$m:"; head -3 "$m"; }
+say "-- native modes --"
+for m in /sys/class/drm/card*-*/modes; do
+    [ -e "$m" ] && { say "$m:"; head -3 "$m" | tee -a "$LOG"; }
 done
 say "-- framebuffer --"
 ls /dev/fb* 2>/dev/null | tee -a "$LOG"
@@ -158,8 +158,21 @@ say ""
 say "### AUDIO (P2-T04)"
 command -v aplay >/dev/null 2>&1 && aplay -l 2>&1 | tee -a "$LOG"
 cat /proc/asound/cards 2>/dev/null | tee -a "$LOG"
-pgrep -a pipewire >/dev/null 2>&1 && say "pipewire: running" || say "pipewire: not running"
-pgrep -a wireplumber >/dev/null 2>&1 && say "wireplumber: running" || say "wireplumber: not running"
+pgrep_ok() {
+    # The image's busybox has no pgrep; pidof is the portable check here.
+    if command -v pidof >/dev/null 2>&1; then
+        pidof "$1" >/dev/null 2>&1
+    else
+        ps 2>/dev/null | grep -v grep | grep -q "$1"
+    fi
+}
+pgrep_ok pipewire && say "pipewire: running" || say "pipewire: not running"
+pgrep_ok wireplumber && say "wireplumber: running" || say "wireplumber: not running"
+if command -v systemctl >/dev/null 2>&1; then
+    for u in pipewire pipewire-pulse wireplumber; do
+        say "$u.service: $(systemctl is-active "$u" 2>/dev/null)/$(systemctl is-enabled "$u" 2>/dev/null)"
+    done
+fi
 if command -v speaker-test >/dev/null 2>&1; then
     say "-- speaker-test (front left/right, 1 loop) --"
     speaker-test -t wav -c 2 -l 1 2>&1 | tail -6 | tee -a "$LOG"

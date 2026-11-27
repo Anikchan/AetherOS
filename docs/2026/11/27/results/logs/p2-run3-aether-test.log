@@ -1,0 +1,344 @@
+================================================================
+AetherOS hardware validation — 2026-11-27 17:05:28 UTC
+================================================================
+
+### SYSTEM
+$ uname -a
+Linux buildroot 6.18.0 #1 SMP PREEMPT_DYNAMIC Thu Nov 26 19:57:10 UTC 2026 x86_64 GNU/Linux
+$ cat /proc/cmdline
+BOOT_IMAGE=/bzImage root=PARTUUID=9f8e7d6c-1a2b-4c3d-8e4f-5a6b7c8d9e0f rootfstype=squashfs rootwait earlycon=efi console=tty0 console=ttyS0,115200n8 net.ifnames=0 biosdevname=0
+$ cat /proc/uptime
+29.06 223.28
+$ free -m
+              total        used        free      shared  buff/cache   available
+Mem:          23756         108       23578           9          70       23440
+Swap:             0           0           0
+$ df -h
+Filesystem                Size      Used Available Use% Mounted on
+/dev/root                39.0M     39.0M         0 100% /
+devtmpfs                 11.6G         0     11.6G   0% /dev
+tmpfs                    11.6G         0     11.6G   0% /dev/shm
+tmpfs                     4.6G      8.6M      4.6G   0% /run
+efivarfs                373.9K    244.0K    124.9K  66% /sys/firmware/efi/efivars
+tmpfs                     4.6G      8.6M      4.6G   0% /etc/machine-id
+tmpfs                    11.6G         0     11.6G   0% /tmp
+tmpfs                     1.0M         0      1.0M   0% /run/credentials/systemd-journald.service
+tmpfs                     1.0M         0      1.0M   0% /run/credentials/systemd-resolved.service
+tmpfs                     1.0M         0      1.0M   0% /run/credentials/systemd-networkd.service
+tmpfs                    11.6G     16.0K     11.6G   0% /var
+tmpfs                    11.6G         0     11.6G   0% /home
+tmpfs                     1.0M         0      1.0M   0% /run/credentials/getty@tty1.service
+tmpfs                     1.0M         0      1.0M   0% /run/credentials/serial-getty@ttyS0.service
+$ mount
+/dev/sda2 on / type squashfs (ro,relatime,errors=continue)
+devtmpfs on /dev type devtmpfs (rw,relatime,size=12160480k,nr_inodes=3040120,mode=755)
+proc on /proc type proc (rw,nosuid,nodev,noexec,relatime)
+sysfs on /sys type sysfs (rw,nosuid,nodev,noexec,relatime)
+tmpfs on /dev/shm type tmpfs (rw,nosuid,nodev)
+devpts on /dev/pts type devpts (rw,nosuid,noexec,relatime,gid=5,mode=620,ptmxmode=000)
+tmpfs on /run type tmpfs (rw,nosuid,nodev,size=4865232k,nr_inodes=819200,mode=755)
+cgroup2 on /sys/fs/cgroup type cgroup2 (rw,nosuid,nodev,noexec,relatime,nsdelegate,memory_recursiveprot)
+efivarfs on /sys/firmware/efi/efivars type efivarfs (rw,nosuid,nodev,noexec,relatime)
+tmpfs on /etc/machine-id type tmpfs (ro,size=4865232k,nr_inodes=819200,mode=755)
+mqueue on /dev/mqueue type mqueue (rw,nosuid,nodev,noexec,relatime)
+tracefs on /sys/kernel/tracing type tracefs (rw,nosuid,nodev,noexec,relatime)
+tmpfs on /tmp type tmpfs (rw,nosuid,nodev,size=12163076k,nr_inodes=1048576)
+hugetlbfs on /dev/hugepages type hugetlbfs (rw,nosuid,nodev,relatime,pagesize=2M)
+debugfs on /sys/kernel/debug type debugfs (rw,nosuid,nodev,noexec,relatime)
+tmpfs on /run/credentials/systemd-journald.service type tmpfs (ro,nosuid,nodev,noexec,relatime,nosymfollow,size=1024k,nr_inodes=1024,mode=700,noswap)
+tmpfs on /run/credentials/systemd-resolved.service type tmpfs (ro,nosuid,nodev,noexec,relatime,nosymfollow,size=1024k,nr_inodes=1024,mode=700,noswap)
+tmpfs on /run/credentials/systemd-networkd.service type tmpfs (ro,nosuid,nodev,noexec,relatime,nosymfollow,size=1024k,nr_inodes=1024,mode=700,noswap)
+tmpfs on /var type tmpfs (rw,nodev,relatime)
+tmpfs on /home type tmpfs (rw,nosuid,nodev,relatime)
+tmpfs on /run/credentials/getty@tty1.service type tmpfs (ro,nosuid,nodev,noexec,relatime,nosymfollow,size=1024k,nr_inodes=1024,mode=700,noswap)
+tmpfs on /run/credentials/serial-getty@ttyS0.service type tmpfs (ro,nosuid,nodev,noexec,relatime,nosymfollow,size=1024k,nr_inodes=1024,mode=700,noswap)
+
+### NETWORK
+$ cat /proc/net/dev
+Inter-|   Receive                                                |  Transmit
+ face |bytes    packets errs drop fifo frame compressed multicast|bytes    packets errs drop fifo colls carrier compressed
+    lo:       0       0    0    0    0     0          0         0        0       0    0    0    0     0       0          0
+  sit0:       0       0    0    0    0     0          0         0        0       0    0    0    0     0       0          0
+  eth0:    2991      27    0   17    0     0          0         0     2501      22    0    0    0     0       0          0
+ wlan0:       0       0    0    0    0     0          0         0        0       0    0    0    0     0       0          0
+1: lo: <LOOPBACK,UP,LOWER_UP> mtu 65536 qdisc noqueue qlen 1000
+    inet 127.0.0.1/8 scope host lo
+       valid_lft forever preferred_lft forever
+3: eth0: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc fq_codel qlen 1000
+    inet 192.168.68.150/24 brd 192.168.68.255 scope global eth0
+       valid_lft forever preferred_lft forever
+    inet 192.168.68.112/24 brd 192.168.68.255 scope global secondary dynamic eth0
+       valid_lft 7180sec preferred_lft 7180sec
+default via 192.168.68.1 dev eth0  src 192.168.68.112  metric 100 
+49.205.72.130 via 192.168.68.1 dev eth0  src 192.168.68.112  metric 100 
+162.159.200.1 via 192.168.68.1 dev eth0  src 192.168.68.112  metric 100 
+183.82.243.66 via 192.168.68.1 dev eth0  src 192.168.68.112  metric 100 
+192.168.68.0/24 dev eth0 scope link  src 192.168.68.150 
+192.168.68.1 dev eth0 scope link  src 192.168.68.112  metric 100 
+# This is /run/systemd/resolve/resolv.conf managed by man:systemd-resolved(8).
+# Do not edit.
+#
+# This file might be symlinked as /etc/resolv.conf. If you're looking at
+# /etc/resolv.conf and seeing this text, you have followed the symlink.
+#
+# This is a dynamic resolv.conf file for connecting local clients directly to
+# all known uplink DNS servers. This file lists all configured search domains.
+#
+# Third party programs should typically not access this file directly, but only
+# through the symlink at /etc/resolv.conf. To manage man:resolv.conf(5) in a
+# different way, replace this symlink by a static file or a different symlink.
+#
+# See man:systemd-resolved.service(8) for details about the supported modes of
+# operation for /etc/resolv.conf.
+
+nameserver 49.205.72.130
+nameserver 183.82.243.66
+search .
+
+### PCI / USB
+$ lspci
+00:00.0 Host bridge: Intel Corporation Tiger Lake-UP3/H35 4 cores Host Bridge/DRAM Registers (rev 01)
+00:02.0 VGA compatible controller: Intel Corporation TigerLake-LP GT2 [Iris Xe Graphics] (rev 01)
+00:04.0 Signal processing controller: Intel Corporation TigerLake-LP Dynamic Tuning Processor Participant (rev 01)
+00:06.0 PCI bridge: Intel Corporation 11th Gen Core Processor PCIe Controller (rev 01)
+00:07.0 PCI bridge: Intel Corporation Tiger Lake-LP Thunderbolt 4 PCI Express Root Port #0 (rev 01)
+00:0a.0 Signal processing controller: Intel Corporation Tigerlake Telemetry Aggregator Driver (rev 01)
+00:0d.0 USB controller: Intel Corporation Tiger Lake-LP Thunderbolt 4 USB Controller (rev 01)
+00:0d.2 USB controller: Intel Corporation Tiger Lake-LP Thunderbolt 4 NHI #0 (rev 01)
+00:12.0 Serial controller: Intel Corporation Tiger Lake-LP Integrated Sensor Hub (rev 20)
+00:14.0 USB controller: Intel Corporation Tiger Lake-LP USB 3.2 Gen 2x1 xHCI Host Controller (rev 20)
+00:14.2 RAM memory: Intel Corporation Tiger Lake-LP Shared SRAM (rev 20)
+00:15.0 Serial bus controller: Intel Corporation Tiger Lake-LP Serial IO I2C Controller #0 (rev 20)
+00:15.1 Serial bus controller: Intel Corporation Tiger Lake-LP Serial IO I2C Controller #1 (rev 20)
+00:16.0 Communication controller: Intel Corporation Tiger Lake-LP Management Engine Interface (rev 20)
+00:1c.0 PCI bridge: Intel Corporation Tiger Lake-LP PCI Express Root Port #5 (rev 20)
+00:1c.6 PCI bridge: Intel Corporation Tiger Lake-LP PCI Express Root Port #7 (rev 20)
+00:1f.0 ISA bridge: Intel Corporation Tiger Lake-LP LPC Controller (rev 20)
+00:1f.3 Multimedia audio controller: Intel Corporation Tiger Lake-LP Smart Sound Technology Audio Controller (rev 20)
+00:1f.4 SMBus: Intel Corporation Tiger Lake-LP SMBus Controller (rev 20)
+00:1f.5 Serial bus controller: Intel Corporation Tiger Lake-LP SPI Controller (rev 20)
+01:00.0 Non-Volatile memory controller: Sandisk Corp IX SN530 NVMe SSD (DRAM-less) (rev 01)
+2c:00.0 3D controller: NVIDIA Corporation GP108M [GeForce MX330] (rev a1)
+2d:00.0 Network controller: Qualcomm Atheros QCA6174 802.11ac Wireless Network Adapter (rev 32)
+$ lsusb
+unable to initialize usb specBus 001 Device 001: ID 1d6b:0002 Linux 6.18.0 xhci-hcd xHCI Host Controller
+Bus 002 Device 001: ID 1d6b:0003 Linux 6.18.0 xhci-hcd xHCI Host Controller
+Bus 002 Device 002: ID 0bda:8153 Realtek USB 10/100/1000 LAN
+Bus 003 Device 001: ID 1d6b:0002 Linux 6.18.0 xhci-hcd xHCI Host Controller
+Bus 003 Device 002: ID 0781:5567 SanDisk Cruzer Blade
+Bus 003 Device 003: ID 27c6:538d Goodix FingerPrint
+Bus 003 Device 004: ID 0bda:565a CN0HK46K8LG000CEHEL9A03 Integrated_Webcam_HD
+Bus 003 Device 005: ID 0cf3:e007  
+Bus 004 Device 001: ID 1d6b:0003 Linux 6.18.0 xhci-hcd xHCI Host Controller
+
+### GRAPHICS (P2-T02)
+00:02.0 VGA compatible controller: Intel Corporation TigerLake-LP GT2 [Iris Xe Graphics] (rev 01)
+	DeviceName: Onboard - Video
+	Subsystem: Dell Device 0a01
+	Kernel driver in use: i915
+--
+2c:00.0 3D controller: NVIDIA Corporation GP108M [GeForce MX330] (rev a1)
+	Subsystem: Dell Device 0a01
+2d:00.0 Network controller: Qualcomm Atheros QCA6174 802.11ac Wireless Network Adapter (rev 32)
+	Subsystem: Dell Device 0310
+[    0.816526] ACPI: bus type drm_connector registered
+[    0.817082] [drm] amdgpu kernel modesetting enabled.
+[    0.960164] fb0: EFI VGA frame buffer device
+[    4.071374] i915 0000:00:02.0: [drm] Found tigerlake/uy (device ID 9a49) integrated display version 12.00 stepping C0
+[    4.074151] i915 0000:00:02.0: vgaarb: deactivate vga console
+[    4.074745] i915 0000:00:02.0: [drm] Transparent Hugepage support is recommended for optimal performance on this platform!
+[    4.079090] i915 0000:00:02.0: vgaarb: VGA decodes changed: olddecodes=io+mem,decodes=io+mem:owns=io+mem
+[    4.082451] i915 0000:00:02.0: [drm] Finished loading DMC firmware i915/tgl_dmc_ver2_12.bin (v2.12)
+[    4.116271] [drm] Initialized i915 1.6.0 for 0000:00:02.0 on minor 0
+[    4.123897] snd_hda_intel 0000:00:1f.3: bound 0000:00:02.0 (ops intel_audio_component_bind_ops [i915])
+[    4.128427] fbcon: i915drmfb (fb0) is primary device
+[    4.169022] i915 0000:00:02.0: [drm] fb0: i915drmfb frame buffer device
+-- DRM connectors --
+/sys/class/drm/card0-DP-1/status: disconnected
+/sys/class/drm/card0-HDMI-A-1/status: disconnected
+/sys/class/drm/card0-eDP-1/status: connected
+-- native modes (first connector) --
+/sys/class/drm/card0/card0-DP-1/modes:
+/sys/class/drm/card0/card0-HDMI-A-1/modes:
+/sys/class/drm/card0/card0-eDP-1/modes:
+-- framebuffer --
+/dev/fb0
+
+### AUDIO (P2-T04)
+**** List of PLAYBACK Hardware Devices ****
+card 0: PCH [HDA Intel PCH], device 0: ALC3204 Analog [ALC3204 Analog]
+  Subdevices: 1/1
+  Subdevice #0: subdevice #0
+card 0: PCH [HDA Intel PCH], device 3: HDMI 0 [HDMI 0]
+  Subdevices: 1/1
+  Subdevice #0: subdevice #0
+card 0: PCH [HDA Intel PCH], device 7: HDMI 1 [HDMI 1]
+  Subdevices: 1/1
+  Subdevice #0: subdevice #0
+card 0: PCH [HDA Intel PCH], device 8: HDMI 2 [HDMI 2]
+  Subdevices: 1/1
+  Subdevice #0: subdevice #0
+card 0: PCH [HDA Intel PCH], device 9: HDMI 3 [HDMI 3]
+  Subdevices: 1/1
+  Subdevice #0: subdevice #0
+ 0 [PCH            ]: HDA-Intel - HDA Intel PCH
+                      HDA Intel PCH at 0x6033198000 irq 129
+pipewire: not running
+wireplumber: not running
+-- speaker-test (front left/right, 1 loop) --
+Periods = 4
+was set period_size = 1024
+was set buffer_size = 4096
+ 0 - Front Left
+ 1 - Front Right
+Time per period = 2.940685
+-- microphone round-trip --
+MIC_OK
+
+### INPUT (P2-T05)
+$ ls /dev/input
+by-path
+event0
+event1
+event10
+event11
+event2
+event3
+event4
+event5
+event6
+event7
+event8
+event9
+Device:                  Video Bus
+Kernel:                  /dev/input/event5
+Capabilities:            keyboard 
+Device:                  Video Bus
+Kernel:                  /dev/input/event6
+Capabilities:            keyboard 
+Device:                  Power Button
+Kernel:                  /dev/input/event1
+Capabilities:            keyboard 
+Device:                  Lid Switch
+Kernel:                  /dev/input/event0
+Capabilities:            switch
+Device:                  Sleep Button
+Kernel:                  /dev/input/event2
+Capabilities:            keyboard 
+Device:                  AT Translated Set 2 keyboard
+Kernel:                  /dev/input/event3
+Capabilities:            keyboard 
+Device:                  PS/2 Generic Mouse
+Kernel:                  /dev/input/event4
+Capabilities:            pointer 
+-- backlight --
+/sys/class/backlight/intel_backlight: 96000/96000
+-- LEDs --
+input3::capslock
+input3::numlock
+input3::scrolllock
+
+### BATTERY / THERMAL
+    state:               fully-charged
+    energy:              24.795 Wh
+    percentage:          100%
+    capacity:            46.7742%
+BAT0/capacity: 100
+BAT0/status: Full
+x86_pkg_temp: 58000 mC
+
+### WEBCAM
+/dev/video0
+/dev/video1
+
+### WIFI (driver/firmware/scan; connect needs credentials)
+phy#0
+	Interface wlan0
+		ifindex 4
+		wdev 0x1
+		addr 64:6c:80:2b:4e:07
+		type managed
+		multicast TXQ:
+			qsz-byt	qsz-pkt	flows	drops	marks	overlmt	hashcol	tx-bytes	tx-packets
+			0	0	0	0	0	0	0	0		0
+	signal: -26.00 dBm
+	SSID: Raj_IoT
+		 * SSID List
+	signal: -55.00 dBm
+	SSID: Raj
+		 * SSID List
+	signal: -40.00 dBm
+		 * SSID List
+	signal: -27.00 dBm
+		 * SSID List
+	signal: -38.00 dBm
+	SSID: Raj
+		 * SSID List
+	signal: -39.00 dBm
+	SSID: Raj_Guest
+		 * SSID List
+	signal: -67.00 dBm
+	SSID: Airtel_Adi_anora143
+		 * SSID List
+	signal: -26.00 dBm
+[    1.009773] cfg80211: failed to load regulatory.db
+[    3.788319] ath10k_pci 0000:2d:00.0: enabling device (0000 -> 0002)
+[    3.790514] ath10k_pci 0000:2d:00.0: pci irq msi oper_irq_mode 2 irq_mode 0 reset_mode 0
+[    4.043705] ath10k_pci 0000:2d:00.0: qca6174 hw3.2 target 0x05030000 chip_id 0x00340aff sub 1028:0310
+[    4.045250] ath10k_pci 0000:2d:00.0: kconfig debug 0 debugfs 0 tracing 0 dfs 0 testmode 0
+[    4.046746] ath10k_pci 0000:2d:00.0: firmware ver WLAN.RM.4.4.1-00309- api 6 features wowlan,ignore-otp,mfp crc32 0793bcf2
+[    4.121587] ath10k_pci 0000:2d:00.0: board_file api 2 bmi_id N/A crc32 d2863f91
+[    4.217408] ath10k_pci 0000:2d:00.0: htt-ver 3.87 wmi-op 4 htt-op 3 cal otp max-sta 32 raw 0 hwcrypto 1
+
+### BLUETOOTH
+hci0
+	Name: buildroot
+	Class: 0x0000010c (268)
+	Powered: yes
+	Pairable: no
+	SupportedIncludes: local-name
+
+### SLEEP / RESUME (P2-T06) — 10 cycles, RTC auto-wake 15s
+cycle 1 pre-suspend 17:05:45
+cycle 1 resumed after 13s
+cycle 2 pre-suspend 17:06:00
+cycle 2 resumed after 16s
+cycle 3 pre-suspend 17:06:18
+cycle 3 resumed after 15s
+cycle 4 pre-suspend 17:06:35
+cycle 4 resumed after 10s
+cycle 5 pre-suspend 17:06:47
+cycle 5 resumed after 15s
+cycle 6 pre-suspend 17:07:04
+cycle 6 resumed after 15s
+cycle 7 pre-suspend 17:07:21
+cycle 7 resumed after 15s
+cycle 8 pre-suspend 17:07:38
+cycle 8 resumed after 15s
+cycle 9 pre-suspend 17:07:55
+cycle 9 resumed after 15s
+cycle 10 pre-suspend 17:08:12
+cycle 10 resumed after 15s
+[  192.087211] Freezing remaining freezable tasks completed (elapsed 0.001 seconds)
+[  192.089020] printk: Suspending console(s) (use no_console_suspend to debug)
+[  192.424317] ACPI: EC: interrupt blocked
+[  206.175827] ACPI: EC: interrupt unblocked
+[  206.559890] r8152 2-1:1.0 eth0: carrier on
+[  207.016292] OOM killer enabled.
+[  207.017494] Restarting tasks: Starting
+[  207.018852] Restarting tasks: Done
+[  207.019880] efivarfs: resyncing variable state
+[  207.026699] efivarfs: finished resyncing variable state
+[  207.027912] random: crng reseeded on system resumption
+[  207.065603] PM: suspend exit
+
+### MANUAL (cannot be automated from SSH)
+  - Touchpad: run 'libinput debug-events' and tap/scroll/3-finger; expect POINTER/GESTURE events.
+  - Brightness: press Fn+Up/Down; check /sys/class/backlight/intel_backlight/brightness changes.
+  - Volume: press Fn+Up/Down; check 'amixer sget Master' or speaker output.
+  - External display: plug HDMI/USB-C; check /sys/class/drm/card0-HDMI-A-1/status = connected.
+  - Reboot to Windows and back (dual-boot coexistence).
+
+### SUMMARY
+log: /var/log/aether-test.log
+AETHER_TEST_DONE
