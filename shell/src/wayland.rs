@@ -33,8 +33,8 @@ use std::time::{Duration, Instant};
 use slint::platform::software_renderer::PremultipliedRgbaColor;
 
 use wayland_client::protocol::{
-    wl_buffer, wl_compositor, wl_keyboard, wl_output, wl_pointer, wl_registry, wl_seat, wl_shm,
-    wl_shm_pool, wl_surface,
+    wl_buffer, wl_callback, wl_compositor, wl_keyboard, wl_output, wl_pointer, wl_registry,
+    wl_seat, wl_shm, wl_shm_pool, wl_surface,
 };
 use wayland_client::{Connection, Dispatch, EventQueue, Proxy, QueueHandle, WEnum};
 use wayland_protocols_wlr::layer_shell::v1::client::{zwlr_layer_shell_v1, zwlr_layer_surface_v1};
@@ -75,7 +75,14 @@ struct Slot {
     size: Option<(i32, i32)>,
     /// Buffer scale of the output this surface entered (1 when unknown).
     scale: i32,
-    buffer: Option<ShmBuffer>,
+    /// Two buffers: the compositor shows one while the shell writes the other.
+    buffers: [Option<SlotBuffer>; 2],
+    /// Index of the buffer the next frame should be written into.
+    next_buffer: usize,
+    /// The `wl_surface.frame` callback of the last commit, until it fires.
+    frame: Option<FrameWait>,
+    /// A repaint is owed to this surface but its frame callback has not fired.
+    pending: bool,
     mapped: bool,
     /// Frames this surface was painted in.
     paints: u64,
@@ -83,12 +90,58 @@ struct Slot {
     last_paint_ms: f64,
 }
 
+/// One of a surface's two buffers, plus whether the compositor has finished
+/// with it (`wl_buffer.release`).
+struct SlotBuffer {
+    shm: ShmBuffer,
+    released: bool,
+}
+
+impl SlotBuffer {
+    fn size(&self) -> (u32, u32) {
+        self.shm.size
+    }
+}
+
+/// A requested `wl_surface.frame` callback.
+struct FrameWait {
+    callback: wl_callback::WlCallback,
+    requested: Instant,
+    done: bool,
+}
+
 impl Slot {
     fn buffer_size(&self) -> (u32, u32) {
-        self.buffer
-            .as_ref()
-            .map(|buffer| buffer.size)
+        self.buffers
+            .iter()
+            .flatten()
+            .map(SlotBuffer::size)
+            .next()
             .unwrap_or((0, 0))
+    }
+
+    /// The buffer to write next, if the compositor released one.
+    fn free_buffer(&self) -> Option<usize> {
+        let preferred = self.next_buffer % 2;
+        if self.buffers[preferred]
+            .as_ref()
+            .is_none_or(|buffer| buffer.released)
+        {
+            return Some(preferred);
+        }
+        let other = (preferred + 1) % 2;
+        self.buffers[other]
+            .as_ref()
+            .filter(|buffer| buffer.released)
+            .map(|_| other)
+    }
+
+    /// Whether a `wl_surface.frame` callback is outstanding and recent.
+    fn frame_ready(&self, fallback: Duration) -> bool {
+        match &self.frame {
+            None => true,
+            Some(frame) => frame.done || frame.requested.elapsed() >= fallback,
+        }
     }
 }
 
@@ -146,6 +199,10 @@ pub struct SurfaceReport {
     pub name: &'static str,
     pub namespace: &'static str,
     pub layer_name: &'static str,
+    /// Created on demand (the full-screen overlays).
+    pub lazy: bool,
+    /// The surface exists on the compositor (it was created).
+    pub created: bool,
     pub anchors: u32,
     pub exclusive_zone: i32,
     pub margin_top: i32,
@@ -165,6 +222,15 @@ pub struct SurfaceReport {
 
 impl SurfaceReport {
     fn problem(&self) -> Option<String> {
+        if !self.created {
+            // A lazy overlay that has not been opened yet is expected to be
+            // absent; anything else in the plan must exist.
+            return if self.lazy {
+                None
+            } else {
+                Some(format!("{} was never created", self.name))
+            };
+        }
         if self.size.is_none() {
             return Some(format!(
                 "{} was created but never configured (no sized zwlr_layer_surface_v1.configure)",
@@ -226,6 +292,13 @@ impl HostReport {
         );
         for surface in &self.surfaces {
             out.push_str(&format!(
+                "AETHER_SHELL_LAYER_PLANNED: name={} namespace={} layer={} lazy={} created={}\n",
+                surface.name, surface.namespace, surface.layer_name, surface.lazy, surface.created
+            ));
+            if !surface.created {
+                continue;
+            }
+            out.push_str(&format!(
                 "AETHER_SHELL_LAYER_CREATED: name={} namespace={} layer={} anchors={} size={}x{} exclusive_zone={} margin_top={} keyboard={}\n",
                 surface.name,
                 surface.namespace,
@@ -260,6 +333,11 @@ impl HostReport {
                 surface.last_paint_ms
             ));
         }
+        let created = self
+            .surfaces
+            .iter()
+            .filter(|surface| surface.created)
+            .count();
         let configured = self
             .surfaces
             .iter()
@@ -276,8 +354,9 @@ impl HostReport {
             .filter(|surface| surface.buffer != (0, 0))
             .count();
         out.push_str(&format!(
-            "AETHER_SHELL_LAYER_HOST_READY: surfaces={} configured={} mapped={} painted={}\n",
+            "AETHER_SHELL_LAYER_HOST_READY: planned={} created={} configured={} mapped={} painted={}\n",
             self.surfaces.len(),
+            created,
             configured,
             mapped,
             painted
@@ -336,6 +415,8 @@ pub struct LayerHost {
     painter: Option<LayerPainter>,
     /// Output the surfaces live on: `(logical size, buffer scale)`.
     output: ((i32, i32), i32),
+    /// Accessibility text scale the plan was built at.
+    text_scale: f32,
     /// Scratch buffer for one surface's pixels.
     scratch: Vec<u8>,
     /// Where per-surface PNG evidence is written.
@@ -431,6 +512,7 @@ impl LayerHost {
             display,
             painter: None,
             output: ((0, 0), 1),
+            text_scale: 1.0,
             scratch: Vec::new(),
             frames_out: None,
             commits: 0,
@@ -444,57 +526,18 @@ impl LayerHost {
         self.frames_out = dir;
     }
 
-    /// Create every planned layer surface in plan order and learn its
-    /// configure. `text_scale` is the accessibility scale the panel sizes and
-    /// the menu-bar margin follow.
+    /// Create the surfaces that exist at boot (everything except the lazy
+    /// full-screen overlays) and learn their configure.
+    /// `text_scale` is the accessibility scale the panel sizes and the
+    /// menu-bar margin follow.
     pub fn create_surfaces(&mut self, text_scale: f32) -> Result<(), String> {
-        let compositor = self.state.compositor.clone().expect("bound in connect");
-        let layer_shell = self.state.layer_shell.clone().expect("bound in connect");
-        let qh = self.queue.handle();
-
-        for (index, request) in host::plan_at(text_scale).into_iter().enumerate() {
-            let wl_surface = compositor.create_surface(&qh, index);
-            let layer_surface = layer_shell.get_layer_surface(
-                &wl_surface,
-                None,
-                match request.layer {
-                    0 => zwlr_layer_shell_v1::Layer::Background,
-                    1 => zwlr_layer_shell_v1::Layer::Bottom,
-                    2 => zwlr_layer_shell_v1::Layer::Top,
-                    _ => zwlr_layer_shell_v1::Layer::Overlay,
-                },
-                request.namespace.to_string(),
-                &qh,
-                index,
-            );
-            layer_surface.set_anchor(zwlr_layer_surface_v1::Anchor::from_bits_truncate(
-                request.anchors,
-            ));
-            layer_surface.set_size(request.width.max(0) as u32, request.height.max(0) as u32);
-            layer_surface.set_margin(request.margin_top.max(0), 0, 0, 0);
-            layer_surface.set_exclusive_zone(request.exclusive_zone);
-            layer_surface.set_keyboard_interactivity(match request.keyboard_interactivity {
-                KEYBOARD_EXCLUSIVE => zwlr_layer_surface_v1::KeyboardInteractivity::Exclusive,
-                KEYBOARD_ON_DEMAND => zwlr_layer_surface_v1::KeyboardInteractivity::OnDemand,
-                _ => zwlr_layer_surface_v1::KeyboardInteractivity::None,
-            });
-            // The output is resolved by the compositor; the scale follows
-            // `wl_surface.enter` and is applied before the first attach.
-            wl_surface.set_buffer_scale(1);
-            wl_surface.commit();
-            self.state.slots.push(Slot {
-                request,
-                wl_surface,
-                layer_surface,
-                configures: Vec::new(),
-                acked: 0,
-                size: None,
-                scale: 1,
-                buffer: None,
-                mapped: false,
-                paints: 0,
-                last_paint_ms: 0.0,
-            });
+        self.text_scale = text_scale;
+        let requests: Vec<HostRequest> = host::plan_at(text_scale)
+            .into_iter()
+            .filter(|request| !request.lazy)
+            .collect();
+        for request in requests {
+            self.create_slot(request)?;
         }
 
         // The first commit makes the compositor send a sized configure after
@@ -518,6 +561,97 @@ impl LayerHost {
         }
         self.output = self.resolve_output();
         Ok(())
+    }
+
+    /// Create one surface from its request (called for the eager surfaces at
+    /// boot and for an overlay the first time it opens).
+    fn create_slot(&mut self, request: HostRequest) -> Result<(), String> {
+        let compositor = self.state.compositor.clone().ok_or("no wl_compositor")?;
+        let layer_shell = self
+            .state
+            .layer_shell
+            .clone()
+            .ok_or("no zwlr_layer_shell_v1")?;
+        let qh = self.queue.handle();
+        let index = self.state.slots.len();
+
+        let wl_surface = compositor.create_surface(&qh, index);
+        let layer_surface = layer_shell.get_layer_surface(
+            &wl_surface,
+            None,
+            match request.layer {
+                0 => zwlr_layer_shell_v1::Layer::Background,
+                1 => zwlr_layer_shell_v1::Layer::Bottom,
+                2 => zwlr_layer_shell_v1::Layer::Top,
+                _ => zwlr_layer_shell_v1::Layer::Overlay,
+            },
+            request.namespace.to_string(),
+            &qh,
+            index,
+        );
+        layer_surface.set_anchor(zwlr_layer_surface_v1::Anchor::from_bits_truncate(
+            request.anchors,
+        ));
+        layer_surface.set_size(request.width.max(0) as u32, request.height.max(0) as u32);
+        layer_surface.set_margin(request.margin_top.max(0), 0, 0, 0);
+        layer_surface.set_exclusive_zone(request.exclusive_zone);
+        layer_surface.set_keyboard_interactivity(match request.keyboard_interactivity {
+            KEYBOARD_EXCLUSIVE => zwlr_layer_surface_v1::KeyboardInteractivity::Exclusive,
+            KEYBOARD_ON_DEMAND => zwlr_layer_surface_v1::KeyboardInteractivity::OnDemand,
+            _ => zwlr_layer_surface_v1::KeyboardInteractivity::None,
+        });
+        // The output is resolved by the compositor; the scale follows
+        // `wl_surface.enter` and is applied before the first attach.
+        wl_surface.set_buffer_scale(1);
+        wl_surface.commit();
+        self.state.slots.push(Slot {
+            request,
+            wl_surface,
+            layer_surface,
+            configures: Vec::new(),
+            acked: 0,
+            size: None,
+            scale: 1,
+            buffers: [None, None],
+            next_buffer: 0,
+            frame: None,
+            pending: false,
+            mapped: false,
+            paints: 0,
+            last_paint_ms: 0.0,
+        });
+        Ok(())
+    }
+
+    /// Create the lazy overlay surfaces whose panel is open and finish their
+    /// configure round trip. Returns whether anything was created.
+    fn ensure_overlays(&mut self, overlay: Overlay) -> Result<bool, String> {
+        let requests: Vec<HostRequest> = host::plan_at(self.text_scale)
+            .into_iter()
+            .filter(|request| request.lazy && panel_open(request.name, overlay))
+            .filter(|request| {
+                !self
+                    .state
+                    .slots
+                    .iter()
+                    .any(|slot| slot.request.namespace == request.namespace)
+            })
+            .collect();
+        if requests.is_empty() {
+            return Ok(false);
+        }
+        for request in requests {
+            self.create_slot(request)?;
+        }
+        self.roundtrip()?;
+        self.roundtrip()?;
+        self.ack_configures();
+        let (output, _) = self.output;
+        // A lazily created overlay must be answerable straight away, or the
+        // first frame it paints would be composed from a stale scene.
+        self.output = self.resolve_output();
+        let _ = output;
+        Ok(true)
     }
 
     /// Output rect and buffer scale the surfaces live on.
@@ -556,6 +690,12 @@ impl LayerHost {
     }
 
     /// Paint and commit one frame. Returns `false` when nothing changed.
+    ///
+    /// A surface is painted when it owes a repaint (a dirty region touched it,
+    /// it has never been mapped, or its panel just opened) **and** its
+    /// `wl_surface.frame` callback has fired, so the commits follow the
+    /// compositor's frame clock instead of a timer. The 50 ms fallback only
+    /// matters when no callback arrives.
     pub fn present(&mut self, controller: &ShellController) -> Result<bool, String> {
         let (output, scale) = self.output;
         let first = self.painter.is_none();
@@ -564,6 +704,9 @@ impl LayerHost {
             self.painter = Some(painter);
         }
         self.ack_configures();
+        let overlay = controller.state().overlay;
+        // A full-screen overlay is created the first time its panel opens.
+        let mut changed = self.ensure_overlays(overlay)?;
         // Repaint only when the controller touched the Slint tree (property
         // change, key, timer, animation tick) — the same switch for settings,
         // focus, hover and input.
@@ -571,12 +714,12 @@ impl LayerHost {
             let painter = self.painter.as_mut().ok_or("the painter was not created")?;
             painter.paint(controller.ui())?
         };
-        let mut changed = painted || first;
+        changed |= painted || first;
         let mut work: Vec<(usize, (u32, u32), bool)> = Vec::new();
+        let fallback = FRAME_FALLBACK;
         {
             let painter = self.painter.as_ref().ok_or("the painter was not created")?;
-            let overlay = controller.state().overlay;
-            for (index, slot) in self.state.slots.iter().enumerate() {
+            for (index, slot) in self.state.slots.iter_mut().enumerate() {
                 let Some(size) = slot.size else { continue };
                 let slot_scale = slot.scale.max(1);
                 let want = ((size.0 * slot_scale) as u32, (size.1 * slot_scale) as u32);
@@ -586,17 +729,27 @@ impl LayerHost {
                     }
                     continue;
                 }
-                if slot.mapped && slot.buffer_size() == want && !first {
-                    // The wallpaper never changes with shell state, so it is
-                    // committed once and left alone.
-                    if slot.request.layer == 0 {
+                // What this surface owes: a fresh map, a dirty region that
+                // overlaps it, or work left over from a frame it was not ready
+                // for.
+                let touched = painted && painter.touched(&slot.request);
+                if slot.request.layer == 0 {
+                    // The wallpaper never changes with shell state.
+                    if slot.mapped {
                         continue;
                     }
-                    // Nothing painted this frame and the surface is already
-                    // correct: do not touch it (one commit per frame maximum).
-                    if !painted || !painter.touched(&slot.request) {
-                        continue;
-                    }
+                    work.push((index, want, false));
+                    continue;
+                }
+                if slot.mapped && slot.buffer_size() == want && !touched && !slot.pending {
+                    continue;
+                }
+                if !slot.frame_ready(fallback) {
+                    // The compositor has not finished the previous frame on
+                    // this surface; keep the work pending instead of queueing
+                    // commits it would drop.
+                    slot.pending = true;
+                    continue;
                 }
                 work.push((index, want, false));
             }
@@ -607,74 +760,107 @@ impl LayerHost {
                 slot.wl_surface.attach(None, 0, 0);
                 slot.wl_surface.commit();
                 slot.mapped = false;
+                slot.pending = false;
                 self.unmaps += 1;
                 changed = true;
-            } else {
-                if self.paint_slot(index, want)? {
-                    changed = true;
-                }
+            } else if self.paint_slot(index, want)? {
+                changed = true;
             }
         }
         self.conn.flush().ok();
         Ok(changed)
     }
 
-    /// Render one surface's rectangle into its SHM buffer and commit it.
+    /// Render one surface's rectangle into a free SHM buffer and commit it,
+    /// then ask for the frame callback that gates its next paint.
     fn paint_slot(&mut self, index: usize, want: (u32, u32)) -> Result<bool, String> {
         let shm = self.state.shm.clone().ok_or("no wl_shm")?;
         let qh = self.queue.handle();
         let request = self.state.slots[index].request.clone();
         let scale = self.state.slots[index].scale.max(1);
 
-        // (Re)create the buffer when its size changed (output or text scale).
+        // (Re)create both buffers when the surface size changed.
         if self.state.slots[index].buffer_size() != want {
-            let path = self.runtime_dir.join(format!(
-                "aether-shell-shm-{}-{}x{}.raw",
-                request.name, want.0, want.1
-            ));
-            let buffer = create_buffer(
-                &shm,
-                &qh,
-                &path,
-                want.0 as i32,
-                want.1 as i32,
-                PremultipliedRgbaColor::default(),
-            )?;
-            self.state.slots[index].buffer = Some(buffer);
+            let mut buffers = [None, None];
+            for (slot_index, buffer) in buffers.iter_mut().enumerate() {
+                let path = self.runtime_dir.join(format!(
+                    "aether-shell-shm-{}-{}-{}x{}.raw",
+                    request.name, slot_index, want.0, want.1
+                ));
+                let shm_buffer = create_buffer(
+                    &shm,
+                    &qh,
+                    &path,
+                    want.0 as i32,
+                    want.1 as i32,
+                    PremultipliedRgbaColor::default(),
+                    (index, slot_index),
+                )?;
+                *buffer = Some(SlotBuffer {
+                    shm: shm_buffer,
+                    released: true,
+                });
+            }
+            let slot = &mut self.state.slots[index];
+            slot.buffers = buffers;
+            slot.next_buffer = 0;
+            slot.frame = None;
         }
+
+        // Never write into a buffer the compositor still displays.
+        let Some(use_buffer) = self.state.slots[index].free_buffer() else {
+            self.state.slots[index].pending = true;
+            return Ok(false);
+        };
 
         let started = Instant::now();
         let mut scratch = std::mem::take(&mut self.scratch);
         let (width, height) = {
             let painter = self.painter.as_ref().ok_or("the painter was not created")?;
             if request.layer == 0 {
-                // Background layer: the design wallpaper at output size. It does
-                // not depend on shell state, so it is painted once.
                 painter.write_wallpaper(scale, &mut scratch)
             } else {
                 painter.write_surface(&request, scale, &mut scratch)?
             }
         };
-        if let Some(buffer) = self.state.slots[index].buffer.as_ref() {
-            buffer.write(&scratch)?;
+        {
+            let slot = &mut self.state.slots[index];
+            if let Some(buffer) = slot.buffers[use_buffer].as_mut() {
+                buffer.shm.write(&scratch)?;
+            }
         }
         let paint_ms = started.elapsed().as_secs_f64() * 1000.0;
 
         let slot = &mut self.state.slots[index];
         slot.wl_surface.set_buffer_scale(scale);
-        if let Some(buffer) = slot.buffer.as_ref() {
-            slot.wl_surface.attach(Some(&buffer.buffer), 0, 0);
+        if let Some(buffer) = slot.buffers[use_buffer].as_ref() {
+            slot.wl_surface.attach(Some(&buffer.shm.buffer), 0, 0);
             slot.wl_surface
                 .damage_buffer(0, 0, width as i32, height as i32);
         }
+        // Ask for the frame callback before the commit that describes it: the
+        // compositor answers it after presenting (or after an empty frame when
+        // nothing was damaged).
+        let callback = slot.wl_surface.frame(&qh, index);
         slot.wl_surface.commit();
+        let now = Instant::now();
+        slot.buffers[use_buffer]
+            .as_mut()
+            .map(|buffer| buffer.released = false);
+        slot.next_buffer = (use_buffer + 1) % 2;
+        slot.frame = Some(FrameWait {
+            callback,
+            requested: now,
+            done: false,
+        });
+        slot.pending = false;
         slot.mapped = true;
         slot.paints += 1;
         slot.last_paint_ms = paint_ms;
         self.commits += 1;
 
         if let Some(dir) = self.frames_out.clone() {
-            dump_png(&dir, &slot.request.name, width, height, &scratch)?;
+            dump_png(&dir, &request.name, width, height, &scratch)?;
         }
         self.scratch = scratch;
         Ok(true)
@@ -741,7 +927,13 @@ impl LayerHost {
             if now >= deadline {
                 break;
             }
-            let interval = frame_interval(controller);
+            // While a frame callback is outstanding the compositor is about to
+            // answer it, so poll tightly; otherwise idle at the frame interval.
+            let interval = if self.frame_pending() {
+                Duration::from_millis(2)
+            } else {
+                frame_interval(controller)
+            };
             std::thread::sleep(interval.min(deadline.saturating_duration_since(now)));
         }
         let _ = self.roundtrip();
@@ -749,6 +941,15 @@ impl LayerHost {
         stats.unmaps = self.unmaps;
         stats.focus = Some(self.keyboard_focus().unwrap_or("none"));
         Ok(stats)
+    }
+
+    /// Whether any surface is waiting for its `wl_surface.frame` callback.
+    pub fn frame_pending(&self) -> bool {
+        self.state.slots.iter().any(|slot| {
+            slot.frame
+                .as_ref()
+                .is_some_and(|frame| !frame.done && frame.requested.elapsed() < FRAME_FALLBACK)
+        })
     }
 
     /// Milliseconds the last Slint paint took (0 before the first frame).
@@ -759,9 +960,62 @@ impl LayerHost {
             .unwrap_or(0.0)
     }
 
-    /// The current report.
+    /// The current report: every planned surface, with what exists of it.
     pub fn report(&self) -> HostReport {
         let (output, scale) = self.output;
+        let surfaces = host::plan_at(self.text_scale)
+            .into_iter()
+            .map(|request| {
+                let slot = self
+                    .state
+                    .slots
+                    .iter()
+                    .find(|slot| slot.request.namespace == request.namespace);
+                match slot {
+                    Some(slot) => {
+                        let slot_scale = slot.scale.max(1);
+                        SurfaceReport {
+                            name: request.name,
+                            namespace: request.namespace,
+                            layer_name: request.layer_name,
+                            lazy: request.lazy,
+                            created: true,
+                            anchors: request.anchors,
+                            exclusive_zone: request.exclusive_zone,
+                            margin_top: request.margin_top,
+                            keyboard_interactivity: request.keyboard_interactivity,
+                            size: slot.size,
+                            placement: request.placement(output),
+                            scale: slot_scale,
+                            configures: slot.configures.len(),
+                            buffer: slot.buffer_size(),
+                            mapped: slot.mapped,
+                            paints: slot.paints,
+                            last_paint_ms: slot.last_paint_ms,
+                        }
+                    }
+                    None => SurfaceReport {
+                        name: request.name,
+                        namespace: request.namespace,
+                        layer_name: request.layer_name,
+                        lazy: request.lazy,
+                        created: false,
+                        anchors: request.anchors,
+                        exclusive_zone: request.exclusive_zone,
+                        margin_top: request.margin_top,
+                        keyboard_interactivity: request.keyboard_interactivity,
+                        size: None,
+                        placement: request.placement(output),
+                        scale,
+                        configures: 0,
+                        buffer: (0, 0),
+                        mapped: false,
+                        paints: 0,
+                        last_paint_ms: 0.0,
+                    },
+                }
+            })
+            .collect();
         HostReport {
             display: self.display.clone(),
             outputs: self
@@ -774,31 +1028,7 @@ impl LayerHost {
             scale,
             keyboard: self.state.keyboard,
             pointer: self.state.pointer,
-            surfaces: self
-                .state
-                .slots
-                .iter()
-                .map(|slot| {
-                    let scale = slot.scale.max(1);
-                    SurfaceReport {
-                        name: slot.request.name,
-                        namespace: slot.request.namespace,
-                        layer_name: slot.request.layer_name,
-                        anchors: slot.request.anchors,
-                        exclusive_zone: slot.request.exclusive_zone,
-                        margin_top: slot.request.margin_top,
-                        keyboard_interactivity: slot.request.keyboard_interactivity,
-                        size: slot.size,
-                        placement: slot.request.placement(output),
-                        scale,
-                        configures: slot.configures.len(),
-                        buffer: slot.buffer_size(),
-                        mapped: slot.mapped,
-                        paints: slot.paints,
-                        last_paint_ms: slot.last_paint_ms,
-                    }
-                })
-                .collect(),
+            surfaces,
         }
     }
 
@@ -877,15 +1107,23 @@ pub fn panel_open(name: &str, overlay: Overlay) -> bool {
         "launcher" => overlay == Overlay::Launcher,
         "notifications" => overlay == Overlay::Notifications,
         "control-center" => overlay == Overlay::ControlCenter,
-        // Settings, overview and the lock screen are full-screen overlays with
-        // no layer surface yet; they are not painted by the layer host.
+        // Full-screen overlays: created the first time they open.
+        "settings" => overlay == Overlay::Settings,
+        "overview" => overlay == Overlay::Overview,
+        "lock" => overlay == Overlay::Lock,
         _ => false,
     }
 }
 
-/// How often the host ticks the shell: one frame per 16 ms normally, and a
-/// fifth of that rate when the user asked for reduced motion (animations are
-/// collapsed, so there is nothing to interpolate at 60 Hz).
+/// If no `wl_surface.frame` callback arrives within this long, the surface is
+/// painted anyway. A compositor that is not presenting frames (minimised,
+/// headless with no damage) still has to answer callbacks, but a dropped or
+/// late one must never freeze the shell.
+pub const FRAME_FALLBACK: Duration = Duration::from_millis(50);
+
+/// How often the host ticks the shell when no frame is outstanding: 16 ms
+/// normally, a fifth of that rate with reduced motion (animations collapse, so
+/// there is nothing to interpolate at 60 Hz).
 pub fn frame_interval(controller: &ShellController) -> Duration {
     if controller.a11y().reduce_motion {
         Duration::from_millis(100)
@@ -903,6 +1141,8 @@ fn create_buffer(
     width: i32,
     height: i32,
     colour: PremultipliedRgbaColor,
+    // `(slot index, buffer index)`, so `wl_buffer.release` finds its owner.
+    owner: (usize, usize),
 ) -> Result<ShmBuffer, String> {
     use std::io::Write;
 
@@ -933,7 +1173,7 @@ fn create_buffer(
         (width * 4) as i32,
         wl_shm::Format::Argb8888,
         qh,
-        (),
+        owner,
     );
     Ok(ShmBuffer {
         file,
@@ -1250,15 +1490,52 @@ impl Dispatch<wl_shm_pool::WlShmPool, ()> for HostState {
     }
 }
 
-impl Dispatch<wl_buffer::WlBuffer, ()> for HostState {
+impl Dispatch<wl_buffer::WlBuffer, (usize, usize)> for HostState {
     fn event(
-        _state: &mut Self,
+        state: &mut Self,
         _proxy: &wl_buffer::WlBuffer,
-        _event: <wl_buffer::WlBuffer as Proxy>::Event,
-        _data: &(),
+        event: <wl_buffer::WlBuffer as Proxy>::Event,
+        owner: &(usize, usize),
         _conn: &Connection,
         _qh: &QueueHandle<Self>,
     ) {
+        if let wl_buffer::Event::Release = event {
+            // The compositor replaced or detached this buffer: it is safe to
+            // draw into again.
+            if let Some(buffer) = state
+                .slots
+                .get_mut(owner.0)
+                .and_then(|slot| slot.buffers.get_mut(owner.1))
+                .and_then(Option::as_mut)
+            {
+                buffer.released = true;
+            }
+        }
+    }
+}
+
+impl Dispatch<wl_callback::WlCallback, usize> for HostState {
+    fn event(
+        state: &mut Self,
+        proxy: &wl_callback::WlCallback,
+        event: <wl_callback::WlCallback as Proxy>::Event,
+        index: &usize,
+        _conn: &Connection,
+        _qh: &QueueHandle<Self>,
+    ) {
+        if let wl_callback::Event::Done { .. } = event {
+            if let Some(slot) = state.slots.get_mut(*index) {
+                // Only the callback of the latest commit counts; a stale one
+                // (from a superseded frame) must not unlock the next paint.
+                if slot
+                    .frame
+                    .as_ref()
+                    .is_some_and(|frame| frame.callback.id() == proxy.id())
+                {
+                    slot.frame.as_mut().map(|frame| frame.done = true);
+                }
+            }
+        }
     }
 }
 
@@ -1304,7 +1581,16 @@ mod tests {
             assert!(panel_open("menubar", overlay), "{overlay:?}");
             assert!(panel_open("dock", overlay), "{overlay:?}");
         }
-        // Full-screen overlays have no layer surface yet.
-        assert!(!panel_open("settings", Overlay::Settings));
+        // The full-screen overlays have their own lazy surfaces now.
+        assert!(panel_open("settings", Overlay::Settings));
+        assert!(panel_open("overview", Overlay::Overview));
+        assert!(panel_open("lock", Overlay::Lock));
+        assert!(!panel_open("settings", Overlay::Overview));
+        assert!(!panel_open("overview", Overlay::Settings));
+        assert!(!panel_open("lock", Overlay::Launcher));
+        assert!(
+            !panel_open("launcher", Overlay::Settings),
+            "one panel at a time"
+        );
     }
 }

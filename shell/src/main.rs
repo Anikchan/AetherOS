@@ -207,9 +207,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 Some("launcher") => Some(Overlay::Launcher),
                 Some("notifications") => Some(Overlay::Notifications),
                 Some("control-center") | Some("control-centre") => Some(Overlay::ControlCenter),
+                Some("settings") => Some(Overlay::Settings),
+                Some("overview") => Some(Overlay::Overview),
+                Some("lock") => Some(Overlay::Lock),
                 Some(other) => {
                     eprintln!(
-                        "--act needs launcher, notifications or control-center, not {other}"
+                        "--act needs launcher, notifications, control-center, settings, \
+                         overview or lock, not {other}"
                     );
                     std::process::exit(2);
                 }

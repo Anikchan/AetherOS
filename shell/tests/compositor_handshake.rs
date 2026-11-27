@@ -44,10 +44,26 @@ fn compositor_binary() -> Option<PathBuf> {
 }
 
 fn temp_dir(tag: &str) -> PathBuf {
-    std::env::temp_dir().join(format!(
-        "aether-shell-handshake-{tag}-{}",
-        std::process::id()
-    ))
+    // Short on purpose: the runtime dir holds the `wayland-0` socket and a unix
+    // socket path must stay under SUN_LEN (104 bytes) even under a long TMPDIR.
+    std::env::temp_dir().join(format!("aether-hs-{tag}-{}", std::process::id()))
+}
+
+/// Serialises the tests in this binary.
+///
+/// Every test boots its own compositor and shell on its own runtime dir, so the
+/// environment does not collide — but they all compete for the CPU and for the
+/// compositor's 10 ms frame clock, and on a loaded machine the injected
+/// pointer/key replay can land after a short `--hold-ms` has expired. Running
+/// them one at a time removes that timing dependency (and the shared
+/// process-wide working directory of the `--frames-out` dumps).
+static SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// Hold the serial guard for the whole test body.
+fn serial() -> std::sync::MutexGuard<'static, ()> {
+    SERIAL
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 /// The compositor under test, killed and cleaned up on drop — even when an
@@ -74,15 +90,18 @@ impl CompositorProcess {
         let log = fs::File::create(runtime_dir.join("compositor.log")).expect("create log");
         let err = fs::File::create(runtime_dir.join("compositor.err")).expect("create stderr log");
         let mut command = Command::new(binary);
-        for (key, value) in env {
-            command.env(key, value);
-        }
         let child = command
             .env("XDG_RUNTIME_DIR", &runtime_dir)
             .env("AETHER_COMPOSITOR_BACKEND", "headless")
             // The default grace (3 s after the first mapped surface) is shorter
             // than a slow test run; the shell needs the socket to stay up.
-            .env("AETHER_COMPOSITOR_GRACE_MS", "20000")
+            .env("AETHER_COMPOSITOR_GRACE_MS", "20000");
+        // Test overrides last, so a test can shorten the grace to let the
+        // compositor shut down and print its frame statistics.
+        for (key, value) in env {
+            child.env(key, value);
+        }
+        let child = child
             .stdout(Stdio::from(log))
             .stderr(Stdio::from(err))
             .spawn()
@@ -113,6 +132,21 @@ impl CompositorProcess {
 
     fn log(&self) -> String {
         fs::read_to_string(self.runtime_dir.join("compositor.log")).unwrap_or_default()
+    }
+
+    /// Wait for the compositor to exit on its own (`AETHER_COMPOSITOR_GRACE_MS`)
+    /// so its shutdown line — `AETHER_COMPOSITOR_FRAME_STATS … buffers_released=` —
+    /// reaches the journal before it is read.
+    fn wait_for_shutdown(&mut self, timeout: Duration) -> String {
+        let deadline = Instant::now() + timeout;
+        while Instant::now() < deadline {
+            match self.child.try_wait() {
+                Ok(Some(_)) => break,
+                Ok(None) => std::thread::sleep(Duration::from_millis(20)),
+                Err(error) => panic!("wait for the compositor: {error}"),
+            }
+        }
+        self.log()
     }
 
     fn stderr(&self) -> String {
@@ -189,6 +223,7 @@ fn near(pixel: [u8; 3], expected: [u8; 3], tolerance: i16) -> bool {
 
 #[test]
 fn the_shell_creates_every_layer_surface_on_a_real_compositor() {
+    let _serial = serial();
     let Some(binary) = compositor_binary() else {
         println!(
             "AETHER_SHELL_HANDSHAKE_SKIPPED: no aether-compositor binary next to {}; \
@@ -197,7 +232,7 @@ fn the_shell_creates_every_layer_surface_on_a_real_compositor() {
         );
         return;
     };
-    let compositor = CompositorProcess::start(&binary, "compositor");
+    let compositor = CompositorProcess::start(&binary, "c");
     let shots = temp_dir("shots");
     let _ = fs::remove_dir_all(&shots);
     let output = connect(&compositor.runtime_dir, &shots, None);
@@ -221,24 +256,59 @@ fn the_shell_creates_every_layer_surface_on_a_real_compositor() {
         "every surface must bind and be configured:\n{stdout}"
     );
 
-    // --- Shell → compositor: the surfaces exist, in plan order -------------
+    // --- Shell → compositor: the plan, in order, and what exists of it -----
     let planned = plan();
+    assert_eq!(
+        planned.len(),
+        9,
+        "six chrome surfaces + three lazy overlays"
+    );
     let mut last_line = 0usize;
     for request in &planned {
+        // Every planned surface is reported, created or not.
+        let planned_line = format!(
+            "AETHER_SHELL_LAYER_PLANNED: name={} namespace={} layer={} lazy={} created={}\n",
+            request.name, request.namespace, request.layer_name, request.lazy, !request.lazy
+        );
+        let line = stdout
+            .lines()
+            .position(|line| line == planned_line.trim_end())
+            .unwrap_or_else(|| panic!("no plan report for {}\n{stdout}", request.name));
+        assert!(
+            line > last_line,
+            "surfaces are reported in plan order: {} came too early\n{stdout}",
+            request.name
+        );
+        last_line = line;
+
+        if request.lazy {
+            // Created on demand: absent from a boot journal, and that is fine.
+            assert!(
+                !stdout.contains(&format!(
+                    "AETHER_SHELL_LAYER_CREATED: name={} ",
+                    request.name
+                )),
+                "{} is lazy and must not exist at boot\n{stdout}",
+                request.name
+            );
+            assert!(
+                !journal.contains(&format!("namespace={} ", request.namespace))
+                    || !journal.contains("AETHER_COMPOSITOR_LAYER_SURFACE"),
+                "the compositor never saw the lazily created {}\n{journal}",
+                request.name
+            );
+            continue;
+        }
+
         let created = format!(
             "AETHER_SHELL_LAYER_CREATED: name={} namespace={} layer={} anchors={} ",
             request.name, request.namespace, request.layer_name, request.anchors
         );
-        let line = stdout
-            .lines()
-            .position(|line| line.starts_with(&created))
-            .unwrap_or_else(|| panic!("no host report for {}\n{stdout}", request.name));
         assert!(
-            line > last_line,
-            "surfaces are created in plan order: {} came too early\n{stdout}",
+            stdout.contains(&created),
+            "no host report for {}\n{stdout}",
             request.name
         );
-        last_line = line;
 
         // Anchors, exclusive zone and keyboard interactivity reach the socket
         // exactly as the plan asks, and the configure carries a real size.
@@ -277,12 +347,13 @@ fn the_shell_creates_every_layer_surface_on_a_real_compositor() {
         .lines()
         .filter(|line| line.starts_with("AETHER_COMPOSITOR_LAYER_SURFACE: "))
         .collect();
+    let eager: Vec<_> = planned.iter().filter(|request| !request.lazy).collect();
     assert_eq!(
         surface_lines.len(),
-        planned.len(),
-        "the compositor created one layer surface per planned namespace:\n{journal}"
+        eager.len(),
+        "the compositor created one layer surface per eager plan entry:\n{journal}"
     );
-    for (line, request) in surface_lines.iter().zip(&planned) {
+    for (line, request) in surface_lines.iter().zip(&eager) {
         assert!(
             line.contains(&format!("namespace={}", request.namespace)),
             "creation order drifted: expected {} at {line}",
@@ -294,7 +365,7 @@ fn the_shell_creates_every_layer_surface_on_a_real_compositor() {
             request.name
         );
     }
-    for request in &planned {
+    for request in &eager {
         let expected = request.negotiate((1920, 1080));
         assert!(
             journal.contains(&format!(
@@ -351,10 +422,22 @@ fn the_shell_creates_every_layer_surface_on_a_real_compositor() {
     open("notifications", false);
     open("control-center", false);
     assert!(
-        stdout
-            .contains("AETHER_SHELL_LAYER_HOST_READY: surfaces=6 configured=6 mapped=3 painted=3"),
+        stdout.contains(
+            "AETHER_SHELL_LAYER_HOST_READY: planned=9 created=6 configured=6 mapped=3 painted=3"
+        ),
         "the wallpaper and two panels are up on a fresh session:\n{stdout}"
     );
+    // The three full-screen overlays are lazy: no surface, no pixels.
+    for name in ["settings", "overview", "lock"] {
+        assert!(
+            !stdout.contains(&format!("AETHER_SHELL_LAYER_CREATED: name={name} ")),
+            "{name} must not exist until it opens:\n{stdout}"
+        );
+        assert!(
+            !shots.join(format!("layer-{name}.png")).exists(),
+            "a closed {name} must not be painted"
+        );
+    }
     // The background is on the Background layer, covers the output and reserves
     // nothing (exclusive zone -1).
     assert!(
@@ -380,6 +463,10 @@ fn the_shell_creates_every_layer_surface_on_a_real_compositor() {
     assert!(
         !shots.join("layer-launcher.png").exists(),
         "a closed launcher must not be painted"
+    );
+    assert!(
+        !shots.join("layer-notifications.png").exists(),
+        "a closed notification column must not be painted"
     );
     assert!(
         !shots.join("layer-notifications.png").exists(),
@@ -545,11 +632,12 @@ fn the_shell_creates_every_layer_surface_on_a_real_compositor() {
 /// it is an Overlay-layer surface with exclusive keyboard interactivity.
 #[test]
 fn an_opened_panel_is_mapped_painted_and_placed() {
+    let _serial = serial();
     let Some(binary) = compositor_binary() else {
         println!("AETHER_SHELL_HANDSHAKE_SKIPPED: no aether-compositor binary");
         return;
     };
-    let compositor = CompositorProcess::start(&binary, "handshake-open");
+    let compositor = CompositorProcess::start(&binary, "open");
     let shots = temp_dir("shots-open");
     let _ = fs::remove_dir_all(&shots);
     let output = connect(&compositor.runtime_dir, &shots, Some("launcher"));
@@ -610,6 +698,71 @@ fn an_opened_panel_is_mapped_painted_and_placed() {
     let _ = fs::remove_dir_all(&shots);
 }
 
+/// A full-screen overlay is created lazily and painted over the wallpaper: the
+/// Settings surface only exists once Settings opens, it covers the output, it is
+/// opaque everywhere and its pixels are not the wallpaper.
+#[test]
+fn an_opened_overlay_is_created_and_painted_over_the_wallpaper() {
+    let _serial = serial();
+    let Some(binary) = compositor_binary() else {
+        println!("AETHER_SHELL_HANDSHAKE_SKIPPED: no aether-compositor binary");
+        return;
+    };
+    let compositor = CompositorProcess::start(&binary, "overlay");
+    let shots = temp_dir("shots-overlay");
+    let _ = fs::remove_dir_all(&shots);
+    let output = connect_for(&compositor.runtime_dir, &shots, Some("settings"), 600);
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    let journal = compositor.log();
+    assert!(
+        output.status.success(),
+        "the shell host failed\nstdout:\n{stdout}\njournal:\n{journal}"
+    );
+
+    // The overlay exists now: Overlay layer, full output, exclusive keyboard.
+    assert!(
+        stdout.contains(
+            "AETHER_SHELL_LAYER_CREATED: name=settings namespace=aether-shell-settings \
+             layer=Overlay anchors=15 size=1920x1080 exclusive_zone=-1 margin_top=0 keyboard=1"
+        ),
+        "the settings overlay is a full-screen exclusive surface:\n{stdout}"
+    );
+    assert!(
+        journal.contains(
+            "AETHER_COMPOSITOR_LAYER_SURFACE: namespace=aether-shell-settings layer=Overlay"
+        ),
+        "the compositor created the overlay surface:\n{journal}"
+    );
+    assert!(
+        stdout.contains(
+            "AETHER_SHELL_LAYER_HOST_READY: planned=9 created=7 configured=7 mapped=4 painted=4"
+        ),
+        "the wallpaper, two panels and the overlay are up:\n{stdout}"
+    );
+
+    // Its pixels: opaque over the whole frame, and not the wallpaper.
+    let (width, height, overlay) = read_png(&shots.join("layer-settings.png"));
+    assert_eq!((width, height), (1920, 1080));
+    assert!(
+        !overlay.iter().any(|pixel| *pixel == [0, 0, 0]),
+        "the overlay is opaque everywhere"
+    );
+    let (bg_width, _, background) = read_png(&shots.join("layer-background.png"));
+    assert_eq!(bg_width, 1920);
+    let differs = overlay
+        .iter()
+        .zip(background.iter())
+        .filter(|(overlay, background)| overlay != background)
+        .count();
+    assert!(
+        differs * 2 > overlay.len(),
+        "the overlay differs from the wallpaper at most pixels ({differs}/{})",
+        overlay.len()
+    );
+
+    let _ = fs::remove_dir_all(&shots);
+}
+
 /// The socket keyboard path, end to end: the compositor's test hook replays
 /// evdev 15, 15, 28 (Tab, Tab, Enter) into whatever surface holds the keyboard.
 /// The launcher overlay takes `exclusive` keyboard interactivity, so it is the
@@ -620,6 +773,7 @@ fn an_opened_panel_is_mapped_painted_and_placed() {
 /// the evdev code, so injecting 15 must log `evdev=15`, never `evdev=7`.
 #[test]
 fn injected_keys_reach_the_shell_and_move_the_ring() {
+    let _serial = serial();
     let Some(binary) = compositor_binary() else {
         println!("AETHER_SHELL_HANDSHAKE_SKIPPED: no aether-compositor binary");
         return;
@@ -711,6 +865,7 @@ fn injected_keys_reach_the_shell_and_move_the_ring() {
 /// dock surface (placed at 600,1016) — the centre of the first pinned tile.
 #[test]
 fn an_injected_click_on_the_dock_activates_its_tile() {
+    let _serial = serial();
     let Some(binary) = compositor_binary() else {
         println!("AETHER_SHELL_HANDSHAKE_SKIPPED: no aether-compositor binary");
         return;
@@ -722,7 +877,7 @@ fn an_injected_click_on_the_dock_activates_its_tile() {
     );
     let shots = temp_dir("shots-pointer");
     let _ = fs::remove_dir_all(&shots);
-    let output = connect_for(&compositor.runtime_dir, &shots, None, 1500);
+    let output = connect_for(&compositor.runtime_dir, &shots, None, 3000);
     let stdout = String::from_utf8_lossy(&output.stdout).to_string();
     let stderr = String::from_utf8_lossy(&output.stderr).to_string();
     let journal = compositor.log();
@@ -799,10 +954,119 @@ fn an_injected_click_on_the_dock_activates_its_tile() {
     let _ = fs::remove_dir_all(&shots);
 }
 
+/// Pacing: an idle shell must not repaint or recommit, and a real repaint must
+/// go through `wl_surface.frame` + two buffers, which the compositor proves by
+/// releasing the buffer it replaced.
+#[test]
+fn frames_follow_the_compositor_and_idle_shell_does_nothing() {
+    let _serial = serial();
+    let Some(binary) = compositor_binary() else {
+        println!("AETHER_SHELL_HANDSHAKE_SKIPPED: no aether-compositor binary");
+        return;
+    };
+
+    // 1. Idle: one frame for the three boot surfaces, then nothing at all.
+    let mut compositor = CompositorProcess::start_with(
+        &binary,
+        "idle",
+        // Short enough that the compositor shuts down and prints its stats
+        // while the test waits, long enough for the shell to finish first.
+        &[("AETHER_COMPOSITOR_GRACE_MS", "1200")],
+    );
+    let shots = temp_dir("shots-idle");
+    let _ = fs::remove_dir_all(&shots);
+    let output = connect_for(&compositor.runtime_dir, &shots, None, 400);
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    assert!(output.status.success(), "stdout:\n{stdout}");
+    let run = stdout
+        .lines()
+        .find(|line| line.starts_with("AETHER_SHELL_LAYER_RUN: "))
+        .unwrap_or_else(|| panic!("no run summary:\n{stdout}"));
+    assert!(
+        run.contains("paints=1 commits=3 "),
+        "an idle shell paints once and commits the three boot surfaces: {run}"
+    );
+    let journal = compositor.wait_for_shutdown(Duration::from_secs(5));
+    let stats = journal
+        .lines()
+        .find(|line| line.starts_with("AETHER_COMPOSITOR_FRAME_STATS: "))
+        .unwrap_or_else(|| panic!("the compositor printed no frame stats:\n{journal}"));
+    assert!(
+        stats.contains("buffers_released=0"),
+        "an idle shell never replaces a buffer: {stats}"
+    );
+    let _ = fs::remove_dir_all(&shots);
+
+    // 2. One injected click: a repaint, the second buffer, and a release.
+    let mut compositor = CompositorProcess::start_with(
+        &binary,
+        "pace",
+        &[
+            ("AETHER_COMPOSITOR_INJECT_POINTER", "x=861,y=1048,button=1"),
+            // The compositor replays the action on its own frame clock, which
+            // starts after the first presented frame; give it room and let it
+            // outlive the shell so it can print `FRAME_STATS`.
+            ("AETHER_COMPOSITOR_GRACE_MS", "3000"),
+        ],
+    );
+    let shots = temp_dir("shots-pace");
+    let _ = fs::remove_dir_all(&shots);
+    let output = connect_for(&compositor.runtime_dir, &shots, None, 2500);
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    if std::env::var_os("AETHER_SHELL_TEST_LOG").is_some() {
+        println!("--- paced run ---\n{stdout}");
+        println!(
+            "--- paced stderr ---\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        println!("--- journal (live) ---\n{}", compositor.log());
+    }
+    assert!(output.status.success(), "stdout:\n{stdout}");
+    let run = stdout
+        .lines()
+        .find(|line| line.starts_with("AETHER_SHELL_LAYER_RUN: "))
+        .unwrap_or_else(|| panic!("no run summary:\n{stdout}"));
+    assert!(
+        run.contains("paints=2 "),
+        "the click caused exactly one extra frame: {run}"
+    );
+    // The dock and the menu bar were recommitted; the wallpaper was not.
+    let dock_paints = stdout
+        .lines()
+        .find(|line| line.starts_with("AETHER_SHELL_LAYER_PAINT: name=dock "))
+        .unwrap_or_else(|| panic!("no dock paint line:\n{stdout}"));
+    assert!(
+        dock_paints.contains("paints=2"),
+        "the dock was repainted once: {dock_paints}"
+    );
+    let background_paints = stdout
+        .lines()
+        .find(|line| line.starts_with("AETHER_SHELL_LAYER_PAINT: name=background "))
+        .unwrap_or_else(|| panic!("no background paint line:\n{stdout}"));
+    assert!(
+        background_paints.contains("paints=1"),
+        "the wallpaper is painted once: {background_paints}"
+    );
+
+    let journal = compositor.wait_for_shutdown(Duration::from_secs(5));
+    let released: u64 = journal
+        .lines()
+        .find(|line| line.starts_with("AETHER_COMPOSITOR_FRAME_STATS: "))
+        .and_then(|line| line.split("buffers_released=").nth(1))
+        .and_then(|value| value.trim().parse().ok())
+        .unwrap_or_else(|| panic!("no buffers_released in the stats:\n{journal}"));
+    assert!(
+        released >= 1,
+        "the compositor released the replaced buffer (released={released}):\n{journal}"
+    );
+    let _ = fs::remove_dir_all(&shots);
+}
+
 /// A second connection after the first one closed must be refused cleanly
 /// rather than hanging: the shell prints a harness-readable error.
 #[test]
 fn a_missing_socket_is_an_error_not_a_hang() {
+    let _serial = serial();
     let runtime_dir = temp_dir("nosocket");
     let _ = fs::remove_dir_all(&runtime_dir);
     fs::create_dir_all(&runtime_dir).unwrap();

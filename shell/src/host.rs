@@ -17,9 +17,9 @@
 //! `aether-shell --host-check <compositor.log>` prints the report for the
 //! on-device acceptance harness.
 
-use crate::layers::{self, Keyboard, Layer, LayerSurfaceSpec};
 #[cfg(test)]
 use crate::layers::specs;
+use crate::layers::{self, Keyboard, Layer, LayerSurfaceSpec};
 
 /// `zwlr_layer_surface_v1.anchor` bitfield values.
 pub const ANCHOR_TOP: u32 = 1;
@@ -70,6 +70,9 @@ pub struct HostRequest {
     pub margin_top: i32,
     /// `zwlr_layer_surface_v1.keyboard_interactivity` value.
     pub keyboard_interactivity: u32,
+    /// Created on demand (the full-screen overlays), so a boot journal is not
+    /// expected to contain it.
+    pub lazy: bool,
 }
 
 impl HostRequest {
@@ -102,6 +105,7 @@ impl HostRequest {
                 Keyboard::Exclusive => KEYBOARD_EXCLUSIVE,
                 Keyboard::OnDemand => KEYBOARD_ON_DEMAND,
             },
+            lazy: spec.lazy,
         }
     }
 
@@ -187,6 +191,9 @@ pub struct SurfaceBinding {
     pub configured_size: Option<(i32, i32)>,
     /// Size the plan expects on the reported output.
     pub expected_size: (i32, i32),
+    /// Created on demand: an absent surface is not a failure before its panel
+    /// has been opened.
+    pub lazy: bool,
 }
 
 impl SurfaceBinding {
@@ -196,8 +203,15 @@ impl SurfaceBinding {
     }
 
     /// Why this surface is not ok, in harness wording.
+    ///
+    /// A lazy (on-demand overlay) surface that was never opened is expected to
+    /// be absent; a boot journal must not fail because the user did not open
+    /// Settings.
     pub fn problem(&self) -> Option<String> {
         if !self.bound {
+            if self.lazy {
+                return None;
+            }
             return Some(format!(
                 "{} was never created (no AETHER_COMPOSITOR_LAYER_SURFACE for namespace={})",
                 self.name, self.namespace
@@ -295,6 +309,7 @@ impl BindingReport {
                     reported_layer,
                     configured_size,
                     expected_size,
+                    lazy: request.lazy,
                 }
             })
             .collect();
@@ -312,15 +327,11 @@ impl BindingReport {
     pub fn problems(&self) -> Vec<String> {
         let mut problems = Vec::new();
         match &self.output {
-            None => problems.push(
-                "no AETHER_COMPOSITOR_OUTPUT marker: is this a compositor log?".to_string(),
-            ),
+            None => problems
+                .push("no AETHER_COMPOSITOR_OUTPUT marker: is this a compositor log?".to_string()),
             Some(output) => {
                 if output.logical_size.0 <= 0 || output.logical_size.1 <= 0 {
-                    problems.push(format!(
-                        "output {} reports no logical size",
-                        output.name
-                    ));
+                    problems.push(format!("output {} reports no logical size", output.name));
                 }
             }
         }
@@ -340,10 +351,11 @@ impl BindingReport {
         }
         for surface in &self.surfaces {
             out.push_str(&format!(
-                "LAYER_SURFACE name={} namespace={} bound={} configured={} expected={}x{} ok={}\n",
+                "LAYER_SURFACE name={} namespace={} bound={} lazy={} configured={} expected={}x{} ok={}\n",
                 surface.name,
                 surface.namespace,
                 surface.bound,
+                surface.lazy,
                 surface
                     .configured_size
                     .map(|size| format!("{}x{}", size.0, size.1))
@@ -417,7 +429,10 @@ mod tests {
         let plan = plan();
         assert_eq!(plan.len(), specs().len());
 
-        let menubar = plan.iter().find(|request| request.name == "menubar").unwrap();
+        let menubar = plan
+            .iter()
+            .find(|request| request.name == "menubar")
+            .unwrap();
         assert_eq!(menubar.namespace, "aether-shell-menubar");
         assert_eq!(menubar.layer, 2, "Top is 2 in zwlr_layer_shell_v1");
         assert_eq!(menubar.layer_name, "Top");
@@ -430,7 +445,10 @@ mod tests {
         assert_eq!(menubar.exclusive_zone, 28, "reserves room for windows");
         assert_eq!(menubar.keyboard_interactivity, KEYBOARD_NONE);
 
-        let launcher = plan.iter().find(|request| request.name == "launcher").unwrap();
+        let launcher = plan
+            .iter()
+            .find(|request| request.name == "launcher")
+            .unwrap();
         assert_eq!(launcher.layer, 3, "Overlay is 3");
         assert_eq!(launcher.layer_name, "Overlay");
         assert_eq!(launcher.anchors, 0);
@@ -513,7 +531,9 @@ mod tests {
         // Drop the dock's configure event and configure the menubar 12 px tall.
         log = log
             .lines()
-            .filter(|line| !(line.contains("namespace=aether-shell-dock") && line.contains("CONFIGURE")))
+            .filter(|line| {
+                !(line.contains("namespace=aether-shell-dock") && line.contains("CONFIGURE"))
+            })
             .collect::<Vec<_>>()
             .join("\n");
         log = log.replace(
@@ -525,11 +545,15 @@ mod tests {
         assert!(!report.is_complete());
         let problems = report.problems();
         assert!(
-            problems.iter().any(|problem| problem.contains("dock bound but was never configured")),
+            problems
+                .iter()
+                .any(|problem| problem.contains("dock bound but was never configured")),
             "{problems:?}"
         );
         assert!(
-            problems.iter().any(|problem| problem.contains("menubar configured at 1920x12")),
+            problems
+                .iter()
+                .any(|problem| problem.contains("menubar configured at 1920x12")),
             "{problems:?}"
         );
         assert!(report.summary().contains("AETHER_SHELL_LAYER_HOST_FAILED"));

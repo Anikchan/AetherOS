@@ -1749,7 +1749,7 @@ export component ShellRoot inherits Window {
         open-settings => { root.overlay-requested(5); }
     }
 
-    if root.overlay == 4 && !root.layer-host : Overview {
+    if root.overlay == 4 : Overview {
         width: 100%;
         height: 100%;
         windows: root.windows;
@@ -1760,7 +1760,7 @@ export component ShellRoot inherits Window {
         workspace-selected(index) => { root.workspace-requested(index); }
     }
 
-    if root.overlay == 5 && !root.layer-host : SettingsApp {
+    if root.overlay == 5 : SettingsApp {
         x: 0;
         y: Tokens.menubar-height;
         width: 100%;
@@ -1781,7 +1781,7 @@ export component ShellRoot inherits Window {
         feature-enabled(id, value) => { root.feature-enabled(id, value); }
     }
 
-    if root.overlay == 6 && !root.layer-host : LockScreen {
+    if root.overlay == 6 : LockScreen {
         width: 100%;
         height: 100%;
         clock: root.clock;

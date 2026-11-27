@@ -70,7 +70,10 @@ fn host_plan_covers_every_required_surface() {
             request.namespace
         );
     }
-    let menubar = plan.iter().find(|request| request.name == "menubar").unwrap();
+    let menubar = plan
+        .iter()
+        .find(|request| request.name == "menubar")
+        .unwrap();
     assert_eq!(menubar.anchors, ANCHOR_TOP | ANCHOR_LEFT | ANCHOR_RIGHT);
 
     let output = shell(&["--host-plan"]);
@@ -131,8 +134,7 @@ fn host_check_fails_and_names_the_problem() {
     let empty = temp_log("empty", "hello\n");
     let output = shell(&["--host-check", empty.to_str().unwrap()]);
     assert_eq!(output.status.code(), Some(1));
-    assert!(String::from_utf8_lossy(&output.stdout)
-        .contains("no AETHER_COMPOSITOR_OUTPUT marker"));
+    assert!(String::from_utf8_lossy(&output.stdout).contains("no AETHER_COMPOSITOR_OUTPUT marker"));
 
     // A missing file is an error, not a panic.
     let mut missing = path.clone();
@@ -183,7 +185,9 @@ fn host_check_reads_stdin_and_scales_for_hidpi() {
     let text = String::from_utf8_lossy(&output.stdout);
     assert!(output.status.success(), "stdout:\n{text}");
     assert!(text.contains("LAYER_HOST output=eDP-1 logical=1920x1200"));
-    assert!(text.contains("name=menubar namespace=aether-shell-menubar bound=true configured=1920x28"));
+    assert!(text.contains(
+        "name=menubar namespace=aether-shell-menubar bound=true lazy=false configured=1920x28"
+    ));
     assert!(text.ends_with("AETHER_SHELL_LAYER_HOST_OK\n"));
 }
 
@@ -226,7 +230,9 @@ fn report_scan_flags_a_surface_configured_before_it_bound() {
     // be reported as a working surface.
     let mut log = String::from(OUTPUT);
     log.push('\n');
-    log.push_str("AETHER_COMPOSITOR_LAYER_CONFIGURE: namespace=aether-shell-menubar size=1920x28\n");
+    log.push_str(
+        "AETHER_COMPOSITOR_LAYER_CONFIGURE: namespace=aether-shell-menubar size=1920x28\n",
+    );
     let report = BindingReport::scan(&log);
     let menubar = report
         .surfaces

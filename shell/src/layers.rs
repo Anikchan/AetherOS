@@ -61,6 +61,10 @@ pub struct LayerSurfaceSpec {
     pub margin_top: i32,
     /// Whether the surface takes keyboard focus while visible.
     pub keyboard: Keyboard,
+    /// Created on demand: `true` for the full-screen overlays, which only exist
+    /// while their panel is open, so a boot journal does not have to contain
+    /// them (the acceptance contract treats them as expected-later).
+    pub lazy: bool,
 }
 
 impl LayerSurfaceSpec {
@@ -118,6 +122,7 @@ pub fn specs_at(text_scale: f32) -> Vec<LayerSurfaceSpec> {
             exclusive_zone: -1,
             margin_top: 0,
             keyboard: Keyboard::None,
+            lazy: false,
         },
         LayerSurfaceSpec {
             name: "menubar",
@@ -132,6 +137,7 @@ pub fn specs_at(text_scale: f32) -> Vec<LayerSurfaceSpec> {
             exclusive_zone: menubar_height,
             margin_top: 0,
             keyboard: Keyboard::None,
+            lazy: false,
         },
         LayerSurfaceSpec {
             name: "dock",
@@ -146,6 +152,7 @@ pub fn specs_at(text_scale: f32) -> Vec<LayerSurfaceSpec> {
             exclusive_zone: 0,
             margin_top: 0,
             keyboard: Keyboard::None,
+            lazy: false,
         },
         LayerSurfaceSpec {
             name: "launcher",
@@ -161,6 +168,7 @@ pub fn specs_at(text_scale: f32) -> Vec<LayerSurfaceSpec> {
             exclusive_zone: 0,
             margin_top: 0,
             keyboard: Keyboard::Exclusive,
+            lazy: false,
         },
         LayerSurfaceSpec {
             name: "notifications",
@@ -179,6 +187,7 @@ pub fn specs_at(text_scale: f32) -> Vec<LayerSurfaceSpec> {
             exclusive_zone: 0,
             margin_top: menubar_height,
             keyboard: Keyboard::OnDemand,
+            lazy: false,
         },
         LayerSurfaceSpec {
             name: "control-center",
@@ -193,6 +202,57 @@ pub fn specs_at(text_scale: f32) -> Vec<LayerSurfaceSpec> {
             exclusive_zone: 0,
             margin_top: menubar_height,
             keyboard: Keyboard::OnDemand,
+            lazy: false,
+        },
+        // Full-screen overlays. They are `Overlay` layer, cover the output with
+        // `exclusive_zone: -1` (so they dim/cover everything and reserve
+        // nothing) and take the keyboard while they are up. They are created the
+        // first time their panel opens and unmapped when it closes, so a boot
+        // journal only has the six chrome surfaces.
+        LayerSurfaceSpec {
+            name: "settings",
+            namespace: "aether-shell-settings",
+            layer: Layer::Overlay,
+            anchor_top: true,
+            anchor_bottom: true,
+            anchor_left: true,
+            anchor_right: true,
+            width: 0,
+            height: 0,
+            exclusive_zone: -1,
+            margin_top: 0,
+            keyboard: Keyboard::Exclusive,
+            lazy: true,
+        },
+        LayerSurfaceSpec {
+            name: "overview",
+            namespace: "aether-shell-overview",
+            layer: Layer::Overlay,
+            anchor_top: true,
+            anchor_bottom: true,
+            anchor_left: true,
+            anchor_right: true,
+            width: 0,
+            height: 0,
+            exclusive_zone: -1,
+            margin_top: 0,
+            keyboard: Keyboard::Exclusive,
+            lazy: true,
+        },
+        LayerSurfaceSpec {
+            name: "lock",
+            namespace: "aether-shell-lock",
+            layer: Layer::Overlay,
+            anchor_top: true,
+            anchor_bottom: true,
+            anchor_left: true,
+            anchor_right: true,
+            width: 0,
+            height: 0,
+            exclusive_zone: -1,
+            margin_top: 0,
+            keyboard: Keyboard::Exclusive,
+            lazy: true,
         },
     ]
 }
@@ -206,6 +266,9 @@ pub fn required_namespaces() -> &'static [&'static str] {
         "aether-shell-launcher",
         "aether-shell-notifications",
         "aether-shell-control-center",
+        "aether-shell-settings",
+        "aether-shell-overview",
+        "aether-shell-lock",
     ]
 }
 
@@ -255,6 +318,36 @@ mod tests {
         );
         // It is part of the surface contract the harness checks.
         assert!(required_namespaces().contains(&"aether-shell-background"));
+    }
+
+    #[test]
+    fn the_full_screen_overlays_cover_the_output_and_are_lazy() {
+        let specs = specs();
+        for (name, namespace) in [
+            ("settings", "aether-shell-settings"),
+            ("overview", "aether-shell-overview"),
+            ("lock", "aether-shell-lock"),
+        ] {
+            let spec = specs.iter().find(|spec| spec.name == name).unwrap();
+            assert_eq!(spec.namespace, namespace);
+            assert_eq!(spec.layer, Layer::Overlay, "{name} is above the chrome");
+            assert!(
+                spec.anchor_top && spec.anchor_bottom && spec.anchor_left && spec.anchor_right,
+                "{name} is anchored to all four edges"
+            );
+            assert_eq!((spec.width, spec.height), (0, 0), "{name} fills the output");
+            assert_eq!(spec.exclusive_zone, -1, "{name} reserves nothing");
+            assert_eq!(
+                spec.keyboard,
+                Keyboard::Exclusive,
+                "{name} takes the keyboard"
+            );
+            assert!(spec.lazy, "{name} is created on demand");
+            assert!(required_namespaces().contains(&namespace));
+        }
+        // Exactly the six chrome surfaces are created at boot.
+        let eager = specs.iter().filter(|spec| !spec.lazy).count();
+        assert_eq!(eager, 6, "background, menubar, dock, launcher, panels");
     }
 
     #[test]
