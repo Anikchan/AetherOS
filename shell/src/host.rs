@@ -17,7 +17,7 @@
 //! `aether-shell --host-check <compositor.log>` prints the report for the
 //! on-device acceptance harness.
 
-use crate::layers::{specs, Layer, LayerSurfaceSpec};
+use crate::layers::{specs, Keyboard, Layer, LayerSurfaceSpec};
 
 /// `zwlr_layer_surface_v1.anchor` bitfield values.
 pub const ANCHOR_TOP: u32 = 1;
@@ -28,6 +28,7 @@ pub const ANCHOR_RIGHT: u32 = 8;
 /// `zwlr_layer_surface_v1.keyboard_interactivity` values.
 pub const KEYBOARD_NONE: u32 = 0;
 pub const KEYBOARD_EXCLUSIVE: u32 = 1;
+pub const KEYBOARD_ON_DEMAND: u32 = 2;
 
 /// The `zwlr_layer_shell_v1.layer` enum value for a descriptor.
 pub fn layer_value(layer: Layer) -> u32 {
@@ -91,10 +92,10 @@ impl HostRequest {
             width: spec.width,
             height: spec.height,
             exclusive_zone: spec.exclusive_zone,
-            keyboard_interactivity: if spec.keyboard_interactivity {
-                KEYBOARD_EXCLUSIVE
-            } else {
-                KEYBOARD_NONE
+            keyboard_interactivity: match spec.keyboard {
+                Keyboard::None => KEYBOARD_NONE,
+                Keyboard::Exclusive => KEYBOARD_EXCLUSIVE,
+                Keyboard::OnDemand => KEYBOARD_ON_DEMAND,
             },
         }
     }
@@ -393,6 +394,14 @@ mod tests {
         assert_eq!(launcher.layer_name, "Overlay");
         assert_eq!(launcher.anchors, 0);
         assert_eq!(launcher.keyboard_interactivity, KEYBOARD_EXCLUSIVE);
+        let notifications = plan
+            .iter()
+            .find(|request| request.name == "notifications")
+            .unwrap();
+        assert_eq!(
+            notifications.keyboard_interactivity, KEYBOARD_ON_DEMAND,
+            "an always-mapped panel may not take the keyboard from windows"
+        );
 
         let dock = plan.iter().find(|request| request.name == "dock").unwrap();
         assert_eq!(dock.anchors, ANCHOR_BOTTOM);

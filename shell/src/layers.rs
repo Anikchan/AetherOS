@@ -23,6 +23,21 @@ pub enum Layer {
     Overlay,
 }
 
+/// `zwlr_layer_surface_v1.keyboard_interactivity`: who gets the keyboard while
+/// the surface is mapped.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Keyboard {
+    /// Never (menu bar, dock: they are chrome, not a focus target).
+    None,
+    /// Only while the user asked for it, instead of taking the keyboard away
+    /// from the focused window for as long as the surface is mapped. The
+    /// notification column and the control centre are always mapped, so they
+    /// must not be `Exclusive` or typing in a window would stop working.
+    OnDemand,
+    /// Always; only the launcher, which is an explicit modal overlay.
+    Exclusive,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LayerSurfaceSpec {
     /// Stable name used in logs and tests.
@@ -41,7 +56,7 @@ pub struct LayerSurfaceSpec {
     /// Exclusive zone in logical pixels (0 for non-exclusive surfaces).
     pub exclusive_zone: i32,
     /// Whether the surface takes keyboard focus while visible.
-    pub keyboard_interactivity: bool,
+    pub keyboard: Keyboard,
 }
 
 impl LayerSurfaceSpec {
@@ -64,7 +79,7 @@ pub fn specs() -> Vec<LayerSurfaceSpec> {
             width: 0,
             height: 28,
             exclusive_zone: 28,
-            keyboard_interactivity: false,
+            keyboard: Keyboard::None,
         },
         LayerSurfaceSpec {
             name: "dock",
@@ -77,7 +92,7 @@ pub fn specs() -> Vec<LayerSurfaceSpec> {
             width: 720,
             height: 64,
             exclusive_zone: 0,
-            keyboard_interactivity: false,
+            keyboard: Keyboard::None,
         },
         LayerSurfaceSpec {
             name: "launcher",
@@ -90,33 +105,37 @@ pub fn specs() -> Vec<LayerSurfaceSpec> {
             width: 640,
             height: 480,
             exclusive_zone: 0,
-            keyboard_interactivity: true,
+            keyboard: Keyboard::Exclusive,
         },
         LayerSurfaceSpec {
             name: "notifications",
             namespace: "aether-shell-notifications",
             layer: Layer::Top,
             anchor_top: true,
-            anchor_bottom: false,
+            // A 0 size along an axis is only legal when the surface is anchored
+            // to both ends of it; otherwise the compositor raises a protocol
+            // error ("height 0 requested without setting top and bottom
+            // anchors"). The notification column fills the output height.
+            anchor_bottom: true,
             anchor_left: false,
             anchor_right: true,
             width: 360,
             height: 0,
             exclusive_zone: 0,
-            keyboard_interactivity: true,
+            keyboard: Keyboard::OnDemand,
         },
         LayerSurfaceSpec {
             name: "control-center",
             namespace: "aether-shell-control-center",
             layer: Layer::Top,
             anchor_top: true,
-            anchor_bottom: false,
+            anchor_bottom: true,
             anchor_left: false,
             anchor_right: true,
             width: 340,
             height: 0,
             exclusive_zone: 0,
-            keyboard_interactivity: true,
+            keyboard: Keyboard::OnDemand,
         },
     ]
 }
@@ -158,6 +177,12 @@ mod tests {
             );
         }
         let launcher = specs.iter().find(|spec| spec.name == "launcher").unwrap();
-        assert!(launcher.keyboard_interactivity);
+        assert_eq!(launcher.keyboard, Keyboard::Exclusive, "the launcher is modal");
+        // The panels are always mapped, so taking the keyboard exclusively
+        // would stop every window from receiving typing.
+        for name in ["notifications", "control-center"] {
+            let panel = specs.iter().find(|spec| spec.name == name).unwrap();
+            assert_eq!(panel.keyboard, Keyboard::OnDemand, "{name}");
+        }
     }
 }

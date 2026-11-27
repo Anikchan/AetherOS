@@ -43,6 +43,8 @@ fn usage() {
          \x20                                    run the shell host (journal in, surfaces out)\n\
          \x20 aether-shell --host-check <log|->    verify the layer-shell host contract\n\
          \x20 aether-shell --host-plan             print the layer-surface request plan\n\
+         \x20 aether-shell --connect [--hold-ms <ms>]\n\
+         \x20                                    create the layer surfaces on $WAYLAND_DISPLAY\n\
          \x20 aether-shell --effects-tier          print the effective glass tier\n\
          \x20 aether-shell --effects-env           print the compositor tier export\n\
          \x20 aether-shell --effects-check <log|-> verify the compositor's effect/frame markers\n\
@@ -182,6 +184,37 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     "AETHER_SHELL_HOST_TERMINATIONS_PUBLISHED: count={}",
                     terminations.len()
                 );
+            }
+        }
+        Some("--connect") => {
+            // P3-T02 → P4: the real layer-shell host. Connects to
+            // `$WAYLAND_DISPLAY`, creates the five shell surfaces and reports
+            // what the compositor configured (and what it drew).
+            use aether_shell::keys;
+            use aether_shell::wayland::LayerHost;
+
+            let hold_ms: u64 = flag(&args, "--hold-ms")
+                .map(|value| value.parse())
+                .transpose()
+                .map_err(|error| format!("--hold-ms needs milliseconds: {error}"))?
+                .unwrap_or(0);
+            aether_ui::render::init()?;
+            let ui = ShellRoot::new()?;
+            let controller = ShellController::new(
+                ui,
+                Box::new(CommandServices::new()),
+                SettingsStore::at_default_location(),
+            );
+            let mut host = LayerHost::connect()?;
+            let report = host.create_surfaces()?;
+            print!("{}", report.summary());
+            host.hold(std::time::Duration::from_millis(hold_ms), |input| {
+                // The same path the Slint surfaces call: a key press becomes a
+                // focus move or an activation, and the marker records it.
+                println!("{}", keys::dispatch(&controller, input).line());
+            });
+            if !report.is_ok() {
+                std::process::exit(1);
             }
         }
         Some("--host-check") => {
