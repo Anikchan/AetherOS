@@ -1,0 +1,1 @@
+../board/aetheros/overlay/usr/bin/aether-boot-switch

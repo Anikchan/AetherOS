@@ -1,0 +1,27 @@
+[Unit]
+Description=AetherOS: hand the next boot back to the internal disk (Ubuntu), once
+# Why: the USB stick boots with a one-shot BootNext from Ubuntu; without this
+# the machine would keep booting AetherOS until someone pressed F12. BootNext
+# is consumed by the firmware, so this runs once per boot and cannot loop.
+# Skipped entirely on non-EFI firmware: there is no table to edit.
+ConditionPathExists=/sys/firmware/efi/efivars
+After=local-fs.target
+# Not WantedBy= in the shipped file only because the enablement symlink lives
+# in overlay/etc/systemd/system/multi-user.target.wants/ (see
+# docs/2026/11/28/results/boot-switch-ubuntu-aetheros.md).
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/libexec/aether-boot-return.sh
+# 30 s is generous for a single efibootmgr write; the unit must never hang the
+# boot if the firmware is slow to answer a SetVariable call.
+TimeoutStartSec=30
+StandardOutput=journal+console
+# efibootmgr only needs write access to efivarfs and the stay flag under /run.
+ProtectHome=yes
+PrivateTmp=yes
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=multi-user.target

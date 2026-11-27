@@ -1,0 +1,495 @@
+#!/bin/sh
+# aether-boot-switch — one-shot UEFI BootNext switching between the internal
+# disk (Ubuntu) and the AetherOS USB stick.
+#
+# Why BootNext and not BootOrder: BootNext is consumed (deleted) by the
+# firmware after exactly one boot, so a wrong choice cannot persist, a missing
+# USB cannot deny the machine its normal boot, and the switch cannot loop.
+# BootOrder is never rewritten by this script.
+#
+# The same file is the Ubuntu host helper (os-build/scripts/aether-boot-switch.sh
+# is a symlink to it) and the image binary used by aether-boot-return.service,
+# so there is exactly one implementation to reason about.
+#
+# Usage:
+#   aether-boot-switch status     show BootCurrent/BootNext/entries (read-only)
+#   aether-boot-switch aether     next boot -> the AetherOS USB entry (creates it)
+#   aether-boot-switch ubuntu     next boot -> the internal-disk (Ubuntu) entry
+#   aether-boot-switch stay       on AetherOS: do not hand the next boot back
+#   aether-boot-switch clear      delete BootNext (recovery: follow BootOrder)
+#
+# Every run prints one stable marker line:
+#   AETHER_BOOT_SWITCH: next=<index|none> label=<label|none> current=<index|none> result=<...>
+# where result is status | switched | created | already | cleared | stay |
+# noop | failed.
+#
+# Exit codes: 0 changed or already correct, 1 no safe target (no-op),
+#             2 usage, 3 efibootmgr or the boot table is unavailable (no-op),
+#             4 a write was attempted but not confirmed (BootNext unchanged or
+#               unreadable; nothing else was touched).
+#
+# Environment overrides (used by os-build/test/boot-switch-selftest.sh):
+#   AETHER_EFIBOOTMGR    efibootmgr binary (default: efibootmgr from PATH)
+#   AETHER_USB_DISK      USB block device (default: derived from the ESP)
+#   AETHER_USB_PART      USB ESP partition (default: /dev/disk/by-label/AETHEROS)
+#   AETHER_USB_PARTNUM   partition number for -p (default: from the device name)
+#   AETHER_USB_PARTUUID  ESP partition GUID (default: blkid PARTUUID)
+#   AETHER_LOG           log file, "-" disables it (default /var/log/aether-boot.log)
+#   AETHER_RUN_DIR       state dir for the stay flag (default /run)
+
+set -u
+
+PROG=aether-boot-switch
+EFIBOOTMGR=${AETHER_EFIBOOTMGR:-efibootmgr}
+LOG=${AETHER_LOG-/var/log/aether-boot.log}
+RUN_DIR=${AETHER_RUN_DIR:-/run}
+STAY_FLAG=$RUN_DIR/aether-boot-stay
+
+AETHER_LABEL=AetherOS
+AETHER_LOADER='\EFI\BOOT\BOOTX64.EFI'
+# The USB ESP is formatted with -n AETHEROS (os-build/scripts/make-live-usb.sh);
+# the GPT partition name is AETHEROS-ESP.
+USB_LABELS="/dev/disk/by-label/AETHEROS /dev/disk/by-label/AETHEROS-ESP /dev/disk/by-partlabel/AETHEROS-ESP"
+
+EFI_RAW=""
+ENTRIES=""
+BOOT_CURRENT=""
+BOOT_NEXT=""
+BOOT_ORDER=""
+USB_PARTUUID=""
+
+usage() {
+    cat <<'EOF'
+aether-boot-switch — one-shot UEFI BootNext switching (internal disk <-> AetherOS USB)
+
+usage: aether-boot-switch <command>
+
+  status    show BootCurrent, BootNext, BootOrder and the entries (read-only)
+  aether    set the next boot to the AetherOS USB entry (creates it if absent)
+  ubuntu    set the next boot to the internal-disk (Ubuntu) entry
+  stay      do not hand the next boot back (AetherOS: sets /run/aether-boot-stay)
+  clear     delete BootNext so the next boot follows BootOrder (recovery)
+
+BootNext is one-shot: the firmware deletes it after using it. BootOrder is
+never rewritten by this script. Exit: 0 ok, 1 no safe target, 2 usage,
+3 efibootmgr/boot table unavailable, 4 write not confirmed.
+EOF
+}
+
+# --- output -----------------------------------------------------------------
+logline() {
+    [ -n "$LOG" ] && [ "$LOG" != "-" ] || return 0
+    { printf '%s %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$*" >>"$LOG"; } 2>/dev/null || true
+}
+
+note() {
+    printf '%s: %s\n' "$PROG" "$1"
+    logline "$PROG: $1"
+}
+
+note_err() {
+    printf '%s: %s\n' "$PROG" "$1" >&2
+    logline "$PROG: $1"
+}
+
+# mark <next> <label> <result> — the one line scripts and humans can parse.
+mark() {
+    line=$(printf 'AETHER_BOOT_SWITCH: next=%s label=%s current=%s result=%s' \
+        "$1" "$2" "${BOOT_CURRENT:-none}" "$3")
+    printf '%s\n' "$line"
+    logline "$line"
+}
+
+# --- efibootmgr plumbing ----------------------------------------------------
+have_efibootmgr() {
+    command -v "$EFIBOOTMGR" >/dev/null 2>&1
+}
+
+no_tool() {
+    note_err "efibootmgr is not available ($EFIBOOTMGR); nothing was read or written."
+    note_err "  AetherOS: build with BR2_PACKAGE_EFIBOOTMGR=y. Ubuntu: apt install efibootmgr."
+    mark none none noop
+    exit 3
+}
+
+probe_table() {
+    EFI_RAW=$("$EFIBOOTMGR" -v 2>&1) || return 1
+    ENTRIES=$(printf '%s\n' "$EFI_RAW" | awk '
+        /^Boot[0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][* ]/ {
+            idx  = tolower(substr($0, 5, 4))
+            act  = (substr($0, 9, 1) == "*") ? 1 : 0
+            rest = substr($0, 11)
+            tab  = index(rest, "\t")
+            if (tab > 0) { label = substr(rest, 1, tab - 1); path = substr(rest, tab + 1) }
+            else         { label = rest; path = "" }
+            sub(/[ \t]+$/, "", label)
+            printf "%s\t%d\t%s\t%s\n", idx, act, label, path
+        }')
+    BOOT_CURRENT=$(printf '%s\n' "$EFI_RAW" | sed -n 's/^BootCurrent:[[:space:]]*\([0-9A-Fa-f]*\).*/\1/p' | tr 'A-F' 'a-f')
+    BOOT_NEXT=$(printf '%s\n' "$EFI_RAW" | sed -n 's/^BootNext:[[:space:]]*\([0-9A-Fa-f]*\).*/\1/p' | tr 'A-F' 'a-f')
+    BOOT_ORDER=$(printf '%s\n' "$EFI_RAW" | sed -n 's/^BootOrder:[[:space:]]*//p')
+    return 0
+}
+
+load_table() {
+    probe_table && return 0
+    note_err "cannot read the UEFI boot table: $(printf '%s' "${EFI_RAW:-no output}" | head -2 | tr '\n' ' ')"
+    note_err "  efibootmgr=$EFIBOOTMGR; needs root and /sys/firmware/efi/efivars."
+    note_err "  Degrading to a no-op: nothing was changed."
+    mark none none noop
+    exit 3
+}
+
+read_bootnext() {
+    "$EFIBOOTMGR" 2>/dev/null \
+        | sed -n 's/^BootNext:[[:space:]]*\([0-9A-Fa-f]*\).*/\1/p' \
+        | tr 'A-F' 'a-f'
+}
+
+entry_line() {
+    printf '%s\n' "$ENTRIES" | awk -F'\t' -v i="$1" '$1 == i { print; exit }'
+}
+
+entry_label() {
+    [ -n "${1:-}" ] || return 0
+    entry_line "$1" | cut -f3
+}
+
+entry_path() {
+    [ -n "${1:-}" ] || return 0
+    entry_line "$1" | cut -f4
+}
+
+# --- USB identity -----------------------------------------------------------
+usb_part() {
+    [ -n "${AETHER_USB_PART:-}" ] && { printf '%s' "$AETHER_USB_PART"; return 0; }
+    for link in $USB_LABELS; do
+        [ -e "$link" ] || continue
+        real=$(readlink -f "$link" 2>/dev/null) || real=""
+        [ -n "$real" ] && { printf '%s' "$real"; return 0; }
+    done
+    # No udev by-label links (AetherOS may not run udev on the USB): ask blkid.
+    if command -v blkid >/dev/null 2>&1; then
+        for lbl in AETHEROS AETHEROS-ESP; do
+            dev=$(blkid -L "$lbl" 2>/dev/null) || dev=""
+            [ -n "$dev" ] && { printf '%s' "$dev"; return 0; }
+        done
+    fi
+    return 1
+}
+
+usb_partnum() {
+    case "${1:-}" in
+        *[0-9]) printf '%s' "${1##*[!0-9]}" ;;
+        *) printf '1' ;;
+    esac
+}
+
+usb_disk() {
+    [ -n "${AETHER_USB_DISK:-}" ] && { printf '%s' "$AETHER_USB_DISK"; return 0; }
+    part=$(usb_part) || return 1
+    case "$part" in
+        *[0-9]p[0-9]*) printf '%s' "${part%p[0-9]*}" ;;   # nvme0n1p1, mmcblk0p1
+        *[0-9])        printf '%s' "${part%[0-9]*}" ;;    # sdb1
+        *)             printf '%s' "$part" ;;
+    esac
+}
+
+# Best effort: the ESP PARTUUID is what an efibootmgr device path prints inside
+# HD(n,GPT,<uuid>,...), so it identifies "our" entry even after re-creating it.
+ensure_usb_partuuid() {
+    [ -n "$USB_PARTUUID" ] && return 0
+    if [ -n "${AETHER_USB_PARTUUID:-}" ]; then
+        USB_PARTUUID=$(printf '%s' "$AETHER_USB_PARTUUID" | tr 'A-F' 'a-f')
+        return 0
+    fi
+    command -v blkid >/dev/null 2>&1 || return 0
+    part=$(usb_part) || return 0
+    uuid=$(blkid -s PARTUUID -o value "$part" 2>/dev/null) || uuid=""
+    [ -n "$uuid" ] && USB_PARTUUID=$(printf '%s' "$uuid" | tr 'A-F' 'a-f')
+    return 0
+}
+
+# --- target selection -------------------------------------------------------
+# Each picker prints one index and exits 0, or exits 1 (none) / 2 (ambiguous).
+
+pick_aether() {
+    printf '%s\n' "$ENTRIES" | awk -F'\t' -v uuid="$USB_PARTUUID" '
+        $2 == 1 && tolower($3) ~ /aether/ {
+            if (uuid != "" && index(tolower($4), uuid) > 0) pref[++np] = $1
+            else other[++no] = $1
+            next
+        }
+        END {
+            if (np == 1) { print pref[1]; exit 0 }
+            if (np > 1)  { exit 2 }
+            if (no == 1) { print other[1]; exit 0 }
+            if (no > 1)  { exit 2 }
+            exit 1
+        }'
+}
+
+pick_ubuntu() {
+    printf '%s\n' "$ENTRIES" | awk -F'\t' -v uuid="$USB_PARTUUID" '
+        $2 == 1 && tolower($3) ~ /ubuntu/ { pref[++np] = $1; next }
+        $2 == 1 && tolower($3) !~ /aether/ && tolower($3) !~ /usb/ &&
+            (uuid == "" || index(tolower($4), uuid) == 0) { other[++no] = $1 }
+        END {
+            if (np == 1) { print pref[1]; exit 0 }
+            if (np > 1)  { exit 2 }
+            if (no == 1) { print other[1]; exit 0 }
+            if (no > 1)  { exit 2 }
+            exit 1
+        }'
+}
+
+has_inactive() {  # has_inactive <regex>
+    printf '%s\n' "$ENTRIES" | awk -F'\t' -v re="$1" \
+        '$2 != 1 && tolower($3) ~ re { found = 1 } END { exit !found }'
+}
+
+list_aether_candidates() {
+    printf '%s\n' "$ENTRIES" | awk -F'\t' \
+        'tolower($3) ~ /aether/ { printf "  %s%s %s\n", $1, ($2 == 1 ? "*" : " "), $3 }' >&2
+}
+
+list_ubuntu_candidates() {
+    printf '%s\n' "$ENTRIES" | awk -F'\t' -v uuid="$USB_PARTUUID" '
+        tolower($3) !~ /aether/ && tolower($3) !~ /usb/ &&
+        (uuid == "" || index(tolower($4), uuid) == 0) {
+            printf "  %s%s %s\n", $1, ($2 == 1 ? "*" : " "), $3
+        }' >&2
+}
+
+# --- the write --------------------------------------------------------------
+# set_next <index> <label> <switched|created>
+set_next() {
+    idx=$1
+    lbl=$2
+    res=$3
+
+    if [ "${BOOT_NEXT:-}" = "$idx" ]; then
+        note "BootNext is already $idx ($lbl); nothing written."
+        mark "$idx" "$lbl" already
+        exit 0
+    fi
+
+    if [ -z "$(entry_line "$idx")" ]; then
+        note_err "refusing to point BootNext at $idx: that entry is not in the boot table."
+        note_err "  BootNext left at ${BOOT_NEXT:-none}."
+        mark "${BOOT_NEXT:-none}" "$lbl" failed
+        exit 4
+    fi
+
+    crc=0
+    cout=$("$EFIBOOTMGR" -n "$idx" 2>&1) || crc=$?
+    after=$(read_bootnext)
+
+    if [ "$crc" != 0 ] || [ "$after" != "$idx" ]; then
+        note_err "BootNext write to $idx was not confirmed (rc=$crc, BootNext reads back as ${after:-none})."
+        [ -n "$cout" ] && printf '%s\n' "$cout" | head -5 >&2
+        note_err "  BootOrder was not touched; the machine still boots normally."
+        note_err "  If a stale BootNext remains, run: aether-boot-switch clear"
+        mark "${after:-none}" "$lbl" failed
+        exit 4
+    fi
+
+    note "next boot -> $idx ($lbl). The firmware deletes BootNext after using it once."
+    mark "$idx" "$lbl" "$res"
+    exit 0
+}
+
+# --- subcommands ------------------------------------------------------------
+cmd_status() {
+    have_efibootmgr || no_tool
+    load_table
+    lbl=$(entry_label "${BOOT_NEXT:-}")
+    [ -n "$lbl" ] || lbl=none
+
+    printf 'AetherOS boot switch\n'
+    printf '  BootCurrent : %s\n' "${BOOT_CURRENT:-none}"
+    printf '  BootNext    : %s (%s)\n' "${BOOT_NEXT:-none}" "$lbl"
+    printf '  BootOrder   : %s\n' "${BOOT_ORDER:-none}"
+    printf '  Entries     :\n'
+    printf '%s\n' "$ENTRIES" | awk -F'\t' \
+        '{ printf "    %s %-3s %s\n", $1, ($2 == 1 ? "on" : "off"), $3 }'
+    if [ -e "$STAY_FLAG" ]; then
+        printf '  stay flag   : present (%s)\n' "$STAY_FLAG"
+    else
+        printf '  stay flag   : absent\n'
+    fi
+    mark "${BOOT_NEXT:-none}" "$lbl" status
+    exit 0
+}
+
+cmd_stay() {
+    if mkdir -p "$RUN_DIR" 2>/dev/null && : > "$STAY_FLAG" 2>/dev/null; then
+        note "stay flag set ($STAY_FLAG): this boot will not hand the next boot back."
+        note "  It lives in $RUN_DIR (tmpfs) and disappears at reboot."
+    else
+        note_err "cannot write $STAY_FLAG (need root); stay not set."
+        mark none none failed
+        exit 4
+    fi
+    if have_efibootmgr; then probe_table >/dev/null 2>&1 || true; fi
+    lbl=$(entry_label "${BOOT_NEXT:-}")
+    [ -n "$lbl" ] || lbl=none
+    mark "${BOOT_NEXT:-none}" "$lbl" stay
+    exit 0
+}
+
+cmd_clear() {
+    have_efibootmgr || no_tool
+    load_table
+    if [ -z "${BOOT_NEXT:-}" ]; then
+        note "BootNext is already unset; the next boot follows BootOrder."
+        mark none none already
+        exit 0
+    fi
+    crc=0
+    cout=$("$EFIBOOTMGR" -N 2>&1) || crc=$?
+    after=$(read_bootnext)
+    if [ "$crc" != 0 ] || [ -n "$after" ]; then
+        note_err "could not clear BootNext (rc=$crc, BootNext reads back as ${after:-none})."
+        [ -n "$cout" ] && printf '%s\n' "$cout" | head -5 >&2
+        mark "${after:-none}" none failed
+        exit 4
+    fi
+    note "BootNext cleared; the next boot follows BootOrder."
+    mark none none cleared
+    exit 0
+}
+
+create_then_switch() {
+    part=$(usb_part) || {
+        note_err "cannot find the AetherOS USB stick: no /dev/disk/by-label/AETHEROS."
+        note_err "  Plug the stick in, or pass AETHER_USB_PART=/dev/sdX1. BootNext unchanged."
+        mark "${BOOT_NEXT:-none}" none noop
+        exit 1
+    }
+    disk=$(usb_disk) || {
+        note_err "cannot derive the USB disk from $part; pass AETHER_USB_DISK=/dev/sdX."
+        mark "${BOOT_NEXT:-none}" none noop
+        exit 1
+    }
+    if [ -z "${AETHER_USB_DISK:-}" ] && [ ! -b "$disk" ]; then
+        note_err "$disk is not a block device; refusing to create a boot entry from it."
+        mark "${BOOT_NEXT:-none}" none noop
+        exit 1
+    fi
+    num=${AETHER_USB_PARTNUM:-}
+    [ -n "$num" ] || num=$(usb_partnum "$part")
+    case "$num" in ''|*[!0-9]*) num=1 ;; esac
+
+    note "no AetherOS entry yet; creating one."
+    note "  efibootmgr -c -d $disk -p $num -L $AETHER_LABEL -l $AETHER_LOADER"
+    note "  BootOrder before: ${BOOT_ORDER:-none}"
+
+    crc=0
+    cout=$("$EFIBOOTMGR" -c -d "$disk" -p "$num" -L "$AETHER_LABEL" -l "$AETHER_LOADER" 2>&1) || crc=$?
+    if [ "$crc" != 0 ]; then
+        note_err "efibootmgr -c failed (rc=$crc): $(printf '%s' "$cout" | head -3 | tr '\n' ' ')"
+        note_err "  BootNext left at ${BOOT_NEXT:-none}; the machine still boots normally."
+        mark "${BOOT_NEXT:-none}" none failed
+        exit 4
+    fi
+
+    load_table
+    note "  BootOrder after:  ${BOOT_ORDER:-none}"
+
+    idx=$(pick_aether)
+    prc=$?
+    if [ "$prc" != 0 ]; then
+        note_err "the new entry could not be read back (picker rc=$prc); stopping without touching BootNext."
+        note_err "  Inspect with 'efibootmgr -v'; remove a bad entry with 'efibootmgr -b XXXX -B'."
+        mark "${BOOT_NEXT:-none}" none failed
+        exit 4
+    fi
+
+    path=$(entry_path "$idx")
+    if [ -n "$USB_PARTUUID" ]; then
+        case "$(printf '%s' "$path" | tr 'A-F' 'a-f')" in
+            *"$USB_PARTUUID"*) : ;;
+            *) note "warning: entry $idx does not reference the USB ESP ($USB_PARTUUID); using it anyway." ;;
+        esac
+    fi
+    note "created boot entry $idx ($AETHER_LABEL)."
+    set_next "$idx" "$AETHER_LABEL" created
+}
+
+cmd_aether() {
+    have_efibootmgr || no_tool
+    load_table
+    ensure_usb_partuuid
+
+    idx=$(pick_aether)
+    prc=$?
+    case "$prc" in
+        0)
+            set_next "$idx" "$(entry_label "$idx")" switched
+            ;;
+        2)
+            note_err "more than one AetherOS entry exists; refusing to guess which one is the USB."
+            list_aether_candidates
+            note_err "  Remove stale ones (efibootmgr -b XXXX -B) or relabel them, then retry."
+            mark "${BOOT_NEXT:-none}" none noop
+            exit 1
+            ;;
+        *)
+            if has_inactive aether; then
+                note_err "an AetherOS entry exists but is deactivated; not using it."
+                list_aether_candidates
+                note_err "  Reactivate it with: efibootmgr -b XXXX -a"
+                mark "${BOOT_NEXT:-none}" none noop
+                exit 1
+            fi
+            create_then_switch
+            ;;
+    esac
+}
+
+cmd_ubuntu() {
+    have_efibootmgr || no_tool
+    load_table
+    ensure_usb_partuuid
+
+    idx=$(pick_ubuntu)
+    prc=$?
+    case "$prc" in
+        0)
+            set_next "$idx" "$(entry_label "$idx")" switched
+            ;;
+        2)
+            note_err "more than one entry could be the internal disk; refusing to guess."
+            list_ubuntu_candidates
+            note_err "  Label the internal entry 'ubuntu' (efibootmgr -b XXXX -L ubuntu) and retry."
+            mark "${BOOT_NEXT:-none}" none noop
+            exit 1
+            ;;
+        *)
+            total=$(printf '%s\n' "$ENTRIES" | grep -c . || true)
+            if has_inactive ubuntu; then
+                note_err "the ubuntu entry exists but is deactivated; not using it."
+            elif [ "${total:-0}" -le 1 ]; then
+                note_err "only one OS entry exists ($total); nothing to switch back to, BootNext unchanged."
+            else
+                note_err "no internal-disk (Ubuntu) entry found; BootNext unchanged."
+                list_ubuntu_candidates
+            fi
+            mark "${BOOT_NEXT:-none}" none noop
+            exit 1
+            ;;
+    esac
+}
+
+# --- main -------------------------------------------------------------------
+case "${1:-}" in
+    status)        cmd_status ;;
+    aether|usb)    cmd_aether ;;
+    ubuntu|linux)  cmd_ubuntu ;;
+    stay)          cmd_stay ;;
+    clear|clear-next) cmd_clear ;;
+    -h|--help|help) usage; exit 0 ;;
+    '')            usage >&2; exit 2 ;;
+    *)             printf '%s: unknown command: %s\n' "$PROG" "$1" >&2; usage >&2; exit 2 ;;
+esac
