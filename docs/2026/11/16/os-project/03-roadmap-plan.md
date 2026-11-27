@@ -333,6 +333,10 @@ Update this table whenever a task changes state. Allowed statuses: Not started, 
 
 | Date | Session | Change |
 | --- | --- | --- |
+| 2026-11-27 | S1 (overnight) | **Overnight parallel run started (22:40 IST):** 7 developer/tester sessions launched under `docs/2026/11/27/overnight-parallel-plan.md` — UI packaging into the image (critical path), kernel regulatory.db + touchpad i2c-hid, compositor layer-damage translation, shell↔compositor real handshake, apps/launcher wiring, CI parity guards, sandbox seccomp hardening. `test.sh` now collects the Wi-Fi credentials before the log file exists (nothing typed can be captured) and the USB ESP copy was refreshed. WirePlumber root cause fixed (`BR2_PACKAGE_LUA_5_4=y`); build `46041689625` verifies it. Hardware: P2 run 3 logged (10/10 sleep, graphics/audio/battery/webcam OK, touchpad and regulatory domain open). |
+
+| Date | Session | Change |
+| --- | --- | --- |
 | 2026-11-16 | Planning session 1 | Created documentation set (README, 01 to 04, features F1 to F6, design D1 to D4). |
 | 2026-11-16 | Planning session 2 | Applied owner answers Q1 to Q7. Language Rust (ADR-013), shell Slint pending spike S1 (ADR-004), battery management added, speed targets, legacy BIOS boot, hardware coverage goal, hour-based estimates for one person, personal-first scope. P0-T01 marked Done. |
 | 2026-11-17 | Planning session 3 (addendum 1) | Answered five questions and added three requirements. Added F8 to F11 and D6 to D8. Added default apps, app platform, optional AI, boot speed, and no-hang design to the plan. |
