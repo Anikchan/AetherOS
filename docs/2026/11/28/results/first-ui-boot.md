@@ -66,3 +66,20 @@
 systemctl is-active aether-session → active
 /var/log/aether/compositor.log → BACKEND: drm, SOCKET_READY, CLIENT_MAPPED, FRAME
 ```
+
+## Blank screen on the second boot, and the rescue
+
+The owner reported a blank screen after the next restart. That is the same
+failure seen above, made invisible: `getty@tty1` is masked (the session owns
+tty1), so a failed `aether-session` leaves the panel showing nothing at all. The
+machine was never dead — tty2 and SSH worked — but there was no on-screen hint.
+
+Fixes:
+1. `OnFailure=aether-session-rescue.service` on the session unit, and a new
+   `aether-session-rescue.service` that prints the failure and the log commands
+   to the console and then **starts a login prompt on tty1**.
+2. The build gate now checks the produced binary instead of the pipeline's exit
+   status: build `46135588530` reported `aether-compositor built (features: drm)`
+   while the binary was missing, because `cargo ... | tee` returns *tee's*
+   status. The script now redirects to a log, checks `$?` **and** asserts the
+   binary exists, then prints the log tail on failure (`00e2860`).
