@@ -138,6 +138,8 @@ pub struct DrmBackend {
     pub notifier: Option<DrmDeviceNotifier>,
     /// Frame queued to KMS; its callbacks are answered on the next VBlank.
     pub pending: Option<Frame>,
+    /// When `pending` was queued to KMS (used to detect a lost page-flip event).
+    pub pending_since: Option<std::time::Instant>,
     /// Completed page flips.
     pub vblanks: u64,
     /// Frames queued to KMS.
@@ -539,6 +541,7 @@ fn open_device(session: &mut LibSeatSession, path: &Path) -> Result<DrmBackend, 
         mode: output_mode,
         notifier: Some(notifier),
         pending: None,
+        pending_since: None,
         vblanks: 0,
         frames_queued: 0,
         direct_frames: 0,
@@ -595,7 +598,34 @@ fn pick_output(
 fn present_if_due(state: &mut AetherCompositor) -> Result<(), String> {
     // KMS still owns the previous frame: leave the damage queued so the next
     // tick retries instead of failing inside `queue_frame`.
-    if state
+    // A page-flip event that never arrives would otherwise freeze the screen
+    // forever: the pending frame is only cleared from the vblank handler, so
+    // every later present is skipped (2026-11-28: the compositor presented two
+    // frames on DRM and then nothing, while headless kept presenting).
+    let stuck = state
+        .drm
+        .as_ref()
+        .and_then(|drm| drm.pending_since)
+        .map(|since| since.elapsed() > Duration::from_millis(500))
+        .unwrap_or(false);
+    if stuck {
+        let age_ms = state
+            .drm
+            .as_ref()
+            .and_then(|drm| drm.pending_since)
+            .map(|since| since.elapsed().as_millis())
+            .unwrap_or(0);
+        println!("AETHER_COMPOSITOR_DRM_PENDING_TIMEOUT: age_ms={age_ms}");
+        if let Some(drm) = state.drm.as_mut() {
+            let frame = drm.pending.take();
+            drm.pending_since = None;
+            if let Some(frame) = frame {
+                // Unblock clients waiting on wl_surface.frame, then let the
+                // next tick present the queued damage.
+                state.complete_frame(&frame);
+            }
+        }
+    } else if state
         .drm
         .as_ref()
         .map(|drm| drm.pending.is_some())
@@ -629,6 +659,7 @@ fn present_if_due(state: &mut AetherCompositor) -> Result<(), String> {
         Ok(true) => {
             if let Some(drm) = state.drm.as_mut() {
                 drm.pending = Some(frame);
+                drm.pending_since = Some(std::time::Instant::now());
             }
         }
         // Empty frame: keep the output dirty so the next tick retries rather
@@ -1053,6 +1084,7 @@ fn on_vblank(state: &mut AetherCompositor) {
         Err(err) => eprintln!("aether-compositor: frame_submitted: {err:?}"),
     }
     let pending = drm.pending.take();
+    drm.pending_since = None;
     if let Some(frame) = pending {
         // Only now do clients get their wl_surface.frame callback, so their
         // throttling follows real presentation.
