@@ -81,6 +81,19 @@ jobs:
             qemu-system-x86 expect ovmf grub-pc-bin grub-efi-amd64-bin grub-common parted squashfs-tools
       - name: Clone Buildroot (pinned)
         run: git clone --depth 1 --branch 2025.11 https://gitlab.com/buildroot.org/buildroot.git os-build/buildroot/buildroot
+      - name: Compute cache key
+        # sha256 of every build input; a change re-keys the cache, and the
+        # restore-keys prefix still reuses the previous tree for an incremental
+        # build. Computed in the shell because `hashFiles` failed this step with
+        # "Fail to hash files under directory" (2026-11-28).
+        id: cachekey
+        run: |
+          {
+            sha256sum os-build/buildroot/aetheros_defconfig \
+                      os-build/kernel/aether.fragment \
+                      os-build/post-build.sh 2>/dev/null
+            find os-build/board -type f -print0 2>/dev/null | sort -z | xargs -0 sha256sum 2>/dev/null
+          } | sha256sum | cut -c1-16 | sed 's/^/key=buildroot-output-/' >> "$GITHUB_OUTPUT"
       - name: Restore Buildroot output cache
         # Reuses the previous build's output/ so only changed packages rebuild.
         # A cold cache simply means a full build, as before.
@@ -89,7 +102,7 @@ jobs:
           path: |
             os-build/buildroot/buildroot/output
             os-build/.cache/dl
-          key: buildroot-output-${{ hashFiles('os-build/buildroot/aetheros_defconfig', 'os-build/kernel/aether.fragment', 'os-build/board/**', 'os-build/post-build.sh') }}
+          key: ${{ steps.cachekey.outputs.key }}
           restore-keys: |
             buildroot-output-
       - name: Configure
@@ -125,7 +138,7 @@ jobs:
           path: |
             os-build/buildroot/buildroot/output
             os-build/.cache/dl
-          key: buildroot-output-${{ hashFiles('os-build/buildroot/aetheros_defconfig', 'os-build/kernel/aether.fragment', 'os-build/board/**', 'os-build/post-build.sh') }}
+          key: ${{ steps.cachekey.outputs.key }}
       - name: Image capability contract — assert the tool list (P2 lesson)
         # The image has no `pgrep` and no `script`; the acceptance harness assumed
         # both. Unpack the rootfs (no boot needed) and diff it against
