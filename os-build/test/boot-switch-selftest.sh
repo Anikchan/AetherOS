@@ -343,6 +343,25 @@ else
     bad "created entry missing from the table"
 fi
 
+# A re-flashed image rotates the ESP partition GUID, so an entry that matches
+# only by label references a partition that no longer exists and the firmware
+# silently boots the internal disk (2026-11-28 deployment).
+setup
+add_entry 0000 on ubuntu "$UBUNTU_PATH"
+add_entry 0007 on AetherOS 'HD(1,GPT,deadbeef-0000-4000-8000-000000000000)/File(\EFI\BOOT\BOOTX64.EFI)'
+printf '0007,0000\n' >"$FAKE_STATE/order"; printf '0000\n' >"$FAKE_STATE/current"
+out=$(sw aether); rc=$?
+expect_rc "stale entry: arm still exits 0" "$rc" 0
+expect_has "stale entry: reported as recreated" "$out" "no longer exists"
+expect_has "stale entry: old entry deleted" "$(cat "$FAKE_STATE/calls")" "-b 0007 -B"
+expect_has "stale entry: a new entry was created" "$(cat "$FAKE_STATE/calls")" "-c"
+if printf '%s' "$(order_now)" | grep -q '^0007'; then
+    bad "stale entry: the ghost is still first in BootOrder"
+else
+    ok "stale entry: ghost removed from the arm path"
+fi
+
+
 # --- 6: no Ubuntu entry -> no-op with a clear message -----------------------
 setup
 add_entry 0000 on AetherOS "$AETHER_PATH"
