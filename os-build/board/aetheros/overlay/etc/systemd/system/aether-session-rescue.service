@@ -1,0 +1,19 @@
+[Unit]
+Description=AetherOS: make a failed graphical session visible on tty1
+Documentation=file:/etc/aether/ui-build.txt
+# Started by aether-session.service's OnFailure=. The first boot of 2026-11-28
+# failed with tty1 blank and getty masked, so the only visible symptom was a
+# black screen; this puts a login prompt and a marker on the console instead.
+After=aether-session.service
+ConditionPathExists=/dev/tty1
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+# A short message on the console (wall also reaches other logins) ...
+ExecStart=/bin/sh -c '/bin/echo; /bin/echo "AetherOS: the graphical session failed to start."; /bin/echo "  journalctl -b -u aether-session   (logs)"; /bin/echo "  /etc/aether/ui-build.txt          (what this image contains)"; /bin/echo "  Login below, or press Ctrl+Alt+F2 for tty2."; /bin/echo'
+# ... and a real login on tty1, which the masked getty left unusable.
+ExecStart=/bin/systemctl start getty@tty1.service
+# No restart: this is a one-shot rescue, and a loop would hide the failure.
+TimeoutStartSec=20
+StandardOutput=journal+console

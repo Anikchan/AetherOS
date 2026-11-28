@@ -30,6 +30,9 @@ ConditionPathExists=/dev/dri
 # console + SSH box on tty2.
 StartLimitIntervalSec=120
 StartLimitBurst=3
+# A failed session must not leave tty1 blank (first boot, 2026-11-28): the
+# rescue unit prints the reason and starts a login prompt on tty1.
+OnFailure=aether-session-rescue.service
 
 [Service]
 Type=simple

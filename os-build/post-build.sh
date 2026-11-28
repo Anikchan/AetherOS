@@ -189,18 +189,22 @@ export CARGO_NET_RETRY
 COMPOSITOR_MODE="drm"
 log "building aether-compositor with --features drm"
 # The drm feature is mandatory for the image: a headless-only compositor cannot
-# open /dev/dri, so the first boot would show a failed session (2026-11-28).
-# The error is kept and printed, because the previous silent fallback shipped
-# exactly that broken image.
-if ! cargo build --release -p aether-compositor --features drm 2>&1 | tee /tmp/aether-compositor-build.log; then
+# open /dev/dri, so the first boot shows a failed session (2026-11-28).
+# NOTE: no pipe here — `cargo ... | tee` returns tee's status, which made a
+# failed build look successful and shipped a missing compositor (build
+# 46135588530: "built (features: drm)" then "MISSING: aether-compositor").
+# The log is captured and the produced binary is checked, which is the fact
+# that actually matters.
+COMPOSITOR_LOG=/tmp/aether-compositor-build.log
+if cargo build --release -p aether-compositor --features drm >"$COMPOSITOR_LOG" 2>&1 \
+   && [ -f "$BUILD_DIR/aether-compositor" ]; then
+    log "aether-compositor built with the drm feature"
+else
     COMPOSITOR_MODE="not-built"
     FAILED="$FAILED aether-compositor"
-    fail "aether-compositor --features drm failed; the image would have no KMS compositor"
+    fail "aether-compositor --features drm did not produce $BUILD_DIR/aether-compositor"
     warn "last lines of the build log:"
-    tail -20 /tmp/aether-compositor-build.log | while IFS= read -r line; do warn "  $line"; done
-fi
-if [ "$COMPOSITOR_MODE" = "drm" ]; then
-    log "aether-compositor built (features: drm)"
+    tail -25 "$COMPOSITOR_LOG" | while IFS= read -r line; do warn "  $line"; done
 fi
 
 log "building aether-shell (also provides aether-greeter)"
