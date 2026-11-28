@@ -293,8 +293,18 @@ fn effect_tiers_and_damage_based_frames() {
     );
 
     // --- P3-T06: damage-based repaint + frame callbacks --------------------
-    let frame = marker_line(&full, &["AETHER_COMPOSITOR_FRAME: n=", "windows=3"])
-        .unwrap_or_else(|| panic!("no frame marker:\n{full}"));
+    // Empty frames (callbacks answered with no damage) are legitimate since the
+    // frame-callback round, so pick the first frame that actually carried
+    // damage: sampling unconditionally made this assertion flaky (2026-11-29).
+    let frame = full
+        .lines()
+        .filter(|line| line.starts_with("AETHER_COMPOSITOR_FRAME: "))
+        .filter(|line| line.contains("windows=3"))
+        .find(|line| {
+            let damage: u64 = value_usize(line, "damage_px=") as u64;
+            damage > 0
+        })
+        .unwrap_or_else(|| panic!("no damaged frame marker with three windows:\n{full}"));
     assert!(
         frame.contains("windows=3"),
         "frame should compose three windows: {frame}"
