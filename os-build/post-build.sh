@@ -160,6 +160,7 @@ if [ -n "$MISSING_PC" ]; then
         if sudo apt-get install -y --no-install-recommends \
             pkg-config libfontconfig1-dev libfreetype-dev libxkbcommon-dev \
             libudev-dev libseat-dev libdrm-dev libgbm-dev libinput-dev \
+            libegl-dev libgles-dev libwayland-dev libpixman-1-dev \
             >/dev/null 2>&1; then
             log "dev packages installed"
         else
@@ -187,17 +188,19 @@ export CARGO_NET_RETRY
 
 COMPOSITOR_MODE="drm"
 log "building aether-compositor with --features drm"
-if ! cargo build --release -p aether-compositor --features drm; then
-    warn "compositor --features drm build failed; retrying once without the feature"
-    COMPOSITOR_MODE="headless"
-    if ! cargo build --release -p aether-compositor; then
-        COMPOSITOR_MODE="not-built"
-        FAILED="$FAILED aether-compositor"
-        fail "aether-compositor failed to build with and without the drm feature"
-    fi
+# The drm feature is mandatory for the image: a headless-only compositor cannot
+# open /dev/dri, so the first boot would show a failed session (2026-11-28).
+# The error is kept and printed, because the previous silent fallback shipped
+# exactly that broken image.
+if ! cargo build --release -p aether-compositor --features drm 2>&1 | tee /tmp/aether-compositor-build.log; then
+    COMPOSITOR_MODE="not-built"
+    FAILED="$FAILED aether-compositor"
+    fail "aether-compositor --features drm failed; the image would have no KMS compositor"
+    warn "last lines of the build log:"
+    tail -20 /tmp/aether-compositor-build.log | while IFS= read -r line; do warn "  $line"; done
 fi
-if [ "$COMPOSITOR_MODE" != "not-built" ]; then
-    log "aether-compositor built (features: $COMPOSITOR_MODE)"
+if [ "$COMPOSITOR_MODE" = "drm" ]; then
+    log "aether-compositor built (features: drm)"
 fi
 
 log "building aether-shell (also provides aether-greeter)"

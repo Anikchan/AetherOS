@@ -33,6 +33,11 @@ StartLimitBurst=3
 
 [Service]
 Type=simple
+# systemd opens StandardOutput= below before the first ExecStart, so the
+# directory must exist first: LogsDirectory=aether alone was too late on the
+# first boot (2026-11-28, "Failed to set up standard output: No such file or
+# directory").
+ExecStartPre=/bin/mkdir -p /var/log/aether
 ExecStart=/usr/bin/aether-session
 # RuntimeDirectory creates /run/aether (0700) before ExecStart and removes it
 # after stop; the wrapper exports it as XDG_RUNTIME_DIR.
