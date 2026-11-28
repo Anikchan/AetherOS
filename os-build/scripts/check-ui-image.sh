@@ -107,6 +107,9 @@ if [ ! -f "$DEFCONFIG" ]; then
     exit 1
 fi
 
+# udev comes from systemd here: BR2_PACKAGE_EUDEV/BR2_PACKAGE_UDEV are not
+# symbols that survive a systemd build (2026-11-28 defconfig drops), so the
+# contract asserts the udev *provider* instead.
 REQUIRED_SYMBOLS='
 BR2_TOOLCHAIN_BUILDROOT_CXX=y
 BR2_PACKAGE_MESA3D=y
@@ -121,7 +124,7 @@ BR2_PACKAGE_DEJAVU=y
 BR2_PACKAGE_LIBXKBCOMMON=y
 BR2_PACKAGE_XKEYBOARD_CONFIG=y
 BR2_PACKAGE_LIBINPUT=y
-BR2_PACKAGE_EUDEV=y
+BR2_PACKAGE_SYSTEMD=y
 BR2_PACKAGE_LIBDRM=y
 BR2_PACKAGE_WAYLAND=y
 BR2_PACKAGE_LUA=y

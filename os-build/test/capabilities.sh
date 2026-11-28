@@ -92,6 +92,12 @@ find
 mktemp
 chmod
 stat
+touch
+echo
+dirname
+basename
+stty
+free
 cat
 cp
 mv

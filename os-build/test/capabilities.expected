@@ -37,7 +37,8 @@ present mv
 present ln
 present mktemp
 present chmod
-present stat
+# `stat` is absent from this busybox build (CONFIG_STAT off) and no script
+# uses it; do not add it back without a caller.
 present printf
 present echo
 present date
@@ -91,9 +92,11 @@ present pipewire
 # Lua >= 5.3); keep it 'present' so the drop can never come back unnoticed.
 present wireplumber
 present wpctl
-present glxinfo
-present vulkaninfo
-present Xwayland
+# Optional validators: the harness guards each with `command -v`, so their
+# absence is a note, not a failure. They are not in the image (mesa3d-demos
+# cannot build without glslangValidator, and XWayland was never a Buildroot
+# symbol here).
+# glxinfo / vulkaninfo / Xwayland: guarded, not required.
 present sshd
 
 # --- deliberately absent: scripts must never infer a negative from these ---
