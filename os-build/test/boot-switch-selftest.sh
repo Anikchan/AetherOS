@@ -333,7 +333,10 @@ expect_has "create used partition 1" "$(cat "$FAKE_STATE/calls")" "-p 1"
 expect_has "create used the BOOTX64 loader" "$(cat "$FAKE_STATE/calls")" '\EFI\BOOT\BOOTX64.EFI'
 expect_eq "created entry gets BootNext" "$(next_now)" 0001
 expect_has "create marker" "$out" "result=created"
-expect_eq "create keeps the old BootOrder tail" "$(order_now)" "0001,0000"
+# efibootmgr -c prepends the new entry; the switch must stay one-shot, so the
+# entry is moved to the end again (BootNext selects it for one boot only).
+expect_eq "create appends the new entry to BootOrder" "$(order_now)" "0000,0001"
+expect_has "create rewrote BootOrder with the entry last" "$(cat "$FAKE_STATE/calls")" "-o 0000,0001"
 if [ -f "$FAKE_STATE/entries" ] && grep -Fq 'AetherOS' "$FAKE_STATE/entries"; then
     ok "created entry landed in the table"
 else

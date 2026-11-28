@@ -684,6 +684,7 @@ create_aether_entry() {
     note "  efibootmgr -c -d $disk -p $num -L $AETHER_LABEL -l $AETHER_LOADER"
     note "  BootOrder before: ${BOOT_ORDER:-none}"
 
+    order_before="$BOOT_ORDER"
     crc=0
     cout=$("$EFIBOOTMGR" -c -d "$disk" -p "$num" -L "$AETHER_LABEL" -l "$AETHER_LOADER" 2>&1) || crc=$?
     if [ "$crc" != 0 ]; then
@@ -713,6 +714,32 @@ create_aether_entry() {
             *"$USB_PARTUUID"*) : ;;
             *) note "warning: entry $idx does not reference the USB ESP ($USB_PARTUUID); using it anyway." ;;
         esac
+    fi
+    # efibootmgr -c prepends the new entry, which would make AetherOS the
+    # default OS. The switch must stay one-shot: the boot-time unit treats
+    # "AetherOS first, no armed marker" as the owner's choice and leaves it, so
+    # a prepended entry would silently make AetherOS permanent (seen on the
+    # first hardware boot, 2026-11-28). Append it instead; BootNext still
+    # selects it for the next boot only.
+    if [ -n "$order_before" ]; then
+        want_order="$(comma_list "$order_before $idx")"
+        cur_order="$BOOT_ORDER"
+        case ",${cur_order}," in
+            *",${idx},"*) : ;;
+            *) want_order="$cur_order" ;;
+        esac
+        if [ "$cur_order" != "$want_order" ]; then
+            orc=0
+            "$EFIBOOTMGR" -o "$want_order" >/dev/null 2>&1 || orc=$?
+            load_table
+            if [ "$orc" != 0 ] || [ "$BOOT_ORDER" != "$want_order" ]; then
+                note "warning: could not move the new entry to the end of BootOrder"
+                note "  (BootNext still selects it for the next boot; the order is"
+                note "   ${BOOT_ORDER:-unchanged})."
+            else
+                note "  BootOrder settled: $BOOT_ORDER (AetherOS last, one-shot switch)"
+            fi
+        fi
     fi
     note "created boot entry $idx ($AETHER_LABEL)."
     CREATED_IDX=$idx
