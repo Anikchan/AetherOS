@@ -3,8 +3,13 @@ name: buildroot-build
 # P1-T01/P1-T06: full Buildroot build on a Linux runner; reports the base
 # image size against the P1 budget (<= 150 MB compressed).
 #
-# Runs only on manual dispatch or when build inputs change, because a full
-# build consumes roughly an hour of runner time.
+# Two jobs on purpose:
+#   config  — ~5 min: defconfig + the silent-drop guard + the UI wiring guard.
+#             This is the fast feedback loop; a defconfig mistake used to cost
+#             a two-hour build before it was visible.
+#   build   — the image itself, with the Buildroot output cached between runs
+#             so an unchanged tree only re-runs target-finalize and the image
+#             assembly (minutes), not the whole toolchain and package set.
 
 on:
   workflow_dispatch:
@@ -14,10 +19,55 @@ on:
       - "os-build/buildroot/**"
       - "os-build/kernel/**"
       - "os-build/board/**"
+      - "os-build/post-build.sh"
+      - "os-build/scripts/check-defconfig-drop.sh"
+      - "os-build/scripts/check-ui-image.sh"
       - ".github/workflows/buildroot-build.yml"
 
 jobs:
+  config:
+    # Fast gate: no compilation. Catches the class of defect that made three
+    # consecutive image builds fail before compiling anything (silent kconfig
+    # drops, a defconfig entry that no longer resolves).
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install kconfig dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential libncurses-dev rsync wget file bc git
+      - name: Clone Buildroot (pinned)
+        run: git clone --depth 1 --branch 2025.11 https://gitlab.com/buildroot.org/buildroot.git os-build/buildroot/buildroot
+      - name: Configure (defconfig only)
+        run: |
+          cd os-build/buildroot/buildroot
+          make BR2_DEFCONFIG=../aetheros_defconfig defconfig
+      - name: Defconfig drop guard — every requested symbol must survive
+        # WirePlumber teaches the lesson: BR2_PACKAGE_WIREPLUMBER=y needs a Lua
+        # >= 5.3 provider, and with none kconfig deletes the symbol outright —
+        # no warning, no '# ... is not set', and an image without a PipeWire
+        # session manager. This compares the defconfig's intent with the
+        # generated .config and fails on anything that vanished.
+        run: |
+          bash os-build/scripts/check-defconfig-drop.sh \
+            os-build/buildroot/buildroot/.config \
+            os-build/buildroot/aetheros_defconfig
+      - name: UI wiring guard against the generated config
+        run: |
+          bash os-build/scripts/check-ui-image.sh --config os-build/buildroot/buildroot/.config
+      - name: Capability contract (static scan)
+        run: |
+          bash os-build/scripts/check-image-capabilities.sh --strict
+      - name: Publish the resolved config
+        uses: actions/upload-artifact@v4
+        with:
+          name: aetheros-config
+          path: os-build/buildroot/buildroot/.config
+          retention-days: 7
+
   build:
+    needs: config
     # host-m4 (gnulib) fails to compile on the runner's newest gcc (C23
     # _Generic conflict); 22.04 has a compatible toolchain.
     runs-on: ubuntu-22.04
@@ -31,6 +81,17 @@ jobs:
             qemu-system-x86 expect ovmf grub-pc-bin grub-efi-amd64-bin grub-common parted squashfs-tools
       - name: Clone Buildroot (pinned)
         run: git clone --depth 1 --branch 2025.11 https://gitlab.com/buildroot.org/buildroot.git os-build/buildroot/buildroot
+      - name: Restore Buildroot output cache
+        # Reuses the previous build's output/ so only changed packages rebuild.
+        # A cold cache simply means a full build, as before.
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            os-build/buildroot/buildroot/output
+            os-build/.cache/dl
+          key: buildroot-output-${{ hashFiles('os-build/buildroot/aetheros_defconfig', 'os-build/kernel/aether.fragment', 'os-build/board/**', 'os-build/post-build.sh') }}
+          restore-keys: |
+            buildroot-output-
       - name: Configure
         run: |
           cd os-build/buildroot/buildroot
@@ -40,11 +101,6 @@ jobs:
           grep -q "^CONFIG_PSI=y" output/build/linux-*/.config 2>/dev/null || \
             echo "WARN: CONFIG_PSI not confirmed yet (checked again after build)"
       - name: Defconfig drop guard — every requested symbol must survive
-        # WirePlumber teaches the lesson: BR2_PACKAGE_WIREPLUMBER=y needs a Lua
-        # >= 5.3 provider, and with none kconfig deletes the symbol outright —
-        # no warning, no '# ... is not set', and an image without a PipeWire
-        # session manager. This compares the defconfig's intent with the
-        # generated .config and fails on anything that vanished.
         run: |
           # Buildroot 2025.11 writes the generated config at <tree>/.config
           # (not <tree>/output/.config); the script also falls back to the
@@ -54,10 +110,22 @@ jobs:
             os-build/buildroot/buildroot/.config \
             os-build/buildroot/aetheros_defconfig
       - name: Build
+        id: build
         timeout-minutes: 90
         run: |
           cd os-build/buildroot/buildroot
           make -j"$(nproc)"
+      - name: Save Buildroot output cache
+        # Saved immediately after the build, because the boot tests below free
+        # disk by deleting output/build and output/host — saving at job end
+        # would store a cache that misses exactly the expensive parts.
+        if: success()
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            os-build/buildroot/buildroot/output
+            os-build/.cache/dl
+          key: buildroot-output-${{ hashFiles('os-build/buildroot/aetheros_defconfig', 'os-build/kernel/aether.fragment', 'os-build/board/**', 'os-build/post-build.sh') }}
       - name: Image capability contract — assert the tool list (P2 lesson)
         # The image has no `pgrep` and no `script`; the acceptance harness assumed
         # both. Unpack the rootfs (no boot needed) and diff it against
