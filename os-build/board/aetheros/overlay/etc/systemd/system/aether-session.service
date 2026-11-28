@@ -36,11 +36,10 @@ OnFailure=aether-session-rescue.service
 
 [Service]
 Type=simple
-# systemd opens StandardOutput= below before the first ExecStart, so the
-# directory must exist first: LogsDirectory=aether alone was too late on the
-# first boot (2026-11-28, "Failed to set up standard output: No such file or
-# directory").
-ExecStartPre=/bin/mkdir -p /var/log/aether
+# systemd opens StandardOutput= below before any ExecStart runs (an
+# ExecStartPre=mkdir is too late — that was the 2026-11-28 first-boot failure),
+# so the directory comes from /etc/tmpfiles.d/aether.conf, which runs before
+# multi-user.target.
 ExecStart=/usr/bin/aether-session
 # RuntimeDirectory creates /run/aether (0700) before ExecStart and removes it
 # after stop; the wrapper exports it as XDG_RUNTIME_DIR.
