@@ -49,6 +49,7 @@ fail() {
 INSTALLED=""
 MISSING=""
 FAILED=""
+HARD_FAIL=0
 COMPOSITOR_MODE="not-built"
 RUSTC_VERSION="unavailable"
 WIRING_GUARD="not-run"
@@ -161,6 +162,7 @@ if [ -n "$MISSING_PC" ]; then
             pkg-config libfontconfig1-dev libfreetype-dev libxkbcommon-dev \
             libudev-dev libseat-dev libdrm-dev libgbm-dev libinput-dev \
             libegl-dev libgles-dev libwayland-dev libpixman-1-dev \
+            libsystemd-dev \
             >/dev/null 2>&1; then
             log "dev packages installed"
         else
@@ -312,4 +314,13 @@ else
 fi
 
 write_manifest
+
+# A missing or headless compositor means the image cannot show the desktop at
+# all (first boot, 2026-11-28). The manifest is written first so the failed
+# build still explains itself, then the build fails: the artifact upload runs
+# with `if: always()`, so nothing is lost.
+if [ "$HARD_FAIL" = 1 ] || [ "${RESULT:-}" = failed ]; then
+    fail "image would not start the graphical session (see the manifest above)"
+    exit 1
+fi
 exit 0
